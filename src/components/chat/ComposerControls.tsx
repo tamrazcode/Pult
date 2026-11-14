@@ -82,7 +82,13 @@ export function pickerConfigValue(
  * Model / thought-level / toggle pills from the selected agent's session
  * config options. Picks persist per thread and apply to the next run.
  */
-export function ConfigOptionPickers({ threadId }: { threadId?: string }) {
+export function ConfigOptionPickers({
+  threadId,
+  excludeIds = [],
+}: {
+  threadId?: string;
+  excludeIds?: string[];
+}) {
   const instances = useUiStore((s) => s.instances);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
@@ -95,14 +101,18 @@ export function ConfigOptionPickers({ threadId }: { threadId?: string }) {
     activeRunId ? s.viewsByRun[activeRunId]?.configOptions : undefined,
   );
   const instance = instances.find((i) => i.id === selectedInstanceId);
-  const options =
+  const options = (
     (activeRun &&
     (activeRun.status === "running" || activeRun.status === "queued") &&
     activeRun.instanceId === selectedInstanceId
       ? liveOptions
       : undefined) ??
     instance?.configOptions ??
-    [];
+    []
+  ).filter(
+    (option) =>
+      !excludeIds.includes(option.id) && option.id !== "mode" && option.category !== "mode",
+  );
   if (options.length === 0) return null;
 
   const pick = (option: SessionConfigOption, value: ConfigOptionValue) => {
@@ -186,13 +196,16 @@ function SelectOptionPill({
         className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
       >
         <SlidersHorizontal size={12} className="shrink-0 text-text-tertiary" />
-        <span className="max-w-[110px] truncate">{current?.name ?? value}</span>
+        <span className="max-w-[130px] truncate">
+          {option.name} · {current?.name ?? value}
+        </span>
         <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
           <div
+            data-composer-submenu
             role="listbox"
             aria-label={option.name}
             className="absolute bottom-full right-0 z-50 mb-1 max-h-64 w-64 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
@@ -306,7 +319,10 @@ export function AgentPicker() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
+          <div
+            data-composer-submenu
+            className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+          >
             {instances.length === 0 ? (
               <p className="px-3 py-2 text-xs text-text-tertiary">No agent instances detected</p>
             ) : (
@@ -354,6 +370,113 @@ export function AgentPicker() {
 }
 
 /** The agent's session modes (§5.4) — hidden until an agent advertises some. */
+/** Compact always-visible model pill; model details live in the overflow. */
+export function ModelPill({ threadId }: { threadId?: string }) {
+  const instances = useUiStore((s) => s.instances);
+  const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
+  const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
+  const desired = useRunsStore((s) =>
+    threadId ? s.desiredConfigByThread[threadId] : s.desiredConfigByThread[""],
+  );
+  const activeRun = activeRunForThread(runs);
+  const activeRunId = activeRun?.id;
+  const liveOptions = useRunsStore((s) =>
+    activeRunId ? s.viewsByRun[activeRunId]?.configOptions : undefined,
+  );
+  const instance = instances.find((candidate) => candidate.id === selectedInstanceId);
+  const options =
+    (activeRun &&
+    (activeRun.status === "running" || activeRun.status === "queued") &&
+    activeRun.instanceId === selectedInstanceId
+      ? liveOptions
+      : undefined) ??
+    instance?.configOptions ??
+    [];
+  const modelOption = options.find(
+    (option): option is Extract<SessionConfigOption, { type: "select" }> =>
+      option.id === "model" && option.type === "select",
+  );
+  const desiredModel = desired?.model;
+  const values = modelOption ? flattenSelectOptions(modelOption.options) : [];
+  const currentValue =
+    typeof desiredModel === "string" && values.some((value) => value.value === desiredModel)
+      ? desiredModel
+      : modelOption?.currentValue;
+  const label = modelOption
+    ? (values.find((value) => value.value === currentValue)?.name ?? currentValue ?? "Model")
+    : (instance?.displayName ?? "Model");
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const pick = (value: string) => {
+    setOpen(false);
+    useRunsStore.getState().setDesiredConfig(threadId ?? "", "model", value);
+    if (threadId && isTauri()) {
+      runsSetConfigOption(threadId, "model", value).catch((err) =>
+        console.error("runs_set_config_option failed", err),
+      );
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        title={modelOption ? "Model" : "This agent exposes no model picker"}
+        aria-haspopup={modelOption ? "listbox" : undefined}
+        aria-expanded={modelOption ? open : undefined}
+        onClick={() => modelOption && setOpen((current) => !current)}
+        className={`flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-0.5 text-xs text-text-secondary transition ${
+          modelOption ? "hover:bg-hover" : "cursor-default"
+        }`}
+      >
+        {instance && (
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT_CLASSES[instance.status]}`}
+          />
+        )}
+        <span className="max-w-[140px] truncate">{label}</span>
+        {modelOption && <ChevronDown size={12} className="shrink-0 text-text-tertiary" />}
+      </button>
+      {open && modelOption && (
+        <>
+          <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
+          <div
+            data-composer-submenu
+            role="listbox"
+            aria-label="Model"
+            className="absolute bottom-full right-0 z-50 mb-1 max-h-64 w-52 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+          >
+            {values.map((value) => (
+              <button
+                key={value.value}
+                role="option"
+                aria-selected={value.value === currentValue}
+                onClick={() => pick(value.value)}
+                className="flex w-full items-center justify-between px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
+              >
+                <span className="truncate">{value.name}</span>
+                {value.value === currentValue && <Check size={12} className="text-accent" />}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function AgentModePicker({ threadId }: { threadId?: string }) {
   const instances = useUiStore((s) => s.instances);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
@@ -411,7 +534,10 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
+          <div
+            data-composer-submenu
+            className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+          >
             <p className="px-3 py-1.5 text-xs text-text-tertiary">Agent session modes</p>
             {modes.map((mode) => (
               <button
@@ -479,7 +605,10 @@ export function ModePill({ threadId }: { threadId?: string }) {
       {open && (
         <>
           <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
+          <div
+            data-composer-submenu
+            className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+          >
             <p className="px-3 py-1.5 text-xs text-text-tertiary">How freely agents may act here</p>
             {MODES.map((mode) => (
               <button

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowUp, Plus, Square, X } from "lucide-react";
+import { ArrowUp, MoreHorizontal, Paperclip, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
-import { Kbd } from "../ui/kbd";
-import { AgentModePicker, AgentPicker, ConfigOptionPickers, ModePill } from "./ComposerControls";
+import {
+  AgentModePicker,
+  AgentPicker,
+  ConfigOptionPickers,
+  ModePill,
+  ModelPill,
+} from "./ComposerControls";
 import {
   ipcErrorMessage,
   runsCancel,
@@ -92,6 +97,84 @@ function fileToChip(file: File): Promise<ImageChip | null> {
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
+}
+
+/** One overflow menu for every secondary control; one permission control inside. */
+function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      // A nested picker owns this Escape; close it first, then the menu.
+      if (dialogRef.current?.querySelector("[data-composer-submenu]")) return;
+      event.preventDefault();
+      setOpen(false);
+    };
+    const onPointer = (event: MouseEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onPointer);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onPointer);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label="Composer options"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="Composer options"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+      >
+        <MoreHorizontal size={15} />
+      </button>
+      {open && (
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-label="Composer options"
+          data-escape-layer
+          className="absolute right-0 bottom-full z-50 mb-2 w-72 space-y-3 rounded-(--radius-md) border border-border-strong bg-surface-raised p-3 shadow-(--shadow-composer)"
+        >
+          <section>
+            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              Reasoning
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              <ConfigOptionPickers threadId={threadId} excludeIds={["model"]} />
+            </div>
+          </section>
+          <section>
+            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              Session mode
+            </p>
+            <AgentModePicker threadId={threadId} />
+          </section>
+          <section>
+            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              Permission
+            </p>
+            <ModePill threadId={threadId} />
+          </section>
+          <section>
+            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              Agent
+            </p>
+            <AgentPicker />
+          </section>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function Composer({ threadId }: { threadId?: string }) {
@@ -539,7 +622,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           ))}
         </div>
       )}
-      <div className="relative mx-auto w-full max-w-3xl rounded-2xl border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
+      <div className="relative mx-auto w-full max-w-3xl rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
         {runActive && (
           <div
             aria-hidden
@@ -642,16 +725,16 @@ export function Composer({ threadId }: { threadId?: string }) {
               ? "Decision needed — respond to the approval above"
               : "Ask anything. @ files, / commands"
           }
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-4 pb-2 text-base text-text-primary placeholder:text-text-tertiary focus:outline-none"
+          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
         />
-        <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1">
+        <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
           {imageCapable ? (
             <label
               title="Attach images"
               aria-label="Attach images"
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              <Plus size={16} />
+              <Paperclip size={15} />
               <input
                 type="file"
                 accept="image/*"
@@ -668,38 +751,35 @@ export function Composer({ threadId }: { threadId?: string }) {
               title="This agent does not accept images"
               className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary/40"
             >
-              <Plus size={16} />
+              <Paperclip size={15} />
             </span>
           )}
           <ComposerStatusLine threadId={threadId} awaitingDecision={awaitingDecision} />
           <div className="flex-1" />
-          {/* Controls that parameterize the next message (§6.1 control bar),
-              ordered like the reference apps: reasoning ▸ agents ▸ access. */}
-          <ConfigOptionPickers threadId={threadId} />
-          <AgentModePicker threadId={threadId} />
-          <AgentPicker />
-          <ModePill threadId={threadId} />
-          <Kbd>Enter</Kbd>
-          {activeRun?.status === "running" && (
-            <Button
-              variant="secondary"
-              size="sm"
+          <ModelPill threadId={threadId} />
+          <ComposerOverflowMenu threadId={threadId} />
+          {activeRun?.status === "running" && !value.trim() && chips.length === 0 ? (
+            <button
+              type="button"
               onClick={handleStop}
               aria-label="Stop run"
               title="Stop run"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
             >
               <Square size={11} />
-            </Button>
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleSend}
+              aria-label="Send message"
+              title="Send message"
+              disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:opacity-40"
+            >
+              <ArrowUp size={14} />
+            </button>
           )}
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={handleSend}
-            aria-label="Send message"
-            disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
-          >
-            <ArrowUp size={14} />
-          </Button>
         </div>
       </div>
     </div>
