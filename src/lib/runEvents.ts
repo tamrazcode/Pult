@@ -4,6 +4,7 @@ import {
   onPtyOutput,
   onQueueUpdate,
   onRunEvent,
+  onRunEvents,
   onRunStarted,
 } from "./ipc";
 import { isTauri } from "./tauri";
@@ -12,8 +13,32 @@ import { useRunsStore } from "../stores/runs";
 import type { ElicitationSurface } from "../stores/runs";
 import { useTerminalsStore } from "../stores/terminals";
 import { useUiStore } from "../stores/ui";
+import type { AppEvent } from "./types";
 
 let unlisten: (() => void)[] | null = null;
+
+/** Post-fold side effects, shared by single and batched event deliveries. */
+function afterRunEvents(runId: string, events: AppEvent[]): void {
+  let refreshInstances = false;
+  let refreshGit = false;
+  for (const event of events) {
+    if (event.kind === "run_finished" || event.kind === "config_options") {
+      refreshInstances = true;
+    }
+    if (event.kind === "file_changed" || event.kind === "run_finished") {
+      refreshGit = true;
+    }
+  }
+  // The runtime caches agent capabilities during a run's handshake; refresh the
+  // instance list when a run ends or its config options change so composer
+  // gating and pickers stay current.
+  if (refreshInstances) void useUiStore.getState().loadInstances();
+  // Diff panel freshness: every write re-projects the git diff (debounced).
+  if (refreshGit) {
+    const threadId = useRunsStore.getState().runThreadId(runId);
+    if (threadId) scheduleGitRefresh(threadId);
+  }
+}
 
 /**
  * Global event fan-in (§4.2): run events, backend-created runs, and queue
@@ -24,17 +49,11 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   if (!isTauri() || unlisten) return;
   const offRun = await onRunEvent(({ runId, event }) => {
     useRunsStore.getState().receiveRunEvent(runId, event);
-    // The runtime caches agent capabilities during a run's handshake;
-    // refresh the instance list when a run ends or its config options change
-    // so composer gating and pickers stay current.
-    if (event.kind === "run_finished" || event.kind === "config_options") {
-      void useUiStore.getState().loadInstances();
-    }
-    // Diff panel freshness: every write re-projects the git diff (debounced).
-    const threadId = useRunsStore.getState().runThreadId(runId);
-    if (threadId && (event.kind === "file_changed" || event.kind === "run_finished")) {
-      scheduleGitRefresh(threadId);
-    }
+    afterRunEvents(runId, [event]);
+  });
+  const offRunBatch = await onRunEvents(({ runId, events }) => {
+    useRunsStore.getState().receiveRunEventsBatch(runId, events);
+    afterRunEvents(runId, events);
   });
   const offStarted = await onRunStarted((run) => {
     useRunsStore.getState().registerRun(run);
@@ -59,5 +78,5 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offPtyExit = await onPtyExit(({ terminalId, exitCode }) => {
     useTerminalsStore.getState().markExit(terminalId, exitCode);
   });
-  unlisten = [offRun, offStarted, offQueue, offElicitation, offPtyOutput, offPtyExit];
+  unlisten = [offRun, offRunBatch, offStarted, offQueue, offElicitation, offPtyOutput, offPtyExit];
 }

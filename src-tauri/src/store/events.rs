@@ -37,6 +37,60 @@ impl Store {
         })
     }
 
+    /// Appends a batch of events in ONE transaction: a failure rolls the whole
+    /// batch back, so the log never contains a prefix of a turn update.
+    pub fn append_events_batch(&self, events: &[Event]) -> Result<(), PultError> {
+        if events.is_empty() {
+            return Ok(());
+        }
+        let rows = events
+            .iter()
+            .map(split_kind)
+            .collect::<Result<Vec<_>, _>>()?;
+        self.with_conn(|conn| {
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| sql("append_events_batch begin", e))?;
+            for (event, (kind, payload)) in events.iter().zip(rows) {
+                tx.execute(
+                    "INSERT INTO events (id, run_id, seq, ts, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![event.id, event.run_id, event.seq as i64, event.ts, kind, payload],
+                )
+                .map_err(|e| {
+                    if is_unique_violation(&e) {
+                        PultError::store(format!(
+                            "append_event: duplicate (run_id, seq) = ({}, {})",
+                            event.run_id, event.seq
+                        ))
+                    } else {
+                        sql("append_events_batch insert", e)
+                    }
+                })?;
+            }
+            tx.commit()
+                .map_err(|e| sql("append_events_batch commit", e))
+        })
+    }
+
+    /// Every event of a thread across its runs, ordered by run `idx` then `seq`.
+    pub fn load_thread_events(&self, thread_id: &str) -> Result<Vec<Event>, PultError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT e.id, e.run_id, e.seq, e.ts, e.kind, e.payload
+                     FROM events AS e JOIN runs AS r ON r.id = e.run_id
+                     WHERE r.thread_id = ?1
+                     ORDER BY r.idx ASC, e.seq ASC",
+                )
+                .map_err(|e| sql("load_thread_events prepare", e))?;
+            let rows = stmt
+                .query_map([thread_id], event_row)
+                .map_err(|e| sql("load_thread_events query", e))?;
+            read_events(rows, "load_thread_events row")
+        })
+    }
+
     /// The next per-run sequence number: MAX(seq) + 1, or 0 for an empty run.
     pub fn next_seq(&self, run_id: &str) -> Result<u64, PultError> {
         self.with_conn(|conn| {

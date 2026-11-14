@@ -473,6 +473,8 @@ interface RunsState {
   ) => void;
   /** Applies a "run:event" payload; seeds a view for unknown runs. */
   receiveRunEvent: (runId: string, event: AppEvent) => void;
+  /** Applies a whole coalesced batch in ONE store notification. */
+  receiveRunEventsBatch: (runId: string, events: AppEvent[]) => void;
   /** Replaces the thread's queue ("queue:update" / threads_get). */
   setQueue: (threadId: string, items: QueueItem[]) => void;
   /** Thread id for a run, or null when unknown (event fan-in helpers). */
@@ -636,53 +638,60 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       };
     }),
 
-  receiveRunEvent: (runId, event) =>
+  receiveRunEventsBatch: (runId, events) =>
     set((s) => {
-      // Thread-level session state: slash commands and agent-chosen titles.
-      if (event.kind === "commands_update") {
-        const threadId = threadIdForRun(s, runId);
-        if (!threadId) return s;
-        return {
-          commandsByThread: { ...s.commandsByThread, [threadId]: event.payload.commands },
-        };
-      }
-      if (event.kind === "session_info") {
-        const threadId = threadIdForRun(s, runId);
-        const title = event.payload.title?.trim();
-        if (!threadId || !title) return s;
-        // The backend already renamed the thread; patch the local projection.
-        useThreadsStore.getState().renameThreadLocal(threadId, title);
-        return s;
-      }
-      const view = s.viewsByRun[runId] ?? emptyRunView(true);
-      if (s.appliedEvents[runId]?.has(event.id)) return s;
-      const next = applyRunEvent(view, event);
-      // Keep the run record's status live: run_finished arrives as an event
-      // before any threads_get refresh, and the composer reads record status.
+      if (events.length === 0) return s;
+      const threadId = threadIdForRun(s, runId);
+      let view = s.viewsByRun[runId] ?? emptyRunView(true);
       let runsByThread = s.runsByThread;
-      if (event.kind === "run_finished") {
-        const status =
-          event.payload.stopReason === "cancelled"
-            ? "cancelled"
-            : event.payload.stopReason === "failed"
-              ? "failed"
-              : "finished";
-        runsByThread = mapRunRecord(s.runsByThread, runId, (r) => ({
-          ...r,
-          status,
-          stopReason: event.payload.stopReason,
-          error: event.payload.error ?? r.error,
-        }));
+      let commandsByThread = s.commandsByThread;
+      let applied: Set<string> | null = null;
+      let viewChanged = false;
+      for (const event of events) {
+        // Thread-level session state: slash commands and agent-chosen titles.
+        if (event.kind === "commands_update") {
+          if (!threadId) continue;
+          commandsByThread = { ...commandsByThread, [threadId]: event.payload.commands };
+          continue;
+        }
+        if (event.kind === "session_info") {
+          const title = event.payload.title?.trim();
+          if (threadId && title) useThreadsStore.getState().renameThreadLocal(threadId, title);
+          continue;
+        }
+        const seen: Set<string> | undefined = applied ?? s.appliedEvents[runId];
+        if (seen?.has(event.id)) continue;
+        applied ??= new Set(seen ?? []);
+        view = applyRunEvent(view, event);
+        applied.add(event.id);
+        viewChanged = true;
+        // Keep the run record's status live: run_finished arrives as an event
+        // before any threads_get refresh, and the composer reads record status.
+        if (event.kind === "run_finished") {
+          const status =
+            event.payload.stopReason === "cancelled"
+              ? "cancelled"
+              : event.payload.stopReason === "failed"
+                ? "failed"
+                : "finished";
+          runsByThread = mapRunRecord(runsByThread, runId, (r) => ({
+            ...r,
+            status,
+            stopReason: event.payload.stopReason,
+            error: event.payload.error ?? r.error,
+          }));
+        }
       }
+      if (!viewChanged && commandsByThread === s.commandsByThread) return s;
       return {
         runsByThread,
-        viewsByRun: { ...s.viewsByRun, [runId]: next },
-        appliedEvents: {
-          ...s.appliedEvents,
-          [runId]: new Set(s.appliedEvents[runId] ?? []).add(event.id),
-        },
+        viewsByRun: viewChanged ? { ...s.viewsByRun, [runId]: view } : s.viewsByRun,
+        appliedEvents: applied ? { ...s.appliedEvents, [runId]: applied } : s.appliedEvents,
+        commandsByThread,
       };
     }),
+
+  receiveRunEvent: (runId, event) => get().receiveRunEventsBatch(runId, [event]),
 
   setQueue: (threadId, items) =>
     set((s) => ({ queueByThread: { ...s.queueByThread, [threadId]: items } })),

@@ -17,7 +17,8 @@ use crate::drivers::acp::{
     elicitation_reply, fs_error, permission_reply, AcpConn, ClientReply, ClientRequest, SpawnConfig,
 };
 use crate::events::{
-    now_millis, Event, EventKind, PermissionOption as AppPermissionOption, RunTiming,
+    now_millis, Event, EventKind, PermissionOption as AppPermissionOption, RunEventsPayload,
+    RunTiming,
 };
 use crate::runtime::permissions::PermissionMode;
 use crate::runtime::terminals::TerminalRegistry;
@@ -970,12 +971,12 @@ impl AgentRuntime {
 
     /// Persistence/cache side effects of session-metadata events. Applied both
     /// in the live turn loop and when a session/load replay is drained.
-    fn apply_session_metadata(&self, thread_id: &str, instance_id: &str, event: &Event) {
-        if let EventKind::ConfigOptions { options } = &event.kind {
+    fn apply_session_metadata(&self, thread_id: &str, instance_id: &str, kind: &EventKind) {
+        if let EventKind::ConfigOptions { options } = kind {
             self.update_cached_config_options(instance_id, options.clone());
         }
         // Agent-chosen session titles rename the thread live (session_info_update).
-        if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
+        if let EventKind::SessionInfo { title: Some(title) } = kind {
             if !title.trim().is_empty() {
                 if let Err(err) = self.store.rename_thread(thread_id, title) {
                     tracing::warn!(target: "pult::runtime",
@@ -992,6 +993,20 @@ impl AgentRuntime {
             &RunEventPayload {
                 run_id: run_id.to_string(),
                 event: event.clone(),
+            },
+        );
+    }
+
+    /// One IPC round-trip for a whole coalesced batch (streaming hot path).
+    fn emit_run_events(&self, run_id: &str, events: &[Event]) {
+        if events.is_empty() {
+            return;
+        }
+        self.emit(
+            "run:events",
+            &RunEventsPayload {
+                run_id: run_id.to_string(),
+                events: events.to_vec(),
             },
         );
     }
@@ -1122,6 +1137,21 @@ struct RunTask {
     /// Config options picked for this thread; applied before the prompt.
     config: DesiredConfigMap,
     answers_rx: mpsc::UnboundedReceiver<(String, AnswerPayload)>,
+}
+
+/// Persists one coalesced batch in a single transaction, then fans it out as
+/// one `run:events` IPC message. Empty batches are free.
+fn persist_event_batch(
+    runtime: &AgentRuntime,
+    run_id: &str,
+    events: Vec<Event>,
+) -> Result<(), crate::PultError> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    runtime.store.append_events_batch(&events)?;
+    runtime.emit_run_events(run_id, &events);
+    Ok(())
 }
 
 /// Drive one prompt turn: consume projected events + client-side requests
@@ -1316,8 +1346,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         next_seq += 1;
         let _ = runtime.store.append_event(&event);
         runtime.emit_run_event(&run_id, &event);
-        runtime.apply_session_metadata(&thread_id, &instance_id, &event);
+        runtime.apply_session_metadata(&thread_id, &instance_id, &event.kind);
     }
+    // Hot-path batching: deltas coalesce, barriers and the 40 ms tick flush.
+    let mut batcher = crate::runtime::batch::EventBatcher::new(run_id.clone(), next_seq);
 
     // Apply the thread's config picks to this fresh session, then tell the
     // timeline about the effective option set. A rejecting agent never kills
@@ -1339,31 +1371,19 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             Ok(result) => {
                 sync_applied_config(&mut applied_config, &result.config_options);
                 runtime.update_cached_config_options(&instance_id, result.config_options.clone());
-                let event = Event::new(
-                    run_id.clone(),
-                    next_seq,
-                    EventKind::ConfigOptions {
-                        options: result.config_options,
-                    },
-                );
-                next_seq += 1;
-                let _ = runtime.store.append_event(&event);
-                runtime.emit_run_event(&run_id, &event);
+                let flushed = batcher.push(EventKind::ConfigOptions {
+                    options: result.config_options,
+                });
+                let _ = persist_event_batch(&runtime, &run_id, flushed);
             }
             Err(err) => {
                 tracing::warn!(target: "pult::runtime",
                     config = %config_id, error = %err, "desired config was not applied");
-                let event = Event::new(
-                    run_id.clone(),
-                    next_seq,
-                    EventKind::Notice {
-                        level: "warning".to_string(),
-                        message: format!("The agent rejected {config_id}: {err}"),
-                    },
-                );
-                next_seq += 1;
-                let _ = runtime.store.append_event(&event);
-                runtime.emit_run_event(&run_id, &event);
+                let flushed = batcher.push(EventKind::Notice {
+                    level: "warning".to_string(),
+                    message: format!("The agent rejected {config_id}: {err}"),
+                });
+                let _ = persist_event_batch(&runtime, &run_id, flushed);
             }
         }
     }
@@ -1372,7 +1392,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mut pending_elicitations: HashMap<String, PendingElicitation> = HashMap::new();
     let mut failure: Option<String> = None;
     // Assigned on every break path before the post-loop read.
-    let stop_reason: Option<String>;
+    let mut stop_reason: Option<String>;
 
     let mut content = Vec::with_capacity(1 + images.len());
     content.push(crate::protocol::types::ContentBlock::text(text.clone()));
@@ -1385,26 +1405,34 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let prompt_started = std::time::Instant::now();
     let prompt_fut = conn.prompt(&session_id, content);
     tokio::pin!(prompt_fut);
+    let mut batch_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + crate::runtime::batch::BATCH_WINDOW,
+        crate::runtime::batch::BATCH_WINDOW,
+    );
 
     loop {
         tokio::select! {
+            _ = batch_tick.tick() => {
+                match persist_event_batch(&runtime, &run_id, batcher.flush_now()) {
+                    Ok(()) => {}
+                    Err(err) => {
+                        failure = Some(format!("store: {err}"));
+                        stop_reason = Some("failed".to_string());
+                        break;
+                    }
+                }
+            }
             answer = answers_rx.recv() => {
                 if let Some((request_id, payload)) = answer {
                     match payload {
                         AnswerPayload::Permission { option_id } => {
                             if let Some(pending) = pending_permissions.remove(&request_id) {
-                                let event = Event::new(
-                                    run_id.clone(),
-                                    next_seq,
-                                    EventKind::ApprovalResponse {
-                                        request_id: request_id.clone(),
-                                        option_id: option_id.clone(),
-                                        auto: false,
-                                    },
-                                );
-                                next_seq += 1;
-                                let _ = runtime.store.append_event(&event);
-                                runtime.emit_run_event(&run_id, &event);
+                                let flushed = batcher.push(EventKind::ApprovalResponse {
+                                    request_id: request_id.clone(),
+                                    option_id: option_id.clone(),
+                                    auto: false,
+                                });
+                                let _ = persist_event_batch(&runtime, &run_id, flushed);
                                 // Remember allow_always per (instance, tool class).
                                 if let Some(option_id) = &option_id {
                                     if let Some(kind) =
@@ -1446,34 +1474,22 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                         &instance_id,
                                         result.config_options.clone(),
                                     );
-                                    let event = Event::new(
-                                        run_id.clone(),
-                                        next_seq,
-                                        EventKind::ConfigOptions {
-                                            options: result.config_options,
-                                        },
-                                    );
-                                    next_seq += 1;
-                                    let _ = runtime.store.append_event(&event);
-                                    runtime.emit_run_event(&run_id, &event);
+                                    let flushed = batcher.push(EventKind::ConfigOptions {
+                                        options: result.config_options,
+                                    });
+                                    let _ = persist_event_batch(&runtime, &run_id, flushed);
                                 }
                                 Err(err) => {
                                     tracing::warn!(target: "pult::runtime",
                                         config = %config_id, error = %err,
                                         "live config option was not applied");
-                                    let event = Event::new(
-                                        run_id.clone(),
-                                        next_seq,
-                                        EventKind::Notice {
-                                            level: "warning".to_string(),
-                                            message: format!(
-                                                "The agent rejected {config_id}: {err}"
-                                            ),
-                                        },
-                                    );
-                                    next_seq += 1;
-                                    let _ = runtime.store.append_event(&event);
-                                    runtime.emit_run_event(&run_id, &event);
+                                    let flushed = batcher.push(EventKind::Notice {
+                                        level: "warning".to_string(),
+                                        message: format!(
+                                            "The agent rejected {config_id}: {err}"
+                                        ),
+                                    });
+                                    let _ = persist_event_batch(&runtime, &run_id, flushed);
                                 }
                             }
                         }
@@ -1491,18 +1507,24 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         timing.first_delta_ms =
                             Some(prompt_started.elapsed().as_millis() as u64);
                     }
-                    let event = Event::new(run_id.clone(), next_seq, kind);
-                    next_seq += 1;
-                    if let Err(err) = runtime.store.append_event(&event) {
+                    let metadata = matches!(
+                        &kind,
+                        EventKind::ConfigOptions { .. }
+                            | EventKind::SessionInfo { title: Some(_) }
+                    )
+                    .then(|| kind.clone());
+                    let flushed = batcher.push(kind);
+                    if let Err(err) = persist_event_batch(&runtime, &run_id, flushed) {
                         failure = Some(format!("store: {err}"));
                         stop_reason = Some("failed".to_string());
                         break;
                     }
-                    runtime.emit_run_event(&run_id, &event);
-                    if let EventKind::ConfigOptions { options } = &event.kind {
-                        sync_applied_config(&mut applied_config, options);
+                    if let Some(kind) = metadata {
+                        if let EventKind::ConfigOptions { options } = &kind {
+                            sync_applied_config(&mut applied_config, options);
+                        }
+                        runtime.apply_session_metadata(&thread_id, &instance_id, &kind);
                     }
-                    runtime.apply_session_metadata(&thread_id, &instance_id, &event);
                 }
             }
             request = client_requests_rx.recv() => {
@@ -1511,7 +1533,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         ClientRequest::Permission { request_id, params } => {
                             if let Err(err) = handle_permission_request(
                                 &runtime, &conn, &run_id, &thread_id, &instance_id,
-                                &root, &mut next_seq, &mut pending_permissions,
+                                &root, &mut batcher, &mut pending_permissions,
                                 &request_id, params,
                             )
                             .await
@@ -1528,20 +1550,19 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         ClientRequest::WriteFile { request_id, params } => {
                             let (reply, change) = write_file_sandboxed(&root, &params);
                             if let Some((path, diff, added, removed)) = change {
-                                let event = Event::new(
-                                    run_id.clone(),
-                                    next_seq,
-                                    EventKind::FileChanged { path, diff, added, removed },
-                                );
-                                next_seq += 1;
-                                let _ = runtime.store.append_event(&event);
-                                runtime.emit_run_event(&run_id, &event);
+                                let flushed = batcher.push(EventKind::FileChanged {
+                                    path,
+                                    diff,
+                                    added,
+                                    removed,
+                                });
+                                let _ = persist_event_batch(&runtime, &run_id, flushed);
                             }
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::Elicitation { request_id, params } => {
                             if let Err(err) = surface_elicitation(
-                                &runtime, &run_id, &mut next_seq,
+                                &runtime, &run_id, &mut batcher,
                                 &mut pending_elicitations, &request_id, params,
                             ) {
                                 failure = Some(format!("elicitation: {err}"));
@@ -1599,6 +1620,11 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         }
     }
 
+    // The buffered tail must land (and get lower seq) before run_finished.
+    if let Err(err) = persist_event_batch(&runtime, &run_id, batcher.flush_now()) {
+        failure = Some(format!("store: {err}"));
+        stop_reason = Some("failed".to_string());
+    }
     let final_reason = stop_reason.unwrap_or_else(|| "failed".to_string());
     let status = match final_reason.as_str() {
         "cancelled" => "cancelled",
@@ -2151,7 +2177,7 @@ async fn handle_permission_request(
     thread_id: &str,
     instance_id: &str,
     root: &Path,
-    next_seq: &mut u64,
+    batcher: &mut crate::runtime::batch::EventBatcher,
     pending: &mut HashMap<String, PendingPermission>,
     request_id: &RequestId,
     params: RequestPermissionParams,
@@ -2191,24 +2217,18 @@ async fn handle_permission_request(
     );
     if let crate::runtime::permissions::PolicyDecision::AutoResolve(option_id) = decision {
         // Trace row in the event log: never silent (§5.5).
-        let event = Event::new(
-            run_id.to_string(),
-            *next_seq,
-            EventKind::ApprovalResponse {
-                request_id: request_key,
-                option_id: Some(option_id.clone()),
-                auto: true,
-            },
-        );
-        *next_seq += 1;
-        runtime.store.append_event(&event)?;
-        runtime.emit_run_event(run_id, &event);
+        let flushed = batcher.push(EventKind::ApprovalResponse {
+            request_id: request_key,
+            option_id: Some(option_id.clone()),
+            auto: true,
+        });
+        persist_event_batch(runtime, run_id, flushed)?;
         let _ = conn
             .respond_client(request_id.clone(), permission_reply(Some(option_id)))
             .await;
         return Ok(());
     }
-    surface_permission(runtime, run_id, next_seq, pending, request_id, params)
+    surface_permission(runtime, run_id, batcher, pending, request_id, params)
 }
 
 /// ACP ToolKind string of the permission's tool call (""other"" when absent).
@@ -2225,7 +2245,7 @@ fn tool_kind_from_call(params: &RequestPermissionParams) -> String {
 fn surface_permission(
     runtime: &AgentRuntime,
     run_id: &str,
-    next_seq: &mut u64,
+    batcher: &mut crate::runtime::batch::EventBatcher,
     pending: &mut HashMap<String, PendingPermission>,
     request_id: &RequestId,
     params: RequestPermissionParams,
@@ -2244,44 +2264,34 @@ fn surface_permission(
         },
     );
 
-    let event = Event::new(
-        run_id.to_string(),
-        *next_seq,
-        EventKind::ApprovalRequest {
-            request_id: request_key.clone(),
-            tool_call_id: Some(params.tool_call.tool_call_id.clone()),
-            title: params
-                .tool_call
-                .title
-                .clone()
-                .unwrap_or_else(|| "Permission needed".to_string()),
-            options: params
-                .options
-                .iter()
-                .map(|o| AppPermissionOption {
-                    option_id: o.option_id.clone(),
-                    name: o.name.clone(),
-                    kind: o.kind.clone(),
-                })
-                .collect(),
-        },
-    );
-    *next_seq += 1;
-    runtime.store.append_event(&event)?;
-    runtime.emit_run_event(run_id, &event);
+    let title = params
+        .tool_call
+        .title
+        .clone()
+        .unwrap_or_else(|| "Permission needed".to_string());
+    let options: Vec<AppPermissionOption> = params
+        .options
+        .iter()
+        .map(|o| AppPermissionOption {
+            option_id: o.option_id.clone(),
+            name: o.name.clone(),
+            kind: o.kind.clone(),
+        })
+        .collect();
+    let flushed = batcher.push(EventKind::ApprovalRequest {
+        request_id: request_key.clone(),
+        tool_call_id: Some(params.tool_call.tool_call_id.clone()),
+        title: title.clone(),
+        options: options.clone(),
+    });
+    persist_event_batch(runtime, run_id, flushed)?;
     runtime.emit(
         "permission:request",
         &PermissionRequestPayload {
             run_id: run_id.to_string(),
             request_id: request_key.clone(),
-            title: match &event.kind {
-                EventKind::ApprovalRequest { title, .. } => title.clone(),
-                _ => String::new(),
-            },
-            options: match &event.kind {
-                EventKind::ApprovalRequest { options, .. } => options.clone(),
-                _ => Vec::new(),
-            },
+            title,
+            options,
         },
     );
     notify_if_unfocused(runtime, "Approval needed", &request_key);
@@ -2292,7 +2302,7 @@ fn surface_permission(
 fn surface_elicitation(
     runtime: &AgentRuntime,
     run_id: &str,
-    next_seq: &mut u64,
+    batcher: &mut crate::runtime::batch::EventBatcher,
     pending: &mut HashMap<String, PendingElicitation>,
     request_id: &RequestId,
     params: CreateElicitationParams,
@@ -2304,17 +2314,11 @@ fn surface_elicitation(
             wire_id: request_id.clone(),
         },
     );
-    let event = Event::new(
-        run_id.to_string(),
-        *next_seq,
-        EventKind::ElicitationRequest {
-            message: params.message.clone(),
-            detail: params.detail.clone(),
-        },
-    );
-    *next_seq += 1;
-    runtime.store.append_event(&event)?;
-    runtime.emit_run_event(run_id, &event);
+    let flushed = batcher.push(EventKind::ElicitationRequest {
+        message: params.message.clone(),
+        detail: params.detail.clone(),
+    });
+    persist_event_batch(runtime, run_id, flushed)?;
     runtime.emit(
         "elicitation:request",
         &ElicitationRequestPayload {
@@ -2478,6 +2482,7 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     Ok(joined)
 }
 
+pub mod batch;
 pub mod permissions;
 pub mod pool;
 pub mod ptys;

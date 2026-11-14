@@ -147,6 +147,14 @@ pub struct RunTiming {
     pub total_ms: u64,
 }
 
+/// Batch of run events fanned out as one Tauri event (streaming coalescing).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEventsPayload {
+    pub run_id: String,
+    pub events: Vec<Event>,
+}
+
 /// One persisted event: app ids are primary; seq is per-run and append-only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

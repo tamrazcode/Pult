@@ -298,6 +298,12 @@ export interface RunEventPayload {
   event: AppEvent;
 }
 
+/** Payload of the batched "run:events" Tauri event (streaming coalescing). */
+export interface RunEventsPayload {
+  runId: string;
+  events: AppEvent[];
+}
+
 /** Payload of the "agent:process" Tauri event. */
 export interface AgentProcessPayload {
   instanceId: string;

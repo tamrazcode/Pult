@@ -22,6 +22,7 @@ import type {
   QueueUpdatedPayload,
   Run,
   RunEventPayload,
+  RunEventsPayload,
   SendOutcome,
   Thread,
   ThreadDetail,
@@ -356,6 +357,10 @@ export function onPtyExit(handler: (payload: PtyExitPayload) => void): Promise<U
 
 export function onRunEvent(handler: (payload: RunEventPayload) => void): Promise<UnlistenFn> {
   return listenOrNoop<RunEventPayload>("run:event", handler);
+}
+
+export function onRunEvents(handler: (payload: RunEventsPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<RunEventsPayload>("run:events", handler);
 }
 
 export function onThreadUpdate(handler: (thread: Thread) => void): Promise<UnlistenFn> {

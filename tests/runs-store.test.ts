@@ -351,4 +351,106 @@ describe("runs store", () => {
     expect(items[0].runId).toBe("r1");
     expect(items[0].showCaret).toBe(false);
   });
+
+  it("folds receiveRunEventsBatch identically to receiveRunEvent with a single subscriber notification", () => {
+    const events: AppEvent[] = [
+      {
+        id: "r1-0",
+        runId: "r1",
+        seq: 0,
+        ts: 100,
+        kind: "user_message",
+        payload: { text: "hello", images: [] },
+      },
+      {
+        id: "r1-1",
+        runId: "r1",
+        seq: 1,
+        ts: 110,
+        kind: "agent_thought_delta",
+        payload: { delta: "pondering" },
+      },
+      {
+        id: "r1-2",
+        runId: "r1",
+        seq: 2,
+        ts: 120,
+        kind: "agent_message_delta",
+        payload: { delta: "part 1 " },
+      },
+      {
+        id: "r1-3",
+        runId: "r1",
+        seq: 3,
+        ts: 130,
+        kind: "agent_message_delta",
+        payload: { delta: "part 2" },
+      },
+      {
+        id: "r1-4",
+        runId: "r1",
+        seq: 4,
+        ts: 140,
+        kind: "tool_call",
+        payload: {
+          toolCallId: "tc-1",
+          title: "Read",
+          kind: "read",
+          status: "in_progress",
+          locations: ["src/main.rs"],
+        },
+      },
+      {
+        id: "r1-5",
+        runId: "r1",
+        seq: 5,
+        ts: 150,
+        kind: "tool_call_update",
+        payload: { toolCallId: "tc-1", status: "completed" },
+      },
+      {
+        id: "r1-6",
+        runId: "r1",
+        seq: 6,
+        ts: 160,
+        kind: "run_finished",
+        payload: { stopReason: "end_turn" },
+      },
+    ];
+
+    useRunsStore.getState().registerRun(run("r1", "th", "running", 0));
+    for (const ev of events) {
+      useRunsStore.getState().receiveRunEvent("r1", ev);
+    }
+    const expectedView = structuredClone(useRunsStore.getState().viewsByRun["r1"]);
+    const expectedRun = structuredClone(useRunsStore.getState().runsByThread["th"][0]);
+
+    useRunsStore.setState({
+      runsByThread: {},
+      viewsByRun: {},
+      appliedEvents: {},
+      commandsByThread: {},
+      queueByThread: {},
+    });
+    useRunsStore.getState().registerRun(run("r1", "th", "running", 0));
+
+    let notifications = 0;
+    const unsubscribe = useRunsStore.subscribe(() => {
+      notifications += 1;
+    });
+    try {
+      (
+        useRunsStore.getState() as unknown as {
+          receiveRunEventsBatch: (runId: string, events: AppEvent[]) => void;
+        }
+      ).receiveRunEventsBatch("r1", events);
+    } finally {
+      unsubscribe();
+    }
+
+    expect(notifications).toBe(1);
+    expect(useRunsStore.getState().viewsByRun["r1"]).toEqual(expectedView);
+    expect(useRunsStore.getState().runsByThread["th"][0]).toEqual(expectedRun);
+    expect(useRunsStore.getState().runsByThread["th"][0].status).toBe("finished");
+  });
 });

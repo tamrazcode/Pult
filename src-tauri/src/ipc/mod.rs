@@ -100,31 +100,33 @@ pub fn threads_list(
 }
 
 #[tauri::command]
-pub fn threads_get(
+pub async fn threads_get(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
 ) -> Result<ThreadDetail, PultError> {
-    let thread = runtime.store().get_thread(&thread_id)?;
-    // Read the live-run id before the runs so a run finishing between the two
-    // reads never looks like a zombie from a previous session.
-    let active_run_id = runtime.active_run_for(&thread_id);
-    let desired_mode = runtime.desired_mode(&thread_id);
-    let desired_config = runtime.desired_config(&thread_id);
-    let runs = runtime.store().list_runs(&thread_id)?;
-    let mut events = Vec::new();
-    for run in &runs {
-        events.extend(runtime.store().load_events(&run.id)?);
-    }
-    let queue = runtime.store().list_queue(&thread_id)?;
-    Ok(ThreadDetail {
-        thread,
-        runs,
-        events,
-        queue,
-        active_run_id,
-        desired_mode,
-        desired_config,
+    let runtime = runtime.inner().clone();
+    tokio::task::spawn_blocking(move || -> Result<ThreadDetail, PultError> {
+        let thread = runtime.store().get_thread(&thread_id)?;
+        // Read the live-run id before the runs so a run finishing between the two
+        // reads never looks like a zombie from a previous session.
+        let active_run_id = runtime.active_run_for(&thread_id);
+        let desired_mode = runtime.desired_mode(&thread_id);
+        let desired_config = runtime.desired_config(&thread_id);
+        let runs = runtime.store().list_runs(&thread_id)?;
+        let events = runtime.store().load_thread_events(&thread_id)?;
+        let queue = runtime.store().list_queue(&thread_id)?;
+        Ok(ThreadDetail {
+            thread,
+            runs,
+            events,
+            queue,
+            active_run_id,
+            desired_mode,
+            desired_config,
+        })
     })
+    .await
+    .map_err(|e| PultError::internal(format!("threads_get: {e}")))?
 }
 
 #[tauri::command]

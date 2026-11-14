@@ -534,3 +534,133 @@ fn boot_resets_orphaned_run_states_without_touching_updated_at() {
     // Idempotent: a second boot finds nothing to reset.
     assert_eq!(store.reset_orphaned_run_states().unwrap(), 0);
 }
+
+#[test]
+fn append_events_batch_is_atomic_and_inserts_all() {
+    let store = Store::open_in_memory().unwrap();
+    setup_run(&store, "r-1");
+
+    let batch: Vec<Event> = (0..100u64)
+        .map(|seq| {
+            event(
+                "r-1",
+                seq,
+                EventKind::AgentMessageDelta {
+                    delta: format!("chunk-{seq}"),
+                },
+            )
+        })
+        .collect();
+    store.append_events_batch(&batch).unwrap();
+
+    let loaded = store.load_events("r-1").unwrap();
+    assert_eq!(loaded.len(), 100);
+    assert_eq!(loaded, batch);
+
+    // Empty batch should succeed as a no-op.
+    store.append_events_batch(&[]).unwrap();
+
+    // A batch whose middle event duplicates an existing (run_id, seq) must
+    // error and roll back the entire transaction so none of it is inserted.
+    let mut dup = event(
+        "r-1",
+        50,
+        EventKind::Notice {
+            level: "info".to_string(),
+            message: "duplicate".to_string(),
+        },
+    );
+    dup.id = "r-1-dup-50".to_string();
+    let bad_batch = vec![
+        event(
+            "r-1",
+            100,
+            EventKind::Notice {
+                level: "info".to_string(),
+                message: "before conflict".to_string(),
+            },
+        ),
+        dup,
+        event(
+            "r-1",
+            101,
+            EventKind::Notice {
+                level: "info".to_string(),
+                message: "after conflict".to_string(),
+            },
+        ),
+    ];
+    assert!(store.append_events_batch(&bad_batch).is_err());
+
+    let after_rollback = store.load_events("r-1").unwrap();
+    assert_eq!(after_rollback.len(), 100);
+    assert_eq!(after_rollback, batch);
+}
+
+#[test]
+fn load_thread_events_orders_across_runs() {
+    let store = Store::open_in_memory().unwrap();
+    store.create_thread(&thread("t-1", 1_000)).unwrap();
+    store.create_thread(&thread("t-other", 1_000)).unwrap();
+
+    // Create idx=1 before idx=0 and interleave seq inserts so order cannot
+    // come from insertion order.
+    store.create_run(&run("r-2", "t-1", 1)).unwrap();
+    store.create_run(&run("r-1", "t-1", 0)).unwrap();
+    store.create_run(&run("r-other", "t-other", 0)).unwrap();
+
+    store
+        .append_events_batch(&[
+            event(
+                "r-2",
+                2,
+                EventKind::AgentMessageDelta {
+                    delta: "r2-2".to_string(),
+                },
+            ),
+            event(
+                "r-1",
+                1,
+                EventKind::AgentMessageDelta {
+                    delta: "r1-1".to_string(),
+                },
+            ),
+            event(
+                "r-other",
+                0,
+                EventKind::Notice {
+                    level: "info".to_string(),
+                    message: "other".to_string(),
+                },
+            ),
+            event(
+                "r-2",
+                0,
+                EventKind::UserMessage {
+                    text: "r2-0".to_string(),
+                    images: Vec::new(),
+                },
+            ),
+            event(
+                "r-1",
+                0,
+                EventKind::UserMessage {
+                    text: "r1-0".to_string(),
+                    images: Vec::new(),
+                },
+            ),
+            event(
+                "r-2",
+                1,
+                EventKind::AgentMessageDelta {
+                    delta: "r2-1".to_string(),
+                },
+            ),
+        ])
+        .unwrap();
+
+    let loaded = store.load_thread_events("t-1").unwrap();
+    let ids: Vec<&str> = loaded.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, vec!["r-1-0", "r-1-1", "r-2-0", "r-2-1", "r-2-2"]);
+    assert!(store.load_thread_events("missing-thread").unwrap().is_empty());
+}
