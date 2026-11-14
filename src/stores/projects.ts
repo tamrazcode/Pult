@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import { projectsCreate, projectsDelete, projectsList, projectsUpdate } from "../lib/ipc";
+import {
+  ipcErrorMessage,
+  projectsCreate,
+  projectsDelete,
+  projectsList,
+  projectsUpdate,
+} from "../lib/ipc";
+import { useUiStore } from "./ui";
 import type { Project } from "../lib/types";
 
 export const PROJECT_COLORS = [
@@ -57,8 +64,12 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   loaded: false,
 
   loadProjects: async () => {
-    const projects = await projectsList();
-    set({ projects: sortProjects(projects), loaded: true });
+    try {
+      const projects = await projectsList();
+      set({ projects: sortProjects(projects), loaded: true });
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+    }
   },
 
   selectProject: (selectedProjectId) => set({ selectedProjectId }),
@@ -85,7 +96,11 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   togglePin: async (id) => {
     const project = get().projects.find((candidate) => candidate.id === id);
     if (!project) return;
-    await get().updateProject(id, { pinned: !project.pinned });
+    try {
+      await get().updateProject(id, { pinned: !project.pinned });
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+    }
   },
 
   deleteProject: async (id) => {

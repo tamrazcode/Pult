@@ -238,6 +238,7 @@ describe("Sidebar", () => {
     useUiStore.setState({
       instances: [],
       selectedInstanceId: null,
+      collapsedProjects: [],
     });
   });
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -93,7 +93,7 @@ function ThreadRow({
         type="button"
         aria-label={thread.pinned ? "Unstar thread" : "Star thread"}
         onClick={onStar}
-        className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover ${
+        className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover focus-visible:opacity-100 ${
           thread.pinned ? "text-warning" : "text-text-tertiary opacity-0 group-hover:opacity-100"
         }`}
       >
@@ -141,9 +141,9 @@ function ProjectRow({
       </button>
       <button
         type="button"
-        aria-label="Star project"
+        aria-label={project.pinned ? "Unstar project" : "Star project"}
         onClick={onStar}
-        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover ${
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover focus-visible:opacity-100 ${
           project.pinned ? "text-warning" : "text-text-tertiary opacity-0 group-hover:opacity-100"
         }`}
       >
@@ -153,7 +153,7 @@ function ProjectRow({
         type="button"
         aria-label="New thread in project"
         onClick={onNewThread}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary group-hover:opacity-100"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary focus-visible:opacity-100 group-hover:opacity-100"
       >
         <Plus size={12} />
       </button>
@@ -163,16 +163,18 @@ function ProjectRow({
 
 export function Sidebar({ width }: { width: number }) {
   const projects = useProjectsStore((s) => s.projects);
+  const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const threads = useThreadsStore((s) => s.threads);
   const unreadIds = useThreadsStore((s) => s.unreadIds);
+  const collapsedProjects = useUiStore((s) => s.collapsedProjects);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SidebarFilter>("all");
   const [filterOpen, setFilterOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -180,14 +182,26 @@ export function Sidebar({ width }: { width: number }) {
     void useThreadsStore.getState().loadThreads();
   }, []);
 
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!filterRef.current?.contains(event.target as Node)) setFilterOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFilterOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [filterOpen]);
+
+  const unreadSet = useMemo(() => new Set(unreadIds), [unreadIds]);
   const groups = useMemo(
-    () =>
-      buildSidebarGroups(projects, threads, {
-        query,
-        filter,
-        unreadIds: new Set(unreadIds),
-      }),
-    [projects, threads, query, filter, unreadIds],
+    () => buildSidebarGroups(projects, threads, { query, filter, unreadIds: unreadSet }),
+    [projects, threads, query, filter, unreadSet],
   );
 
   const openThread = (thread: Thread) => {
@@ -252,10 +266,11 @@ export function Sidebar({ width }: { width: number }) {
             className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
         </div>
-        <div className="relative">
+        <div ref={filterRef} className="relative">
           <button
             type="button"
             aria-label="Filter threads"
+            aria-haspopup="menu"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen((open) => !open)}
             className={`flex h-8 w-8 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover hover:text-text-secondary ${
@@ -273,6 +288,7 @@ export function Sidebar({ width }: { width: number }) {
               {FILTERS.map((option) => (
                 <button
                   key={option.id}
+                  type="button"
                   role="menuitemradio"
                   aria-checked={filter === option.id}
                   onClick={() => {
@@ -302,7 +318,9 @@ export function Sidebar({ width }: { width: number }) {
         <button
           type="button"
           aria-label="New thread"
-          onClick={() => newThread(null)}
+          onClick={() =>
+            newThread(projects.find((project) => project.id === selectedProjectId) ?? null)
+          }
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
           <SquarePen size={15} />
@@ -312,21 +330,14 @@ export function Sidebar({ width }: { width: number }) {
       <nav className="min-h-0 flex-1 overflow-y-auto px-1 pb-4" aria-label="Threads">
         {groups.map((group) => {
           const key = group.project?.id ?? "__none__";
-          const isCollapsed = group.project ? collapsed.has(group.project.id) : false;
+          const isCollapsed = group.project ? collapsedProjects.includes(group.project.id) : false;
           return (
             <section key={key} className="mb-2">
               {group.project ? (
                 <ProjectRow
                   project={group.project}
                   collapsed={isCollapsed}
-                  onToggle={() =>
-                    setCollapsed((current) => {
-                      const next = new Set(current);
-                      if (next.has(group.project!.id)) next.delete(group.project!.id);
-                      else next.add(group.project!.id);
-                      return next;
-                    })
-                  }
+                  onToggle={() => useUiStore.getState().toggleProjectCollapsed(group.project!.id)}
                   onNewThread={() => newThread(group.project)}
                   onStar={() => void useProjectsStore.getState().togglePin(group.project!.id)}
                 />
@@ -342,7 +353,7 @@ export function Sidebar({ width }: { width: number }) {
                       key={thread.id}
                       thread={thread}
                       active={pathname === `/thread/${thread.id}` || activeThreadId === thread.id}
-                      unread={unreadIds.includes(thread.id)}
+                      unread={unreadSet.has(thread.id)}
                       onNavigate={() => openThread(thread)}
                       onStar={() =>
                         void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned)

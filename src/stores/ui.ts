@@ -57,6 +57,9 @@ interface UiState {
   globalError: GlobalError | null;
   newThreadOptions: NewThreadOptions;
   toggleSidebar: () => void;
+  /** Project ids whose thread list is collapsed (session memory). */
+  collapsedProjects: string[];
+  toggleProjectCollapsed: (projectId: string) => void;
   toggleRightPanel: () => void;
   setRightPanelTab: (tab: RightPanelTab) => void;
   setPaletteOpen: (open: boolean) => void;
@@ -130,6 +133,7 @@ async function ensureProcessEventSubscription(): Promise<void> {
 
 export const useUiStore = create<UiState>((set) => ({
   sidebarOpen: true,
+  collapsedProjects: [],
   sidebarWidth: 288, // w-72 default (§6.1)
   rightPanelOpen: false,
   rightPanelWidth: 420, // slightly wider than the old fixed w-96
@@ -142,6 +146,12 @@ export const useUiStore = create<UiState>((set) => ({
   globalError: null,
   newThreadOptions: { workspace: "", worktree: false },
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  toggleProjectCollapsed: (projectId) =>
+    set((s) => ({
+      collapsedProjects: s.collapsedProjects.includes(projectId)
+        ? s.collapsedProjects.filter((id) => id !== projectId)
+        : [...s.collapsedProjects, projectId],
+    })),
   toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
   setRightPanelTab: (tab) => set({ rightPanelTab: tab, rightPanelOpen: true }),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),

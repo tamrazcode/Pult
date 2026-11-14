@@ -65,9 +65,11 @@ export function buildSidebarGroups(
     project,
     threads: sortGroupThreads(visible.filter((thread) => thread.projectId === project.id)),
   }));
+  const keepEmptyProjects = opts.filter === "all" && query === "";
+  const shown = keepEmptyProjects ? groups : groups.filter((group) => group.threads.length > 0);
   const orphans = sortGroupThreads(visible.filter((thread) => thread.projectId === null));
-  if (orphans.length > 0) groups.push({ project: null, threads: orphans });
-  return groups;
+  if (orphans.length > 0) shown.push({ project: null, threads: orphans });
+  return shown;
 }
 
 function upsertSorted(threads: Thread[], thread: Thread): Thread[] {
@@ -127,9 +129,11 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     else ids.delete(threadId);
     const unreadIds = [...ids];
     set({ unreadIds });
-    void settingsSet("unread_threads", unreadIds).catch((err) =>
-      console.error("unread_threads persist failed", err),
-    );
+    if (isTauri()) {
+      void settingsSet("unread_threads", unreadIds).catch((err) =>
+        console.error("unread_threads persist failed", err),
+      );
+    }
   },
   upsertThread: (thread) => set((s) => ({ threads: upsertSorted(s.threads, thread) })),
   renameThreadLocal: (threadId, title) =>
@@ -138,7 +142,11 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         t.id === threadId ? { ...t, title, updatedAt: Date.now() } : t,
       ),
     })),
-  removeThread: (threadId) => set((s) => ({ threads: s.threads.filter((t) => t.id !== threadId) })),
+  removeThread: (threadId) =>
+    set((s) => ({
+      threads: s.threads.filter((t) => t.id !== threadId),
+      unreadIds: s.unreadIds.filter((id) => id !== threadId),
+    })),
 
   loadThreads: async () => {
     await ensureThreadUpdateSubscription();
@@ -147,10 +155,15 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         threadsList(), // [] outside Tauri
         settingsGet("unread_threads"),
       ]);
-      const unreadIds = Array.isArray(savedUnread)
+      const savedIds = Array.isArray(savedUnread)
         ? savedUnread.filter((id): id is string => typeof id === "string")
-        : get().unreadIds;
-      set({ threads: sortThreads(threads), unreadIds, loaded: true });
+        : [];
+      // Merge with marks made while the snapshot was in flight; opening a
+      // thread wins over a stale saved unread id.
+      const merged = new Set([...savedIds, ...get().unreadIds]);
+      const activeThreadId = get().activeThreadId;
+      if (activeThreadId) merged.delete(activeThreadId);
+      set({ threads: sortThreads(threads), unreadIds: [...merged], loaded: true });
     } catch (err) {
       console.error("threads_list failed", err);
       // Storage failures get a designed banner (§8 M7), not a silent list.
@@ -192,9 +205,13 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   setThreadPinned: async (threadId, pinned) => {
-    await threadsSetPinned(threadId, pinned);
-    set((s) => ({
-      threads: s.threads.map((t) => (t.id === threadId ? { ...t, pinned } : t)),
-    }));
+    try {
+      await threadsSetPinned(threadId, pinned);
+      set((s) => ({
+        threads: s.threads.map((t) => (t.id === threadId ? { ...t, pinned } : t)),
+      }));
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+    }
   },
 }));
