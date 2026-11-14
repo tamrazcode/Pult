@@ -1,0 +1,16 @@
+node_modules/
+dist/
+*.local
+*.log
+.DS_Store
+.vite/
+src-tauri/target/
+src-tauri/gen/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+coverage/
+fixtures/mock-repo/
+fixtures/mock-remote.git/
+fixtures/gh-mock-log.txt

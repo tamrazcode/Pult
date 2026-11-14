@@ -1,0 +1,711 @@
+# DEVLOG
+
+One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
+
+## UX pass — composer-driven controls, one-click agents, resizable panes (2026-11-14)
+
+**Scope shipped.** The §6.1 composer contract, finally all the way: the control bar now
+carries instance ▸ session mode ▸ permission pill (moved out of the chat header, which keeps
+thread identity only), a status line with the run target (workspace path · git branch,
+`\?\?\` prefix stripped, home shortened to `~`), a "+" attach button, and a progress hairline
+traveling the composer's top edge while a turn runs (hidden under
+`prefers-reduced-motion`). One-click agents: detection gained Codex (official
+`@agentclientprotocol/codex-acp` bridge — the handshake was probed live on this machine:
+"Codex 2.6.0, loadSession, image ✓") and OpenCode (native `opencode acp`); every detected
+CLI carries a prefilled command, and the Connect button in Providers/onboarding adds the
+instance and immediately runs a preflight (spawn → initialize → cache caps → kill; no prompt
+is ever sent, so the check is free) reporting Connected / needs sign-in / error on the row.
+Resizable panes (§6.1 "resizable", shipped late): drag the sidebar edge (220–480 px) or the
+right panel's (300–720 px); the handle is a keyboard-complete `separator`
+(Arrows/Home/End) and widths persist in the settings table. A real settings gear in the
+topbar plus `Ctrl+,` through the palette registry (rebindable). Brand icon: prompt-glyph
+mark (accent chevron + caret on the T3 dark square) replacing the placeholder sliders —
+regenerated the full icon set. Boot hygiene: `reset_orphaned_run_states()` flips threads
+stuck in `working`/`waiting` by a killed process to drafts (no dead spinners, `updated_at`
+untouched).
+
+**Verification.** Rust 86/86 (incl. the orphan-reset store test), clippy `-D warnings` clean;
+typecheck/lint green, vitest 54/54, Playwright smoke 5/5. Release bundle rebuilt with the new
+icon and signed updater artifacts; the running instance swapped to it and the composer bar /
+resize handles / connect rows verified over CDP screenshots. Live evidence for the codex
+adapter: `npx -y @agentclientprotocol/codex-acp` answered the initialize handshake on this
+machine.
+
+**Bugs fixed on the way.**
+
+1. Onboarding "Add" **replaced the whole instance list** with the one agent
+   (`providersInstancesSave([spec])` on a fresh array) — now appends.
+2. Adding an agent in settings did not refresh the composer's agent picker (ui store loaded
+   instances once at mount) — every add/remove now refreshes the store.
+3. Detection test would have rejected the new `opencode` id and the now-mandatory one-click
+   commands — updated with the stricter invariant (every detected agent ships a command).
+
+**Decisions.**
+
+1. **Controls follow the decision point** (the layout thesis of this pass): anything that
+   parameterizes the next message lives in the composer bar; the header carries identity.
+   The panel toggles stay in the topbar because they shape the workspace, not the message.
+2. **Preflight instead of a test prompt**: connecting should never cost tokens or touch a
+   session, so the check is initialize-only; `needs_auth` surfaces from `authMethods` with
+   the agent's own sign-in command in the tooltip.
+3. **Resize persistence on commit, not on every pixel** — pointer-up / keyboard step writes
+   the setting once (`layout` JSON key), keeping the settings table quiet during drags.
+4. **Widths live in the ui store** (view state), persisted through the generic settings
+   table rather than a new backend concept.
+
+**Known issues / gaps.**
+
+- OpenCode is connected via its documented native `opencode acp` mode, but the CLI is not
+  installed on this machine — the adapter command is upstream-verified, the live handshake
+  was not exercised here (Codex was).
+- Panel widths persist but are not per-thread (global layout, as in reference IDEs).
+
+## M8 — Distribution (2026-11-14)
+
+**Scope shipped.** Bundler config per OS: `bundle.targets: "all"` produces the NSIS installer
+and MSI on Windows (dmg/deb/AppImage on macOS/Linux by the same config), with
+`createUpdaterArtifacts: true` so every bundle ships with a sidecar `.sig`. Updater plugin
+(`tauri-plugin-updater`) wired with the `updater:default` capability and a real minisign
+keypair: the public key lives in `tauri.conf.json`, the private key was generated outside the
+repo (`~/.tauri/pult.key`, empty passphrase) via `tauri signer generate` — documented in the
+README together with the endpoint swap procedure (placeholder `releases.pult.local`; nothing
+calls the updater at startup, so the placeholder is harmless). First-run notes for macOS
+Gatekeeper in the README. README rewritten around real screenshots (`docs/screenshots/`:
+dark/light/graphite chat, palette, diff panel, appearance settings — captured from the live
+app over CDP), config reference, keyboard map, and the build/distribution story. CHANGELOG
+introduced with per-milestone entries. Version stays 0.1.0 (dev line, unreleased).
+
+**Verification.** `pnpm tauri build` completed end-to-end with signing:
+`pult_0.1.0_x64_en-US.msi` (7.7 MiB NSIS setup alongside) plus **two updater signatures**
+(`.msi.sig`, `.exe.sig`) produced with `TAURI_SIGNING_PRIVATE_KEY` — proving the keypair and
+the updater artifact pipeline work. The release binary (`target/release/pult-core.exe`)
+launched standalone — embedded production assets serve at `tauri.localhost/chat`, no dev
+server — and was killed after the smoke check. Frontend gates green (typecheck/lint/vitest
+54/54/build, Playwright 5/5), Rust gates green (85/85, clippy `-D warnings`).
+
+**Decisions.**
+
+1. **Dev keypair committed as pubkey-only** — the private key never enters the repo;
+   the README's procedure regenerates both for production.
+2. **Updater stays inert** until an endpoint+pubkey pair that actually resolves is
+   configured: the plugin registers but no code path calls it at startup, so shipping the
+   placeholder is safe.
+3. **Screenshots from the real window over CDP** (not mockups): they double as the visual
+   record of the M7 themes/palette/diff work.
+
+**Known issues / gaps.**
+
+- One commit+push (author "pult demo") landed in `fixtures/mock-repo` during the M8
+  walkthrough containing the dirty walkthrough state (README modification + an untracked
+  demo file). No auto-commit path exists in the code (store `refresh` is read-only; the
+  commit/push buttons require clicks), so the most plausible cause is a stray CDP click on
+  the diff-panel action chain during screenshot automation; the mock `gh` log shows no
+  `pr create`, matching a chain stop after push. No recurrence observed; the fixture repo is
+  a demo playground by design.
+- Windows builds are unsigned (no Authenticode cert in this environment); CI signing is a
+  documented seam, not wired.
+- macOS/Linux bundles are configured but not exercised on this machine (Windows-only dev
+  box); `targets: "all"` delegates to the bundler per host.
+
+## M7 — Polish: themes, palette, keybindings, error states, smoke suite (2026-11-14)
+
+**Scope shipped.** Themes (§6.6): `themes/light.css` and `themes/graphite.css` override only
+the token block (dark stays the default in `tokens.css`); a vitest suite parses all three
+files and asserts WCAG ≥ 4.5:1 for every text token on canvas/surface/chrome/raised, accent
+foreground on accent, and diff foregrounds on canvas — the light palette was tuned until it
+passed (`--text-tertiary` went #737373 → #6b6b6b). `settings.appearance` offers theme cards
+with live swatches and a 10-stop accent hue picker that regenerates accent/mention/monogram
+tokens via HSL (bright hues flip `--accent-fg` to the canvas ink by computed luminance).
+Settings persist through new `settings_get`/`settings_set` IPC commands over the §4.5 sqlite
+settings table; the store hydrates at boot and applies before first paint. Command palette
+(§6.7): one data registry (`lib/commands.ts`) drives both the ⌘K palette (type-to-filter, ↑↓,
+Enter, sections: Navigate/Actions/Threads/Appearance/Settings, recent threads included) and
+the global hotkey handler; keyboard hints show the effective binding. Keybindings page rebinds
+the five bound commands (click, press, Esc cancels, reset per row); overrides persist. The
+sidebar search button and "Add project…" footer buttons now do real things (palette; the
+/chat workspace strip) instead of being dead controls. Error states (§8 M7): agent crash —
+an `AcpConn` death flag distinguishes a mid-run process death from our own `kill()` and emits
+the `agent:process` `crashed` event the banner was waiting for; storage — thread-load
+failures raise a global banner; protocol — the run-level CrashBanner gained "Retry last
+message" (re-dispatches the last user turn). All three render a designed recovery path
+(dismiss / open diagnostics / retry), never a silent stall. A route-level error card replaces
+blank panes on render crashes. FPS overlay (§6.5) behind `?fps=1` or `localStorage["pult.fps"]`,
+showing rolling fps + worst frame time. Long transcripts render a 300-item tail window with
+"Earlier messages (N hidden)" expansion so a 10k-event thread stays bounded. Playwright smoke
+suite (`tests/e2e`, 5 specs) runs against the vite dev server in system Edge (WebView2's
+engine — no chromium download): shell boots with zero console errors, palette opens/filters/
+switches themes, settings routes render, accent pick regenerates tokens live, fps flag works.
+Empty states audited across routes/shelves/panels (already designed in M0–M6; the a11y pass
+added `aria-current` settings nav, radiogroups for theme/accent with `aria-checked`,
+labels/aria-labels on new controls, and the palette is a keyboard-complete `dialog/listbox`).
+
+**Verification.** Rust 85/85, clippy `-D warnings` clean. Frontend typecheck/lint green,
+vitest 54/54 (theme contrast 10, hotkeys/palette 6), build green, Playwright smoke 5/5. Live
+walkthrough in the real window over CDP: Ctrl+K opened the palette, "Theme: Light" applied
+`data-theme=light`, the purple accent set `hsl(270 …)` on `--accent`, and **after a page
+reload both were restored from the backend settings table** (settings_get/set end-to-end);
+rebinding palette-open to Ctrl+Alt+P worked (old combo dead, new combo live, reset restored
+Ctrl+K); the agent-crash banner appeared after a real mid-turn process death
+(MOCK_CRASH_MID_TURN=1 set through the providers UI), "Open diagnostics" navigated and
+dismissed, and a recovery run finished `end_turn` after the env was removed through the same
+UI.
+
+**Bugs found and fixed during the walkthrough.**
+
+1. **Bare modifier keydowns captured as bindings** — pressing Ctrl+Alt+P fired a keydown
+   whose key is `"Control"` first, so the recorder stored `Mod+Control`, which then matched
+   every subsequent Ctrl press and hijacked the keyboard. Fixed twice over: the recorder
+   ignores Control/Shift/Alt/Meta keydowns, and `setKeybinding` refuses bindings that end in
+   a bare modifier.
+2. **Case-sensitive hotkey matching** — `matchesBinding` compared the binding's `"K"` against
+   the event's lowercase `"k"`, so the palette default never matched; the smoke suite caught
+   it. Keys are now normalized on both sides.
+3. **Mid-run agent deaths emitted no `crashed` process event** (only spawn failures did), so
+   the crash banner never fired for the most common crash shape. `AcpConn` now tracks
+   `dead`/`killed` and `run_turn` emits `crashed` before its own `kill()`.
+
+**Decisions.**
+
+1. **Themes are pure token-block overrides** under `data-theme` — no component ever branches
+   on the theme name, and the contrast test reads the same CSS files the app ships (via fs;
+   vitest's `css: false` stubs `?raw` imports, which is why the first attempt failed).
+2. **One command registry** (`lib/commands.ts`) is the single source for palette entries and
+   hotkey defaults (`DEFAULT_BINDINGS` derives from it), so a command can never be reachable
+   one way and not the other.
+3. **Settings are JSON rows keyed by string** (`theme`, `accent_hue`, `permission_mode`,
+   `keybindings`) through the existing §4.5 settings table — no schema churn; the store
+   validates every value on hydrate (bad values fall back to defaults).
+4. **Smoke suite runs in a plain browser against the vite server** (isTauri() guards stub
+   IPC): shell/palette/themes/settings are UI-level and covered there; backend-involving
+   flows stay with the CDP walkthroughs, which run the real WebView2 without stealing focus.
+5. **Transcript windowing is a bounded tail, not a virtual scroller**: rendering the last
+   300 items with chunked expansion keeps DOM size deterministic for huge threads without
+   committing to a virtualization library in v1.
+6. **Playwright excludes `*.spec.ts` from vitest** (`include` patterns) so the two runners
+   never cross-import.
+
+**Known issues / gaps (next milestones).**
+
+- Keybindings UI covers the five global commands; composer-scoped keys (Enter/Esc/A/S/D) are
+  documented as fixed rather than rebindable.
+- The mock's orphaned `working` statuses after restart (M6 note) also make the palette show
+  stale "working" threads until they run again.
+- FPS overlay measures rAF cadence only; a full perf profile (long-task traces) is out of
+  scope for v1.
+- Real-CLI legs of acceptances remain environment-blocked (see M6 entry).
+
+## M6 — Agent matrix, modes, diagnostics (2026-11-14)
+
+**Scope shipped.** `~/.pult/config.toml` is the agent matrix source of truth: `[[instances]]`
+(id, displayName, driver `mock`|`acp`, command, args, env) loaded at startup, saved through a
+whole-table patch so unrelated keys survive, falling back to the built-in mock when the file
+has none. Detection scans PATH for known CLIs (claude/gemini/codex/dsh, PATHEXT-aware) and the
+`/welcome` wizard offers one-click "Add" with prefilled adapter argv; `/settings/providers`
+edits instances (add/edit/delete → persisted immediately); the chat AgentPicker links to it
+("Manage agents…"). Session modes (§5.4): caps cached per instance at handshake, the header
+picker appears only when the agent advertises modes, `runs_set_mode` forwards
+`session/set_mode` to the live connection and the agent's `current_mode_update` echo flows
+back as a `mode_change` event that flips the picker label mid-run. Diagnostics (§8 M6):
+`/settings/diagnostics` shows every instance's caps, a process-event ring
+(starting/spawned/running/crashed/needs_auth), and "Frames" — the last 60 raw protocol frames
+of the live connection (600-char truncation), with a typed error when no session is live.
+IPC: `providers_detect_installed`, `providers_instances_save`, `runs_set_mode`,
+`diagnostics_frames`.
+
+**Verification.** Rust 85/85 (config round-trip incl. unrelated-key preservation, missing-file
+fallback, detection candidates), clippy `-D warnings` clean. Frontend typecheck/lint green,
+vitest 50/50, build green. Live walkthrough in the real window over CDP: detection listed the
+installed CLIs (Codex CLI found, mock + custom instances configured); a custom ACP instance
+(`node fixtures/mock-acp-agent.mjs`) ran end-to-end in a real thread (prompt → streamed
+updates → diff); **mid-run mode switch verified end-to-end** — picker showed "Code" during an
+active turn, clicking "Architect" flipped the label via the agent's echo (store
+`view.modeId: "architect"`), after fixing the crash below; diagnostics frames captured on a
+live run (7 raw frames: → initialize, → session/new, → session/prompt, ← session/update…)
+and the typed "no live session" error renders when idle; instances persisted across two app
+restarts (config.toml drove the list each boot, including an env patch that changed mock
+behavior). **Environment limitation:** real Claude Code / Gemini CLI are not installed on this
+machine (only Codex, which has no native ACP yet), so the real-CLI leg of the acceptance is
+blocked by the environment — the machinery is verified through the custom ACP instance, and
+the wizard's suggested commands match the adapters' documented invocations.
+
+**Bugs found and fixed during the walkthrough.**
+
+1. **`runs_set_mode` aborted the whole app** ("panic in a function that cannot unwind,
+   STATUS_STACK_BUFFER_OVERRUN"): `runtime.set_mode` called `tokio::spawn` from a sync Tauri
+   command, which runs on the main thread — outside any reactor. Fixed by making
+   `runs_set_mode`/`runs_cancel` async commands (Tauri runs them on tokio) and replacing the
+   bare `tokio::spawn` in `set_mode`/`cancel` with `Handle::try_current()` that degrades to a
+   typed error instead of an abort. The Stop button (`runs_cancel`) carried the identical
+   landmine and was fixed in the same stroke.
+2. **Diagnostics page infinite re-render** ("Maximum update depth exceeded"): a zustand
+   selector returned `s.processEvents[id] ?? []` — a fresh array every getSnapshot, which
+   React's useSyncExternalStore treats as an endless update loop. Fixed by selecting the
+   stable record and defaulting in render.
+
+**Decisions.**
+
+1. **Whole-table patch for config.toml saves** — parse the file as a `toml::Table`, replace
+   only the `instances` key: serde-struct round-trips would silently drop user keys
+   (a `theme = …` line survives a save, verified in a test).
+2. **Modes appear after first handshake, UI refreshes on `run_finished`.** Modes live in the
+   caps cache, which fills when a connection handshakes; the instances list re-fetches on
+   ChatHeader mount and on run finish, so after a cold restart the picker materializes once
+   the first run on that instance completes. Verified live (picker absent → warm-up run →
+   picker visible).
+3. **Frames ring on the connection, not the store** — 60 most recent frames per live AcpConn
+   (both directions, truncated to 600 chars) makes diagnostics zero-cost until opened and
+   truthful by construction; no live session → typed `git.no_…`-style error surfaced verbatim
+   in the UI.
+4. **`MOCK_SLOW_TURN` env on the custom instance** stretches mock turns (25→300 ms per
+   message) so mid-run interactions (mode switch, frame capture) are reliably exercisable —
+   the default echo turn finishes in ~700 ms, faster than any UI interaction.
+
+**Known issues / gaps (next milestones).**
+
+- After an app restart, threads interrupted mid-run keep `working` status in the sidebar
+  until their next turn (runs don't survive restart by design; statuses are not resynced at
+  boot).
+- Real-CLI acceptance leg (Claude Code / Gemini CLI over their ACP adapters) pending
+  installation of those CLIs on this machine; Codex lacks native ACP.
+- Detection is a PATH scan without version probing (deliberate: cheap, offline); agents
+  behind adapters may still need sign-in (`needs_auth` status renders in diagnostics).
+
+## M5 — Terminals (2026-11-14)
+
+**Scope shipped.** Per-thread PTY terminals with a real pseudo-console: `runtime/ptys.rs`
+runs the user's shell (default `powershell -NoLogo`, argv override available) through
+portable-pty/ConPTY in the thread's workspace, streaming output over a blocking reader
+thread → channel → coalescing task (24 ms windows, §4.3 batching discipline) as
+`terminal:pty` events (base64 so multi-byte splits survive the JSON bridge) with a
+`terminal:ptyExit` summary. IPC: `terminal_pty_create/write/resize/kill/list` (input arrives
+base64-encoded so arrow keys and pastes pass through untouched). The right panel's Terminal
+tab is now the real surface: chips per terminal (live dot / exit code, kill ✕), an xterm.js
+pane (fit addon follows container resizes → PTY resize; scrollback 5000; JetBrains Mono;
+T3-matched colors), copy/paste wired into the key handler (Ctrl+Shift+C copies, Ctrl+C
+copies when a selection exists so shells still get ^C, Ctrl+V pastes). Terminal tool rows
+from the agent's `terminal/*` callbacks mirror into the panel read-only ("Agent terminals"
+section — title, status dot, output preview; the mock wraps its terminal flow in an
+execute-kind tool_call row for exactly this). Restart policy (§8 M5 acceptance alternative):
+PTYs are children of the app, so a restart ends them by definition — the registry is
+memory-only, the list re-syncs from the backend on thread open, and the empty state says so
+in plain words. The acceptance's `top`-style TUI renders through `fixtures/tui-demo.mjs`
+(alternate screen buffer, cursor positioning, box drawing, colors, live redraws).
+
+**Verification.** Rust 82/82 (3 new PTY tests: full round-trip — spawn, output through the
+sink events, exit event, closed-input typed error, live interactive shell echo — plus
+resize/unknown-terminal typed errors; both play the terminal side of the ConPTY handshake),
+clippy `-D warnings` clean. Frontend typecheck/lint green, vitest 50/50, build green. Live
+walkthrough in the real window over CDP: "+ New terminal" spawned PowerShell whose prompt
+showed the thread workspace; typing `Get-ChildItem …` through xterm.js echoed and rendered
+the listing; `node fixtures/tui-demo.mjs` rendered the full-screen TUI mid-animation
+(screenshot in-session — colored box, live load bar, updating process rows) and exited
+cleanly through the alt-screen restore; the chip ✕ killed the terminal and the pane
+reported it; a mock "terminal" turn surfaced its tool row in the Agent terminals mirror
+("Run cmd /c echo mock-term-ok · completed · mock-term-ok (exit 0)"). The app restarted
+mid-milestone during a rebuild and the terminal list came back empty with the documented
+restart policy.
+
+**Decisions.**
+
+1. **ConPTY handshake stays with the real terminal.** On session start the child's console
+   emits `\x1b[6n` (cursor-position report) and STALLS its renderer until the terminal side
+   answers — discovered when a raw test harness saw only the request and nothing else. In
+   pult the answer flows from xterm.js (which knows the true cursor) through
+   `terminal_pty_write`; the backend never forges it, and the tests play the same role over
+   the public API. A debug binary proved the theory: answering `\x1b[1;1R` unblocks the
+   stream immediately.
+2. **`try_wait` polling inside the coalescer tick instead of a blocking `wait()` thread**:
+   portable-pty's Child is not cloneable, and waiting under the state lock would deadlock
+   write/resize/kill; the poll is a cheap syscall on the same 24 ms tick.
+3. **base64 both directions.** PTY bytes are arbitrary (UTF-8 splits at chunk boundaries,
+   control sequences); JSON strings mangle them, base64 doesn't. xterm.js writes decoded
+   strings; input is encoded from UTF-8 bytes.
+4. **Backfill ring per terminal in the store**: chunks arriving while no pane is attached
+   (tab switched, thread unmounted) replay on re-attach (capped ~512 KiB), so switching
+   tabs never loses the tail.
+5. **canonicalize() `\\?\` prefix stripped for the child's cwd** — PowerShell would
+   otherwise print the `FileSystem::\\?\C:\…` location as the prompt.
+
+**Known issues / gaps (next milestones).**
+
+- Paste is wired but not exercised in the walkthrough (CDP automation cannot grant
+  WebView2 clipboard-read); copy works through the selection path.
+- A restarted app cannot reattach to pre-restart PTYs (they are OS children); the panel
+  documents this and starts fresh — a persistence story would need an external process
+  supervisor (deliberately out of scope).
+- Terminal output lives in memory only (store backfill + xterm scrollback); nothing
+  persists to disk (M3's ring buffer for agent terminals is likewise memory-only).
+- The ACP `terminal/*` callbacks remain pipe-based (no PTY for agent shells) — agents that
+  run TUIs through the callback would see degraded rendering; the ACP surface has no
+  resize, so this matches the protocol.
+- Single workspace pinned per PTY at creation; no cwd switcher yet.
+
+## M4 — Git, diffs, one-click PR (2026-11-14)
+
+**Scope shipped.** `git/mod.rs` shells out to real `git` (§4.4, no git2 crate), all paths
+absolute: `status` (porcelain v1 `-z` with branch/ahead/behind and rename-safe parsing),
+`diff` (byte-exact), `commit` (stage-everything matching the panel), `push` (creates upstream
+via `origin` when missing, typed `git.no_remote` otherwise), `pr_create` (`gh pr create`,
+URL parsed from stdout, `git.gh_missing` typed state), `worktree_create/remove` under
+`<repo>/.pult/worktrees/<name>` with a `pult/<name>` branch, and `checkpoint` — the hidden
+`refs/pult/checkpoints/<runId>` ref written automatically on every run finish (§4.4 "data is
+cheap"; best-effort, skipped for non-repo workspaces). The diff projection runs through a
+**scratch index**: copy the real index to a temp file (or `read-tree --empty` in a fresh
+repo), `git add -N .`, then `git diff HEAD` — untracked files appear and the user's index is
+never mutated, yet the bytes ARE `git diff` output. `git diff --no-renames` keeps the parser
+deterministic; per-file sections are split verbatim so file slices concatenate back to the
+raw text. Threads gained `workspace` / `main_repo` / `worktree_name` (migration v3):
+`threads_create` takes an optional workspace + worktree flag (worktree threads work in a
+fresh `git worktree`, session cwd pinned there; `.pult/` stays invisible via
+`.git/info/exclude`, never the user's `.gitignore`), `threads_delete` removes the worktree
+(best-effort) and keeps the branch. The right panel's Diff tab is now the full diff surface:
+branch pill with ↑ahead/↓behind, directory-grouped file tree with diffstats and per-file
+reviewed checkboxes (hash-gated, auto-reset when a file's diff changes), Unified/Split toggle
+(own renderer — `lib/diffSplit.ts` parses hunks, tracks line numbers, pairs del/add runs),
+commit ▸ push ▸ create-PR header actions whose disabled states explain themselves via
+tooltip, agent-suggested commit messages ("Suggested commit message:" lines prefill with
+"Use suggested"), and a `/pull-requests` skeleton page listing PRs opened this session.
+The composer gained pult-local `/commit <message>` (never sent to the agent). The mock agent
+on "commit" prompts modifies a tracked file (README.md) and creates an untracked one so both
+diff projections are exercised; `fixtures/bin/gh.cmd` + `PULT_GH` override stand in for the
+GitHub CLI in dev (gh is not installed on this machine).
+
+**Verification.** Rust 80/80 (14 new git tests: byte-exact diff tracked-only and
+with-untracked against a manual scratch-index reference, file-slices-concatenate-to-raw,
+fresh-repo fallback, explicit base, status parsing, commit round-trip + typed
+nothing-to-commit, push to a bare remote with upstream set + typed no-remote, worktree
+create/remove round-trip with isolation check, checkpoint ref content, mock-gh pr_create
+override, non-repo typed error, slugify), clippy `-D warnings` clean. Frontend
+typecheck/lint green, vitest 50/50 (8 new diffSplit tests), build green. Live walkthrough in
+the real window over CDP: a thread pinned to `fixtures/mock-repo` ran the mock ("please make
+demo changes to commit") → the diff panel showed the tracked README modification + 2 new
+files; the store's `diff.raw` was **byte-identical to `git diff`** (589 bytes, `cmp`) and the
+per-file slices concatenated back to it; "Use suggested" prefilled the commit message →
+Commit (`5262b5c feat: mock demo changes`, 3 files) → Push (bare remote `mock-remote.git`
+received it, upstream set, badge flipped to ↑0) → Create PR (mock gh logged
+`pr create --title "feat: mock demo changes" …` and the panel showed the PR URL, listed on
+/pull-requests); a second thread with the worktree toggle worked in
+`.pult/worktrees/please-make-demo-changes-to-comm-16` on branch `pult/…` — its README edit
+stayed in the worktree while the main repo's status stayed empty, the header showed the
+worktree badge, the panel showed the worktree branch; deleting the thread removed the
+worktree and pruned the registration (branch kept). Checkpoint refs appeared for every
+finished run including the worktree one. Split/Unified rendering and the reviewed checkbox
+verified via screenshots.
+
+**Decisions.**
+
+1. **Scratch-index diff instead of composing untracked diffs by hand**: `git add -N` into a
+   copied temp index means git itself renders every byte (new-file headers, index lines, "\ No
+   newline" markers), so byte-exactness is by construction. The real index is never touched.
+2. **`git diff HEAD` (with the fresh-repo fallback to plain `git diff`) as the panel's base**:
+   staged+unstaged+untracked in one projection — what "what did this thread change" means;
+   an explicit base is still available via the IPC.
+3. **PR gating keys on `pushedSha`, not on "has unpushed work"**: pushing is not a
+   prerequisite for the PR button once a push succeeded this session (a first draft disabled
+   the PR button right after a successful push — caught in the walkthrough).
+4. **Worktree threads keep their branch on delete** — the worktree directory and its
+   registration go, but any commits/checkpoints stay reachable ("data is cheap"); the
+   thread's `main_repo`/`worktree_name` columns drive cleanup.
+5. **`PULT_GH` env override for the gh program** (tests + dev walkthrough) since Windows
+   `Command::new("gh")` only resolves `.exe`; the mock `gh.cmd` is driven through it.
+6. **`__pult` dev hook on window** exposes the stores (+threadsDelete) so CDP automation can
+   assert store state and drive IPC without DOM scraping.
+
+**Known issues / gaps (next milestones).**
+
+- Checkpoint refs are written but invisible in the UI (checkpoints/rollback UI is out of
+  scope per §8; refs are the cheap data layer).
+- Diff panel highlights lines by diff kind only; Shiki code highlighting inside diff lines
+  (§5 "Shiki + per-line classes") lands with the M7 polish pass.
+- PR history lives in memory per session; the /pull-requests page is a skeleton (list +
+  empty state) until the settings/projects suite.
+- The git store resets on reload: pushedSha/lastCommit are session-scoped (the PR button
+  re-arms after any successful push; a cross-restart "already pushed" projection would need
+  persisted refs — M7).
+- Mock's second turn starts a fresh session (no resume in that path), so turn numbering
+  restarts — cosmetic in the walkthrough; real resume is covered by M2's session/load tests.
+- `git_status`/`git_diff` run git subprocesses per refresh; no caching/debounce beyond the
+  frontend's 600 ms — fine at fixture scale, revisit if large repos lag.
+
+## M3 — Permissions & client callbacks (2026-11-14)
+
+**Scope shipped.** Permission system (§5.5): `runtime/permissions.rs` with the four modes —
+`supervised` always asks, `auto_edit` auto-allows edit-kind inside the workspace (rootless
+POSIX paths map under the workspace; `..` anywhere or a drive path outside means "ask"),
+`auto` allows everything non-destructive, `full_access` allows everything — each resolution
+decided BEFORE surfacing, with `remembered` allow_always decisions (settings key
+`remembered_permissions`, keyed (instance, tool class)) short-circuiting everything. Every auto
+resolution writes an `ApprovalResponse { auto: true }` event (the "never silent" trace row —
+the timeline renders it as a "Auto-allowed by permission mode" line) and replies to the agent
+directly. Mode is chosen from a pill in the chat header (per-thread override + persisted
+default). Surfaced approvals gained the mini-card pinned above the composer, keyboard answers
+(`A` allow once · `S` allow always · `D` decline — the textarea is locked in "Decision needed"
+so plain letters are safe), keyboard hints on the card buttons, and OS notifications when the
+window is unfocused (tauri-plugin-notification behind the `EventSink.notify` seam; the focus
+check lives in the AppHandle impl). Elicitation (§5.5): `elicitation/create` is surfaced —
+transcript event + fan-out — and the run parks in the answer queue until the schema-driven
+`ElicitationModal` (form: string/enum/number/integer/boolean/array-checkbox fields with
+required validation; url mode; honest unknown-mode fallback) answers accept/decline/cancel
+with typed content; the mock echoes the picked value. Terminal callbacks (§5.5):
+`runtime/terminals.rs` runs `terminal/create` (sandbox-checked cwd), a combined stdout+stderr
+ring buffer per terminal with char-boundary truncation and the agent's optional
+`outputByteLimit`, `terminal/output` polling with `exitStatus`, detached `wait_for_exit`
+(a task answers so the event stream never stalls), `kill`, `release`. fs callbacks: writes now
+compute a unified diff (similar crate) with +added/-removed stats and persist a `FileChanged`
+event feeding the right panel's "Files" tab (diffstat rows, expandable diff). The event log
+carries `file_changed` and `elicitation_request` kinds; hydration replays both. Sidebar
+threads got drag between shelves.
+
+**Verification.** Rust 66/66 (protocol 21 incl. terminal/elicitation serde shapes · store 10 ·
+runtime 18: permissions policy 8, terminals 4 incl. a real spawn/output/wait/kill round-trip,
+queue 2, M2 pair, and five new M3 runtime goldens — elicitation round-trip, terminal round-trip,
+auto_edit-without-UI (assert via event log, §8), reject_once round-trip, allow_always
+remembered-across-turns — plus the sandbox `../` typed-error test), clippy `-D warnings` clean.
+Frontend typecheck/lint green, vitest 42/42 (5 new modal tests), build green. Live walkthrough
+over CDP in the real window: the elicitation modal rendered the mock's color schema (Accept
+disabled until the required field was picked; the agent echoed `you picked {"color":"red"}`);
+terminal callbacks echoed `mock-term-ok (exitCode:0)`; switching the pill to Auto edit made the
+next turn complete with zero approval cards and one trace row in the timeline; the Files tab
+listed the mock's write with a diffstat after reload. Screenshots captured in-session.
+
+**Decisions.**
+
+1. **Pending requests live in the run loop**, not the shared Inner: the run task owns its
+   surface/answer flow; `push_answer` only validates that the run is active. A first attempt
+   checked an Inner-side copy of the pending map — two sources of truth deadlocked the tests
+   until it was removed.
+2. **Remembered decisions key on (instance, tool class)** — the ACP ToolKind of the pending
+   call, not the option kind: a first draft stored `allow_always` itself as the class, so the
+   remembered lookup never matched and turn 2 hung waiting for a surfaced request.
+3. **Wait-answer from a detached task**: `terminal/wait_for_exit` resolves from a spawned task
+   so a hung process cannot block the event stream (§9 no blocking lanes).
+4. **Rootless POSIX paths count as inside the workspace for the policy** (they remap under the
+   root exactly like the fs sandbox), with any `..` component treated as an escape — matches
+   how agents whose `cwd` IS the workspace send paths.
+5. **`similar` crate** for the unified diffs (char-boundary truncation discipline stays
+   hand-rolled in the terminal ring).
+
+**Known issues / gaps (next milestones).**
+
+- OS notifications are implemented but not exercised in the walkthrough (the window was
+  focused); the unfocused path is untested manually.
+- The terminal ring is memory-only: `terminal/output` after an app restart reports unknown —
+  M5's PTY panel reattach policy will define persistence.
+- Elicitation url mode currently reports accept to the agent; the in-app webview sheet is
+  still to come (§5.5) — the modal shows the URL instead.
+- Diff computation is per-write: consecutive writes to one file produce separate FileChanged
+  events (latest wins in the Files tab) — a cumulative thread diff arrives with M4's diff panel.
+- Config options are still raw passthrough (M6 pickers).
+
+## M2 — Chat UX complete (2026-11-14)
+
+**Scope shipped.** Streaming markdown in the timeline (`components/chat/Markdown.tsx`:
+react-markdown + remark-gfm tables/task-lists + remark-math/rehype-katex, Shiki 4.6 code blocks
+with a module-singleton highlighter, 150 ms streaming debounce, unknown-lang fallback, copy
+button; hand-scoped `.md` CSS on the T3 tokens — no typography plugin). Composer finished:
+slash-commands menu fed by `available_commands_update` (keyboard-navigable listbox, insert on
+Enter/click), capability-gated image attach (`promptCapabilities.image` — paste and file picker,
+chips with remove, sent as base64 `image` content blocks), queue rows rendered from the
+backend-owned queue with per-row remove, queue hint states, Stop. Backend queue (migration v2):
+`queue_items` table, queue-aware `runs_dispatch` → `SendOutcome`, auto-dispatch of the oldest
+queued message inside `finalize_run`, `queue:update` fan-out, `runs_queue_remove`. Event
+contract extended: `commands_update`, `session_info` (live thread auto-rename from the agent),
+`config_options` (raw passthrough, pickers in M6), `compaction` with `compactionId` +
+summary replace/append patch semantics, `RunFinished.error`. Timeline: collapsible thinking
+group with duration, compaction divider, usage line on the finish divider (`used/size/cost`),
+crashed-run banner with Copy diagnostics, user image chips. Persistence + reload: `threads_get`
+now carries `queue` and `activeRunId`; a DB-running run the runtime no longer holds is marked
+interrupted ("pult restarted while this run was active") instead of blocking the composer
+forever. Resume: mock agent declares `loadSession`, replay chunks verified end-to-end;
+`session/load` response parsed with a dedicated `LoadSessionResult` (no `sessionId` per schema).
+Global event fan-in (`lib/runEvents.ts`): run events, new `run:started` (covers backend-created
+runs from auto-dispatch), queue updates — subscribed once at the app root. Sidebar shelves got
+HTML5 drag with persisted status/pinned moves.
+
+**Verification.** Rust 47/47 (protocol 19 · events 2 · store 10 incl. queue FIFO · driver 6 ·
+golden 7 incl. image round-trip · runtime 2: queue auto-dispatch + session/load resume driven
+through AgentRuntime against the real mock), clippy `-D warnings` clean. Frontend typecheck/lint
+green, vitest 37/37, production build ok. M2 acceptance walked through in the real window over
+CDP (WebView2 remote debugging): paste chip appears only after capabilities are cached → image
+sent → mock echoes `[image image/png …]` into the markdown; `/` opens the agent menu and
+inserts the command; a second message queued mid-turn auto-dispatched after `run_finished`
+(its own approval card appeared); webview reload rebuilt identical state including the pending
+approval card and the queued row; killing the mock node process mid-turn produced the RUN
+CRASHED banner with `rpc error -32603: agent process exited` and Copy diagnostics, and the
+thread accepted a new message immediately (resume via session/load replayed the transcript).
+Screenshots captured in-session.
+
+**Decisions.**
+
+1. **Backend owns the queue** (M1 kept it UI-side): FIFO sqlite table keyed by thread, instance
+   bound at enqueue time, popped on `finalize_run`. UI renders `queue:update` state; cancel
+   still per-row. This survives reload and keeps one writer.
+2. **`run:started` event** added: the UI previously only learned of runs it dispatched itself,
+   so auto-dispatched runs were invisible until the next full hydrate.
+3. **Zombie-run recovery**: `ThreadDetail.activeRunId` distinguishes live runs from DB zombies;
+   hydration downgrades the latter to failed with a human-readable cause. A stale approval card
+   of a terminal run is cleared, so the composer never deadlocks after a restart.
+4. **M1 bug found by the new runtime tests**: permission replies went back to the agent keyed
+   with the internal `s`/`n` prefix (`sagent-2`) instead of the original wire id — golden tests
+   missed it because their harness replied with the original `RequestId`. `pending_permissions`
+   is now a `key → RequestId` map.
+5. **Second M1 bug caught in the live walkthrough**: `tokio::spawn` inside a sync tauri command
+   panics ("no reactor running") — `runs_dispatch` is now async so dispatch runs on the tokio
+   worker. The M1 window smoke never dispatched a run, so this stayed latent.
+6. **Sandbox path mapping**: rootless POSIX-absolute paths (`/repo/src/main.rs`) resolve against
+   the workspace root (agents run with `cwd` = workspace); drive/UNC paths still must stay
+   inside the root. The mock tolerates typed fs errors instead of crashing the turn (real-agent
+   behavior).
+7. **EventSink trait** replaces the raw `AppHandle` in AgentRuntime: `tauri::test` linking
+   breaks Windows test binaries (STATUS_ENTRYPOINT_NOT_FOUND — test exes get no comctl32 v6
+   manifest), so runtime tests use an in-memory sink; a permission "pump" answers surfaced
+   requests like the UI would.
+8. Shiki ships with the pure-JS regex engine (`createJavaScriptRegexEngine`) — the default WASM
+   engine's `shiki/wasm` module is not installed and fails in jsdom and at runtime alike.
+
+**Known issues / gaps (next milestones).**
+
+- Bundle chunk >500 kB (Shiki langs + KaTeX) — code-split with the M7 perf pass if the desktop
+  startup ever cares.
+- Config options are stored raw and rendered nowhere until the M6 pickers.
+- The mock's canned turn still hardcodes `/repo/src/main.rs`; a fresh workspace shows a
+  "(read failed: …)" line — realistic fs-error surface, but a seedable fixture workspace would
+  make the first turn prettier.
+- tauri-specta bindings swap still deferred (the hand-typed contract grew; the seam remains
+  `lib/ipc.ts`).
+- Terminal callbacks still return method-not-found (M5); elicitation auto-cancels (M3).
+
+## M1 — ACP core + mock agent (2026-11-14)
+
+**Scope shipped.** Full ACP wire stack driven by the pinned schema: `protocol/acp-schema.json`
+(v1.31.0 from agentclientprotocol releases; `acp-meta.json` beside it). Layers: NDJSON codec
+(tokio-util FramedRead/Write, malformed lines logged-and-skipped, property tests: 500 seeded
+round-trips + garbage interleaving), JSON-RPC 2.0 envelope with typed error codes, hand-written
+serde types mirroring the schema subset (all 14 `session/update` variants, lenient inputs,
+`_meta` preserved). Universal driver (`drivers/acp`): spawn/handshake/session resolution
+(`session/load` when `loadSession` with graceful new-session fallback), prompt/cancel/set_mode,
+id→oneshot correlation with per-method timeouts, stderr captured to tracing. Runtime: one run =
+one spawned connection, event loop persisting normalized `Event`s (sqlite WAL via the store) and
+fanning out to the UI (`run:event`, `thread:update`, `agent:process`), supervised permission
+policy surfacing `session/request_permission` as an approval card, fs callbacks sandboxed to the
+workspace root with `-32002`-style typed errors, elicitation auto-cancelled (modal lands in M3).
+IPC: 13 commands wired through tauri (threads CRUD, runs dispatch/cancel/permission/queue-ack,
+instances list). UI wiring: typed `AppEvent` union, pure `applyRunEvent` reducer (streaming
+merge, tool lifecycle, plan, approvals, queued rows), full MessagesTimeline render path,
+composer dispatch/queue/stop, instance picker, sidebar thread rows. Mock agent
+(`fixtures/mock-acp-agent.mjs`, zero-dep Node) with failure modes MOCK_HANG / MOCK_CRASH_MID_TURN /
+MOCK_BAD_JSON / MOCK_SLOW_TURN.
+
+**Verification.** Rust 40/40 (protocol 19 · events 2 · store 9 · driver 4 · golden 5 · lib 2),
+clippy `-D warnings` clean; frontend typecheck/lint/vitest 31/31; production build green.
+Golden tests drive the REAL mock process end-to-end: happy path (thought → plan → read tool
+lifecycle → fs round-trip → permission round-trip → diff → streamed echo → notice → `end_turn`),
+cancel mid-turn, MOCK_BAD_JSON resilience, MOCK_CRASH_MID_TURN typed failure, MOCK_HANG killable.
+**First streamed echo: 37.8ms** (§8 budget 50ms; measured from prompt-on-the-wire to first
+update — process spawn excluded, see decision 1). Desktop window launches (`pnpm tauri dev`).
+
+**Decisions.**
+
+1. **Connection-per-run for M1** (spec says per-instance pooling): the mock is single-session;
+   pooling lands with the agent matrix (M6). The 50ms echo budget is therefore measured from
+   prompt-on-the-wire; with pooling the full send→echo path should fit 50ms including reuse.
+2. **Schema beat the spec text twice** (§0.2 working as intended): `ToolKind` has 10 values
+   (`switch_mode` added in v1.31.0), and the mock agent found five more brief-level mistakes
+   (e.g. `LoadSessionResponse` carries no `sessionId`; `Diff` content is structured
+   `{path, oldText?, newText}`, not a unified-diff string). Golden tests caught a real runtime
+   bug: sandboxed writes to not-yet-existing directories failed until `create_dir_all` was added.
+3. **serde `rename_all_fields = "camelCase"`** on every tagged enum — variant tags snake_case,
+   payload fields camelCase, exactly matching the TS contract the UI builds on.
+4. **tauri-specta still deferred** (now to early M2): rc.29 verified to pair with specta
+   `=2.0.0-rc.28` via crates.io metadata, but the hand-typed `lib/ipc.ts` contract is already
+   stable across the UI, so the binding swap is mechanical and can happen without blocking M2.
+5. **TypeScript 5.9.3** carried over from M0 (typescript-eslint peer range).
+6. **Queued messages are UI-side in M1** (backend ack only); the queued text auto-dispatches as a
+   fresh run from the store in M2 together with composer-queue semantics.
+
+**Known issues / gaps (next milestones).**
+
+- Queue auto-dispatch after `run_finished` is M2 (queued rows display today, but a queued text
+  waits for the user to send it).
+- `available_commands_update` / `config_option_update` / `session_info_update` (auto-rename) and
+  compaction summary chunks are parsed but not projected to events yet — slash menu, config
+  pickers, and thread auto-rename land in M2.
+- Instances registry is the built-in mock only; config.toml parsing and detection are M6.
+- specta-generated bindings swap (see decision 4).
+
+## M0.1 — T3 Code retheme + unslop UI copy (2026-11-14)
+
+**Retheme.** Replaced the M0 palette with T3 Code's stock dark theme, extracted from their actual
+source (`packages/shared/src/themePalettes.ts` → `T3_CODE_DARK_THEME_COLORS`, `apps/web/src/index.css`
+dark block — reference clone kept in the draft workspace). Surfaces are now neutral true black
+(#000 canvas, #0a0a0a chrome, #111 surface, #141414 raised, #1e1e1e input) with 8–14% white-alpha
+borders, #f5f5f5→#818181 text hierarchy, and the stock blue accent #346bf1 (hover #3061d9) — chosen
+by the user from T3's five built-in accent themes. The blue-gray _cast_ of the old surfaces is gone;
+blue now lives only in the accent. Also adopted from T3: SVG fractal-noise grain on body (3.5%),
+composer blur 16px + saturate(1.08) with their composer shadow, `rounded-2xl` composer, explicit
+accent-hover instead of brightness filters, accent-agnostic `--mention-bg` via color-mix (ready for
+the §6.6 theme picker). Icon regenerated in the new palette.
+
+**Unslop pass.** Rewrote UI copy per the unslop core contract (two-pass, minimal repairs, strings
+validated with the skill's scanners — 0 hard violations). Fixed: em-dash constructions, "no X, no Y"
+cadence, synonym cycling across the shelf hints and panel empty states, "and all" tri-list, raw
+enum ids shown as UI copy (permission badge now maps to Supervised / Auto edit / Auto / Full access),
+and internal milestone jargon leaking into tooltips ("lands in M6", "agent matrix milestone") —
+replaced with honest "Coming soon" states. Composer placeholder, aria labels, and status lines kept.
+
+**Verification.** typecheck / eslint / prettier / vitest 7-7 green; banned-phrase and structure
+scans clean; visual check via browser screenshot (true-black surfaces, blue accent only).
+
+**Known issues.** Silhouette scan reports a missing reference fixture in the skill itself (not a
+finding against the copy). Fonts stay Inter/JetBrains Mono per the pinned spec (T3 ships system
+mono; not adopted — user asked for the color scheme, not the fonts).
+
+## M0 — Skeleton & tokens (2026-11-14)
+
+**Scope shipped.** Tauri 2 + React 19 + TypeScript (strict) skeleton; three-pane layout as real
+components (Topbar / Sidebar / ChatColumn / RightPanel + ui primitives Button/Badge/Kbd); §6.2
+design tokens in `src/styles/tokens.css` mapped onto Tailwind v4 via `@theme inline`; Inter
+Variable + JetBrains Mono bundled (fontsource, cyrillic subsets included); frameless window with
+drag region + custom minimize/restore/close controls; single-instance + window-state plugins;
+tracing init (stderr); typed `app_version` command returning `Result<_, PultError>` with the
+`{ code, message }` IPC error shape (§4.3); zustand stores (ui / settings / threads); TanStack
+file routes (`/`→`/chat` redirect, `/chat`, `/thread/$threadId`, `/welcome`); vitest suite;
+GitHub Actions CI workflow.
+
+**Verification.**
+
+- `pnpm typecheck` (tsc -b, strict) ✅
+- `pnpm lint` (eslint flat + prettier check) ✅
+- `pnpm test` — 7/7 vitest ✅
+- `cargo clippy -- -D warnings` ✅
+- `cargo test` — 2/2 ✅
+- `pnpm build` (tsc + vite production bundle) ✅
+- `pnpm dev` serves in a plain browser (isTauri() guards) ✅; UI visually reviewed via
+  screenshot against §6 (three panes, tokens, empty states).
+- `pnpm tauri dev` on Windows ✅ (window runs; MSVC toolchain links).
+
+**Decisions.**
+
+1. **TypeScript pinned to 5.9.3**, not 7.x: typescript-eslint 8.72 peers `typescript <6.1`; the
+   native TS 7 compiler is not yet supported by the lint stack. Revisit when typescript-eslint
+   ships TS 7 support.
+2. **tauri-specta deferred to M1.** The exact tauri/specta rc pairing must be verified against
+   upstream docs at build time (§0 "never invent"); M0 proves the IPC bridge with a plain typed
+   command instead. The generated-bindings seam (`src/lib/ipc.ts`) is marked for replacement.
+3. **Icons** generated from `scripts/gen-icon.mjs` (pure-Node PNG writer, placeholder mark:
+   sliders on dark rounded square) → `pnpm tauri icon`. Replace with real brand art before M8.
+4. **Frameless window controls are client-side** (`@tauri-apps/api/window`), guarded by
+   `isTauri()` so `pnpm dev` in a plain browser also renders. Drag region via
+   `data-tauri-drag-region`; capabilities grant the needed `core:window:*` permissions.
+5. **pnpm-workspace.yaml** holds `onlyBuiltDependencies` (esbuild, @tailwindcss/oxide) — the
+   pnpm ≥10 location for that setting; single-package workspace.
+
+**Deviations from the spec.** None material. Additions only: pnpm-workspace.yaml (tooling),
+placeholder icon set (brand art is an M8 concern).
+
+**Known issues.**
+
+- `window-state` plugin will restore size/position from second launch onwards; first launch is
+  centered 1440×900 per config.
+- Route-aware breadcrumbs land in M2 (topbar shows static "pult / chat").
+- Rust file logs (`~/.pult/logs`) arrive with M1's store work; tracing currently goes to stderr.

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+pnpm-lock.yaml
+src-tauri/
+src/routeTree.gen.ts
+fixtures/
+test-results/
+playwright-report/
+dist/
+src-tauri/target/

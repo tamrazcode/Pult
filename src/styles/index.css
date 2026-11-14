@@ -1,0 +1,126 @@
+@import "tailwindcss";
+@import "./tokens.css";
+@import "./themes/light.css";
+@import "./themes/graphite.css";
+
+/* Map raw tokens onto Tailwind theme namespaces: generates utilities like
+   bg-canvas, text-text-secondary, border-border-strong, font-ui. */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-chrome: var(--chrome);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-border-subtle: var(--border-subtle);
+  --color-border-strong: var(--border-strong);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-tertiary: var(--text-tertiary);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-diff-add-bg: var(--diff-add-bg);
+  --color-diff-add-fg: var(--diff-add-fg);
+  --color-diff-del-bg: var(--diff-del-bg);
+  --color-diff-del-fg: var(--diff-del-fg);
+  --color-code-bg: var(--code-bg);
+  --color-mention-bg: var(--mention-bg);
+
+  --font-ui: var(--font-family-ui);
+  --font-mono: var(--font-family-mono);
+
+  /* type scale (§6.2): 11 / 12 (UI default) / 13 (transcript) / 15 / 20 / 28 */
+  --text-xs: 11px;
+  --text-xs--line-height: 14px;
+  --text-sm: 12px;
+  --text-sm--line-height: 16px;
+  --text-base: 13px;
+  --text-base--line-height: 18px;
+  --text-lg: 15px;
+  --text-lg--line-height: 20px;
+  --text-xl: 20px;
+  --text-xl--line-height: 28px;
+  --text-2xl: 28px;
+  --text-2xl--line-height: 36px;
+}
+
+/* tabular numbers everywhere numbers align (diffstats, timers, usage) */
+@utility tnum {
+  font-feature-settings: "tnum";
+}
+
+/* Composer progress hairline (§6.1): a slim accent sliver traveling the top
+   edge while a turn runs. Disabled entirely under prefers-reduced-motion
+   (the wrapper carries motion-reduce:hidden). */
+@keyframes composer-hairline {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+.composer-hairline {
+  animation: composer-hairline 1.8s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .composer-hairline {
+    animation: none;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    overflow: hidden;
+    background-color: var(--canvas);
+    color: var(--text-primary);
+    font-family: var(--font-family-ui);
+    font-size: 12px;
+    line-height: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--accent) 32%, transparent);
+  }
+
+  /* T3 Code's faint fractal-noise grain: subtle brightening over true black. */
+  body::after {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='256' height='256'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-tertiary);
+    background-clip: content-box;
+  }
+}

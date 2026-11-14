@@ -1,0 +1,209 @@
+//! App-level event model (§4.2). The UI consumes these over IPC, the store
+//! persists them append-only, and drivers normalize wire-level ACP messages
+//! (see `protocol/`) into them. Unknown wire variants never become events.
+
+use serde::{Deserialize, Serialize};
+
+/// Execution status of a tool call (mirrors ACP `ToolCallStatus`).
+pub const TOOL_STATUSES: [&str; 4] = ["pending", "in_progress", "completed", "failed"];
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanEntryStatus {
+    Pending,
+    InProgress,
+    Completed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanEntry {
+    pub content: String,
+    pub status: PlanEntryStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionOption {
+    pub option_id: String,
+    pub name: String,
+    /// ACP `PermissionOptionKind`: allow_once | allow_always | reject_once | reject_always.
+    pub kind: String,
+}
+
+/// One slash command the agent advertised (`available_commands_update`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandInfo {
+    pub name: String,
+    pub description: String,
+    /// Raw ACP `AvailableCommandInput` passthrough (schema hint shape, M6 UI).
+    pub input: Option<serde_json::Value>,
+}
+
+/// Normalized, app-owned event stream.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(
+    tag = "kind",
+    content = "payload",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum EventKind {
+    UserMessage {
+        text: String,
+        /// Attached images (base64 data, mimeType) — composer chips.
+        images: Vec<crate::store::records::ImageInput>,
+    },
+    AgentMessageDelta { delta: String },
+    AgentThoughtDelta { delta: String },
+    ToolCall {
+        tool_call_id: String,
+        title: String,
+        /// ACP `ToolKind`: read | edit | delete | move | search | execute | think | fetch |
+        /// switch_mode | other.
+        kind: String,
+        status: String,
+        locations: Vec<String>,
+        raw_input: Option<serde_json::Value>,
+    },
+    ToolCallUpdate {
+        tool_call_id: String,
+        status: Option<String>,
+        content: Option<serde_json::Value>,
+        raw_output: Option<serde_json::Value>,
+    },
+    Plan { entries: Vec<PlanEntry> },
+    ApprovalRequest {
+        request_id: String,
+        tool_call_id: Option<String>,
+        title: String,
+        options: Vec<PermissionOption>,
+    },
+    ApprovalResponse {
+        request_id: String,
+        option_id: Option<String>,
+        /// True when the permission policy resolved this without the UI
+        /// (§5.5: auto modes trace every resolution, never silent).
+        #[serde(default)]
+        auto: bool,
+    },
+    ModeChange { mode_id: String },
+    Notice { level: String, message: String },
+    /// Agent-requested input (elicitation/create): form schema or URL mode,
+    /// raw detail — the UI renders the modal from it.
+    ElicitationRequest { message: String, detail: serde_json::Value },
+    /// Slash commands the agent can execute (composer menu data source).
+    CommandsUpdate { commands: Vec<CommandInfo> },
+    /// Partial session metadata; `title: Some` renames the thread in the store.
+    SessionInfo { title: Option<String> },
+    /// Raw `configOptions` passthrough from `config_option_update` (the wire
+    /// carries an array; kept raw until the pickers land in M6).
+    ConfigOptions { options: serde_json::Value },
+    /// Context compaction lifecycle. `status: Some` transitions the divider;
+    /// `summary_replace` (update patch, `Some("")` clears) and `summary_append`
+    /// (chunk) carry the user-displayable summary text.
+    Compaction {
+        status: Option<String>,
+        compaction_id: Option<String>,
+        summary_replace: Option<String>,
+        summary_append: Option<String>,
+    },
+    Usage { detail: serde_json::Value },
+    /// A file the agent changed through the fs callbacks: unified diff for
+    /// the "Changed files" projection (§5.4).
+    FileChanged {
+        path: String,
+        diff: String,
+        added: u64,
+        removed: u64,
+    },
+    /// `error` carries the failure detail for crashed runs (diagnostics UI).
+    RunFinished {
+        stop_reason: String,
+        #[serde(default)]
+        error: Option<String>,
+    },
+}
+
+/// One persisted event: app ids are primary; seq is per-run and append-only.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Event {
+    pub id: String,
+    pub run_id: String,
+    pub seq: u64,
+    pub ts: i64,
+    #[serde(flatten)]
+    pub kind: EventKind,
+}
+
+impl Event {
+    /// Deterministic id: unique per run, stable across persistence round-trips.
+    pub fn new(run_id: impl Into<String>, seq: u64, kind: EventKind) -> Self {
+        let run_id = run_id.into();
+        Self {
+            id: format!("{run_id}-{seq}"),
+            run_id,
+            seq,
+            ts: now_millis(),
+            kind,
+        }
+    }
+}
+
+pub fn now_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_serializes_with_kind_tag_and_camel_case_fields() {
+        let e = Event::new(
+            "run-1",
+            3,
+            EventKind::ToolCall {
+                tool_call_id: "t1".into(),
+                title: "Read file".into(),
+                kind: "read".into(),
+                status: "in_progress".into(),
+                locations: vec!["/repo/src/main.rs".into()],
+                raw_input: None,
+            },
+        );
+        let v = serde_json::to_value(&e).unwrap();
+        assert_eq!(v["kind"], "tool_call");
+        assert_eq!(v["payload"]["toolCallId"], "t1");
+        assert_eq!(v["payload"]["rawInput"], serde_json::Value::Null);
+        assert_eq!(v["runId"], "run-1");
+        assert_eq!(v["seq"], 3);
+        assert_eq!(v["id"], "run-1-3");
+        let back: Event = serde_json::from_value(v).unwrap();
+        assert_eq!(back, e);
+    }
+
+    #[test]
+    fn event_kind_tags_are_snake_case() {
+        assert_eq!(
+            serde_json::to_value(EventKind::AgentMessageDelta { delta: "x".into() }).unwrap()
+            ["kind"],
+            "agent_message_delta"
+        );
+        assert_eq!(
+            serde_json::to_value(EventKind::AgentThoughtDelta { delta: "x".into() }).unwrap()
+            ["kind"],
+            "agent_thought_delta"
+        );
+        assert_eq!(
+            serde_json::to_value(EventKind::RunFinished { stop_reason: "end_turn".into(), error: None })
+                .unwrap()["kind"],
+            "run_finished"
+        );
+    }
+}

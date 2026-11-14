@@ -1,0 +1,322 @@
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { isTauri } from "./tauri";
+import type {
+  AgentProcessPayload,
+  CommitOutcome,
+  DetectedAgent,
+  GitDiff,
+  GitStatus,
+  ImageInput,
+  InstanceInfo,
+  InstanceSpec,
+  IpcError,
+  PrOutcome,
+  PtyExitPayload,
+  PtyInfo,
+  PtyOutputPayload,
+  PushOutcome,
+  PreflightReport,
+  QueueUpdatedPayload,
+  Run,
+  RunEventPayload,
+  SendOutcome,
+  Thread,
+  ThreadDetail,
+} from "./types";
+
+/**
+ * Hand-written wrappers over the Rust command surface (§4.3, M1 subset).
+ * Every invoke/listen is guarded: in a plain browser tab (`pnpm dev`, no
+ * Tauri runtime) reads resolve to empty fallbacks, mutations reject with
+ * `IpcUnavailableError`, and event subscriptions resolve to a no-op.
+ */
+
+class IpcUnavailableError extends Error {
+  readonly code = "ipc_unavailable";
+  constructor(command: string) {
+    super(`${command} requires the Tauri runtime`);
+    this.name = "IpcUnavailableError";
+  }
+}
+
+export function isIpcError(error: unknown): error is IpcError {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as Record<string, unknown>;
+  return typeof e.code === "string" && typeof e.message === "string";
+}
+
+/** Human-readable line for inline notices (M1 surfaces errors inline, no toasts). */
+export function ipcErrorMessage(error: unknown): string {
+  if (isIpcError(error)) return error.message;
+  if (error instanceof Error) return error.message;
+  return String(error);
+}
+
+function invokeRequired<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  if (!isTauri()) return Promise.reject(new IpcUnavailableError(command));
+  return invoke<T>(command, args);
+}
+
+function invokeWithFallback<T>(
+  command: string,
+  fallback: T,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  if (!isTauri()) return Promise.resolve(fallback);
+  return invoke<T>(command, args);
+}
+
+function listenOrNoop<T>(event: string, handler: (payload: T) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return Promise.resolve(() => {});
+  return listen<T>(event, (e) => handler(e.payload));
+}
+
+/** Proves the IPC bridge end-to-end; empty string outside the Tauri runtime. */
+export async function appVersion(): Promise<string> {
+  return invokeWithFallback<string>("app_version", "");
+}
+
+// ---- threads ----
+
+/**
+ * Creates a thread. `workspace` pins the session cwd; with `worktree` the
+ * thread works in a fresh git worktree of the repo containing `workspace`
+ * (or the global root) — isolated changes, cleaned up on delete.
+ */
+export function threadsCreate(
+  projectId: string | null,
+  title: string,
+  workspace?: string | null,
+  worktree = false,
+): Promise<Thread> {
+  return invokeRequired<Thread>("threads_create", { projectId, title, workspace, worktree });
+}
+
+export function threadsList(): Promise<Thread[]> {
+  return invokeWithFallback<Thread[]>("threads_list", []);
+}
+
+export function threadsGet(threadId: string): Promise<ThreadDetail> {
+  return invokeRequired<ThreadDetail>("threads_get", { threadId });
+}
+
+export function threadsRename(threadId: string, title: string): Promise<void> {
+  return invokeRequired<void>("threads_rename", { threadId, title });
+}
+
+export function threadsSetStatus(threadId: string, status: Thread["status"]): Promise<void> {
+  return invokeRequired<void>("threads_set_status", { threadId, status });
+}
+
+export function threadsSetPinned(threadId: string, pinned: boolean): Promise<void> {
+  return invokeRequired<void>("threads_set_pinned", { threadId, pinned });
+}
+
+export function threadsDelete(threadId: string): Promise<void> {
+  return invokeRequired<void>("threads_delete", { threadId });
+}
+
+// ---- runs ----
+
+/**
+ * Queue-aware send: starts a turn, or — while a run is active — stores the
+ * message in the backend queue (auto-dispatched when the run finishes).
+ */
+export function runsDispatch(
+  threadId: string,
+  text: string,
+  instanceId: string,
+  images: ImageInput[] = [],
+): Promise<SendOutcome> {
+  return invokeRequired<SendOutcome>("runs_dispatch", { threadId, text, images, instanceId });
+}
+
+export function runsCancel(runId: string): Promise<void> {
+  return invokeRequired<void>("runs_cancel", { runId });
+}
+
+/** Payload of the "elicitation:request" Tauri event. */
+export interface ElicitationRequestPayload {
+  runId: string;
+  requestId: string;
+  message: string;
+  detail: unknown;
+}
+
+/** Removes one message from the thread's queue (composer row ✕). */
+export function runsQueueRemove(threadId: string, queueId: string): Promise<void> {
+  return invokeRequired<void>("runs_queue_remove", { threadId, queueId });
+}
+
+/** Switches the thread's permission mode (also stored as the default). */
+export function runsSetPermissionMode(threadId: string, mode: string): Promise<void> {
+  return invokeRequired<void>("runs_set_permission_mode", { threadId, mode });
+}
+
+/** Answers a permission request; `optionId: null` cancels it. */
+export function runsRespondPermission(
+  runId: string,
+  requestId: string,
+  optionId: string | null,
+): Promise<void> {
+  return invokeRequired<void>("runs_respond_permission", { runId, requestId, optionId });
+}
+
+export function runsRespondElicitation(
+  runId: string,
+  requestId: string,
+  action: "accept" | "decline" | "cancel",
+  content?: unknown,
+): Promise<void> {
+  return invokeRequired<void>("runs_respond_elicitation", { runId, requestId, action, content });
+}
+
+// ---- providers ----
+
+export function providersInstancesList(): Promise<InstanceInfo[]> {
+  return invokeWithFallback<InstanceInfo[]>("providers_instances_list", []);
+}
+
+/** Known agent CLIs found on PATH (M6 onboarding). */
+export function providersDetectInstalled(): Promise<DetectedAgent[]> {
+  return invokeWithFallback<DetectedAgent[]>("providers_detect_installed", []);
+}
+
+/** One-click connect check: spawn → handshake → cache caps → shut down. */
+export function providersPreflight(instanceId: string): Promise<PreflightReport> {
+  return invokeRequired<PreflightReport>("providers_preflight", { instanceId });
+}
+
+/** Rewrites the agent matrix (config.toml) and swaps the live registry. */
+export function providersInstancesSave(instances: InstanceSpec[]): Promise<void> {
+  return invokeRequired<void>("providers_instances_save", { instances });
+}
+
+/** Switches the active run's session mode (agent echoes a mode_change). */
+export function runsSetMode(threadId: string, modeId: string): Promise<void> {
+  return invokeRequired<void>("runs_set_mode", { threadId, modeId });
+}
+
+/** Last raw protocol frames of the instance's live connection (M6). */
+export function diagnosticsFrames(instanceId: string): Promise<string[]> {
+  return invokeRequired<string[]>("diagnostics_frames", { instanceId });
+}
+
+// ---- settings (§4.5) ----
+
+/** Reads one JSON setting; null outside Tauri or when unset. */
+export function settingsGet(key: string): Promise<unknown | null> {
+  return invokeWithFallback<unknown | null>("settings_get", null, { key });
+}
+
+/** Writes one JSON setting of any shape. */
+export function settingsSet(key: string, value: unknown): Promise<void> {
+  return invokeRequired<void>("settings_set", { key, value });
+}
+
+// ---- git (M4) ----
+
+export function gitStatus(threadId: string): Promise<GitStatus> {
+  return invokeRequired<GitStatus>("git_status", { threadId });
+}
+
+export function gitDiff(threadId: string, base?: string | null): Promise<GitDiff> {
+  return invokeRequired<GitDiff>("git_diff", { threadId, base });
+}
+
+export function gitCommit(threadId: string, message: string): Promise<CommitOutcome> {
+  return invokeRequired<CommitOutcome>("git_commit", { threadId, message });
+}
+
+export function gitPush(threadId: string): Promise<PushOutcome> {
+  return invokeRequired<PushOutcome>("git_push", { threadId });
+}
+
+export function gitPrCreate(threadId: string, title: string, body: string): Promise<PrOutcome> {
+  return invokeRequired<PrOutcome>("git_pr_create", { threadId, title, body });
+}
+
+export function gitGhAvailable(): Promise<boolean> {
+  return invokeWithFallback<boolean>("git_gh_available", false);
+}
+
+export function gitCheckpoint(threadId: string, runId: string): Promise<string> {
+  return invokeRequired<string>("git_checkpoint", { threadId, runId });
+}
+
+// ---- PTY terminals (M5) ----
+
+/** Spawns a PTY in the thread workspace (default shell: powershell -NoLogo). */
+export function terminalPtyCreate(
+  threadId: string,
+  command?: string[] | null,
+  rows = 24,
+  cols = 80,
+): Promise<PtyInfo> {
+  return invokeRequired<PtyInfo>("terminal_pty_create", {
+    threadId,
+    command,
+    rows,
+    cols,
+  });
+}
+
+/** Writes raw user input (base64 of the UTF-8 bytes) into the PTY. */
+export function terminalPtyWrite(terminalId: string, dataB64: string): Promise<void> {
+  return invokeRequired<void>("terminal_pty_write", { terminalId, data: dataB64 });
+}
+
+export function terminalPtyResize(terminalId: string, rows: number, cols: number): Promise<void> {
+  return invokeRequired<void>("terminal_pty_resize", { terminalId, rows, cols });
+}
+
+export function terminalPtyKill(terminalId: string): Promise<void> {
+  return invokeRequired<void>("terminal_pty_kill", { terminalId });
+}
+
+export function terminalPtyList(threadId: string): Promise<PtyInfo[]> {
+  return invokeWithFallback<PtyInfo[]>("terminal_pty_list", [], { threadId });
+}
+
+export function onPtyOutput(handler: (payload: PtyOutputPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<PtyOutputPayload>("terminal:pty", handler);
+}
+
+export function onPtyExit(handler: (payload: PtyExitPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<PtyExitPayload>("terminal:ptyExit", handler);
+}
+
+// ---- events ----
+
+export function onRunEvent(handler: (payload: RunEventPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<RunEventPayload>("run:event", handler);
+}
+
+export function onThreadUpdate(handler: (thread: Thread) => void): Promise<UnlistenFn> {
+  return listenOrNoop<{ thread: Thread }>("thread:update", (payload) => handler(payload.thread));
+}
+
+export function onAgentProcess(
+  handler: (payload: AgentProcessPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<AgentProcessPayload>("agent:process", handler);
+}
+
+export function onQueueUpdate(
+  handler: (payload: QueueUpdatedPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<QueueUpdatedPayload>("queue:update", handler);
+}
+
+/** Payload of the "run:started" Tauri event (backend-created runs). */
+export function onRunStarted(handler: (run: Run) => void): Promise<UnlistenFn> {
+  return listenOrNoop<{ run: Run }>("run:started", (payload) => handler(payload.run));
+}
+
+export function onElicitationRequest(
+  handler: (payload: ElicitationRequestPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<ElicitationRequestPayload>("elicitation:request", handler);
+}

@@ -1,0 +1,1720 @@
+//! AgentRuntime (§4.4): run orchestration, permission policy, event fan-out
+//! (persist + emit to the UI), and the fs sandbox for client callbacks.
+//!
+//! M1 simplifications (DEVLOG): one ACP connection per RUN (spawn on dispatch,
+//! kill on finish — the mock agent is single-session; pooling lands in M6);
+//! supervised permission policy only (auto modes + tests land in M3); one
+//! implicit workspace project (projects UI comes later).
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use serde::Serialize;
+use tokio::sync::mpsc;
+
+use crate::drivers::acp::{
+    elicitation_reply, fs_error, permission_reply, AcpConn, ClientReply, ClientRequest, SpawnConfig,
+};
+use crate::events::{now_millis, Event, EventKind, PermissionOption as AppPermissionOption};
+use crate::runtime::permissions::PermissionMode;
+use crate::runtime::terminals::TerminalRegistry;
+use crate::protocol::jsonrpc::{RequestId, RpcError, ERR_RESOURCE_NOT_FOUND};
+use crate::protocol::types::{
+    AgentCapabilities, CreateElicitationParams, CreateTerminalParams, ElicitationAction,
+    ReadTextFileParams, ReadTextFileResult, RequestPermissionParams, WriteTextFileParams,
+};
+use crate::store::records::{ImageInput, QueueItem, RunRecord, ThreadRecord};
+use crate::store::Store;
+
+/// Event fan-out seam: the production sink is the Tauri app handle; tests
+/// record emissions in memory. Payloads are serialized once here. `notify`
+/// posts an OS notification when the window is unfocused (§5.5); the focus
+/// check lives in the sink implementation.
+pub trait EventSink: Send + Sync + 'static {
+    fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
+    fn notify(&self, title: &str, body: &str);
+}
+
+impl<R: tauri::Runtime> EventSink for tauri::AppHandle<R> {
+    fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
+        tauri::Emitter::emit(self, event, payload).map_err(|e| e.to_string())
+    }
+
+    fn notify(&self, title: &str, body: &str) {
+        use tauri::Manager;
+        use tauri_plugin_notification::NotificationExt;
+        let Some(window) = self.get_webview_window("main") else {
+            return;
+        };
+        // Only bother the user when the window is not focused.
+        if window.is_focused().unwrap_or(true) {
+            return;
+        }
+        let _ = window
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstanceInfo {
+    pub id: String,
+    pub display_name: String,
+    /// Disabled providers stay configured but never spawn (T3-style toggle).
+    pub enabled: bool,
+    pub driver: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+    pub status: String,
+    /// From the last initialize this instance answered: images in prompts.
+    pub prompt_image: bool,
+    /// From the last initialize: `session/load` supported (resume path).
+    pub load_session: bool,
+    /// Session modes the agent advertised (M6 picker; empty until known).
+    pub modes: Vec<crate::protocol::types::SessionMode>,
+}
+
+/// Capabilities observed during a run's handshake, cached per instance so the
+/// UI can gate composer features before the first dispatch.
+#[derive(Debug, Clone)]
+struct CachedCaps {
+    prompt_image: bool,
+    load_session: bool,
+    /// Session modes the agent advertised at the last handshake (M6 picker).
+    modes: Vec<crate::protocol::types::SessionMode>,
+}
+
+/// Result of the queue-aware send: either a fresh run or a queue slot.
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct SendOutcome {
+    pub run: Option<RunRecord>,
+    pub queued: bool,
+    pub queue_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueUpdatedPayload {
+    pub thread_id: String,
+    pub items: Vec<QueueItem>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationRequestPayload {
+    pub run_id: String,
+    pub request_id: String,
+    pub message: String,
+    /// Raw elicitation/create detail: mode, requestedSchema | url, scope.
+    pub detail: serde_json::Value,
+}
+
+/// What the UI (or the policy) answered for one surfaced client request.
+#[derive(Debug, Clone)]
+pub enum AnswerPayload {
+    /// Permission option id, or None to cancel.
+    Permission { option_id: Option<String> },
+    /// Elicitation action + optional form content.
+    Elicitation {
+        action: ElicitationAction,
+        content: Option<serde_json::Value>,
+    },
+}
+
+/// A permission request parked in the pending set, awaiting the UI.
+#[derive(Debug)]
+struct PendingPermission {
+    wire_id: RequestId,
+    /// ACP ToolKind of the pending tool call (the remembered key class).
+    tool_kind: String,
+    /// optionId → ACP kind, for remembered-decision bookkeeping.
+    option_kinds: HashMap<String, String>,
+}
+
+/// A surfaced elicitation awaiting the UI's answer.
+#[derive(Debug)]
+struct PendingElicitation {
+    wire_id: RequestId,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RunEventPayload {
+    pub run_id: String,
+    pub event: Event,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RunStartedPayload {
+    pub run: RunRecord,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionRequestPayload {
+    pub run_id: String,
+    pub request_id: String,
+    pub title: String,
+    pub options: Vec<AppPermissionOption>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadUpdatedPayload {
+    pub thread: ThreadRecord,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ProcessEventPayload {
+    pub instance_id: String,
+    pub kind: String,
+    pub detail: Option<String>,
+}
+
+struct RunState {
+    conn: Arc<AcpConn>,
+    session_id: String,
+    /// Which configured instance owns this run (diagnostics, M6).
+    instance_id: String,
+}
+
+struct Inner {
+    /// Active runs: run_id → live connection/session.
+    runs: HashMap<String, RunState>,
+    /// Per-run queue the IPC layer pushes UI answers into.
+    answer_queues: HashMap<String, mpsc::UnboundedSender<(String, AnswerPayload)>>,
+    /// thread_id → active run_id (§4.2: at most one active run per thread).
+    threads_working: HashMap<String, String>,
+    /// instance_id → capabilities observed at the last handshake.
+    capabilities: HashMap<String, CachedCaps>,
+    /// thread_id → permission mode override (settings default otherwise).
+    permission_modes: HashMap<String, PermissionMode>,
+    /// Terminal callbacks registry (§5.5); survives runs for M5 reattach.
+    terminals: Arc<TerminalRegistry>,
+    /// User-facing PTY terminals (M5 panel): ConPTY-backed, event-streamed.
+    ptys: Arc<crate::runtime::ptys::PtyRegistry>,
+    /// The agent matrix (§4.5 config.toml instances; mock fallback).
+    instances: Vec<crate::config::InstanceSpec>,
+}
+
+pub struct AgentRuntime {
+    store: Arc<Store>,
+    sink: Arc<dyn EventSink>,
+    inner: Mutex<Inner>,
+}
+
+/// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
+/// and reject the prefix (opencode answers -32602 "cwd must be an absolute
+/// path"). Strip it; UNC verbatim form maps back to `\\server\share`.
+fn clean_verbatim(path: PathBuf) -> PathBuf {
+    let s = path.to_string_lossy();
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    PathBuf::from(s.replace(r"\\?\", ""))
+}
+
+impl AgentRuntime {
+    pub fn new(store: Arc<Store>, sink: Arc<dyn EventSink>) -> Self {
+        // Runs live only as long as the process: threads left in a run-state
+        // by a previous shutdown are orphans — make them drafts at boot.
+        match store.reset_orphaned_run_states() {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(target: "pult::runtime", count = n, "reset orphaned run states at boot"),
+            Err(err) => tracing::warn!(target: "pult::runtime", error = %err, "orphaned run-state reset failed"),
+        }
+        let home = crate::pult_home();
+        let mut instances = crate::config::load_instances(&home);
+        if instances.is_empty() {
+            instances.push(crate::config::mock_spec());
+        }
+        Self {
+            store,
+            sink: Arc::clone(&sink),
+            inner: Mutex::new(Inner {
+                runs: HashMap::new(),
+                answer_queues: HashMap::new(),
+                threads_working: HashMap::new(),
+                capabilities: HashMap::new(),
+                permission_modes: HashMap::new(),
+                terminals: Arc::new(TerminalRegistry::default()),
+                ptys: Arc::new(crate::runtime::ptys::PtyRegistry::new(sink)),
+                instances,
+            }),
+        }
+    }
+
+    /// User PTY terminal registry (M5 terminal panel).
+    pub fn ptys(&self) -> Arc<crate::runtime::ptys::PtyRegistry> {
+        Arc::clone(
+            &self
+                .inner
+                .lock()
+                .expect("runtime lock poisoned")
+                .ptys,
+        )
+    }
+
+    pub fn store(&self) -> &Arc<Store> {
+        &self.store
+    }
+
+    /// Agent matrix projection (§4.3): configured instances + capabilities
+    /// from the last handshake each completed (empty until the first run).
+    pub fn instances(&self) -> Vec<InstanceInfo> {
+        let inner = self.inner.lock().expect("runtime lock poisoned");
+        inner
+            .instances
+            .iter()
+            .map(|spec| {
+                let caps = inner.capabilities.get(&spec.id).cloned().unwrap_or(CachedCaps {
+                    prompt_image: false,
+                    load_session: false,
+                    modes: Vec::new(),
+                });
+                InstanceInfo {
+                    id: spec.id.clone(),
+                    display_name: spec.display_name.clone(),
+                    enabled: spec.enabled,
+                    driver: spec.driver.clone(),
+                    command: spec.command.clone(),
+                    args: spec.args.clone(),
+                    env: spec
+                        .env
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect(),
+                    status: "stopped".to_string(),
+                    prompt_image: caps.prompt_image,
+                    load_session: caps.load_session,
+                    modes: caps.modes,
+                }
+            })
+            .collect()
+    }
+
+    /// Spawn configuration for an instance (M6): `"mock"` resolves the
+    /// fixtures script at spawn time; `"acp"` runs the configured argv.
+    fn spawn_config_for(&self, instance_id: &str) -> Result<SpawnConfig, crate::PultError> {
+        let spec = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner
+                .instances
+                .iter()
+                .find(|i| i.id == instance_id)
+                .cloned()
+        };
+        let Some(spec) = spec else {
+            return Err(crate::PultError::internal(format!(
+                "unknown instance {instance_id}"
+            )));
+        };
+        if !spec.enabled {
+            return Err(crate::PultError::internal(format!(
+                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+            )));
+        }
+        match spec.driver.as_str() {
+            "mock" => mock_spawn_config().ok_or_else(|| {
+                crate::PultError::internal("mock agent script not found (fixtures/mock-acp-agent.mjs)")
+            }),
+            "acp" => Ok(SpawnConfig {
+                command: spec.command.clone(),
+                args: spec.args.clone(),
+                env: spec
+                    .env
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect(),
+            }),
+            other => Err(crate::PultError::internal(format!(
+                "unknown driver {other:?} for instance {instance_id}"
+            ))),
+        }
+    }
+
+    /// Rewrites the agent matrix (settings UI save): validates ids, writes
+    /// config.toml, and swaps the live registry.
+    pub fn set_instances(&self, specs: Vec<crate::config::InstanceSpec>) -> Result<(), crate::PultError> {
+        for spec in &specs {
+            if spec.id.trim().is_empty() {
+                return Err(crate::PultError::internal("instance id must not be empty"));
+            }
+            if spec.driver != "acp" && spec.driver != "mock" {
+                return Err(crate::PultError::internal(format!(
+                    "unknown driver {:?} (acp | mock)",
+                    spec.driver
+                )));
+            }
+            if spec.driver == "acp" && spec.command.trim().is_empty() {
+                return Err(crate::PultError::internal(format!(
+                    "instance {:?} needs a command",
+                    spec.id
+                )));
+            }
+        }
+        crate::config::save_instances(&crate::pult_home(), &specs)?;
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .instances = specs;
+        Ok(())
+    }
+
+    /// Diagnostics (§8 M6): last raw protocol frames from any live run of
+    /// this instance; no live session → typed error.
+    pub fn diagnostics_frames(&self, instance_id: &str) -> Result<Vec<String>, crate::PultError> {
+        let inner = self.inner.lock().expect("runtime lock poisoned");
+        for state in inner.runs.values() {
+            if state.instance_id == instance_id {
+                return Ok(state.conn.diagnostics_frames());
+            }
+        }
+        Err(crate::PultError::internal(format!(
+            "no live session for {instance_id} — frames appear while a run is active"
+        )))
+    }
+
+    /// Switches the active run's session mode (§5.4 session/set_mode).
+    pub fn set_mode(&self, thread_id: &str, mode_id: &str) -> Result<(), crate::PultError> {
+        let run_id = self
+            .active_run_for(thread_id)
+            .ok_or_else(|| crate::PultError::internal("no active run for this thread"))?;
+        let (conn, session_id) = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            match inner.runs.get(&run_id) {
+                Some(state) => (Arc::clone(&state.conn), state.session_id.clone()),
+                None => {
+                    return Err(crate::PultError::internal(format!("run {run_id} is not active")))
+                }
+            }
+        };
+        let mode_id = mode_id.to_string();
+        // Sync commands run on the main thread — reach the reactor through a
+        // handle instead of panicking outside the tokio context.
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            crate::PultError::internal("no tokio runtime — cannot reach the agent process")
+        })?;
+        handle.spawn(async move {
+            if let Err(err) = conn.set_mode(&session_id, &mode_id).await {
+                tracing::warn!(target: "pult::runtime", error = %err, "set_mode failed");
+            }
+        });
+        Ok(())
+    }
+
+    /// Queue-aware send (§6.1 composer semantics): if the thread is working,
+    /// the message is stored and auto-dispatches when the active run ends;
+    /// otherwise it starts a run immediately.
+    pub fn send(
+        self: &Arc<Self>,
+        thread: &ThreadRecord,
+        text: &str,
+        images: &[ImageInput],
+        instance_id: &str,
+    ) -> Result<SendOutcome, crate::PultError> {
+        let active = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.threads_working.get(&thread.id).cloned()
+        };
+        if active.is_none() {
+            let run = self.dispatch(thread, text, images, instance_id)?;
+            return Ok(SendOutcome {
+                run: Some(run),
+                queued: false,
+                queue_id: None,
+            });
+        }
+        let item = QueueItem {
+            id: format!("q-{}-{}", now_millis(), thread.id),
+            thread_id: thread.id.clone(),
+            instance_id: instance_id.to_string(),
+            text: text.to_string(),
+            images: images.to_vec(),
+            created_at: now_millis(),
+        };
+        self.store.enqueue_queue_item(&item)?;
+        self.emit_queue_updated(&thread.id);
+        Ok(SendOutcome {
+            run: None,
+            queued: true,
+            queue_id: Some(item.id),
+        })
+    }
+
+    /// The thread's live run id, if any (§4.2: at most one active run).
+    pub fn active_run_for(&self, thread_id: &str) -> Option<String> {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .threads_working
+            .get(thread_id)
+            .cloned()
+    }
+
+    /// Pushes the thread's current queue to the UI ("queue:update").
+    pub fn emit_queue_updated(&self, thread_id: &str) {
+        let items = self.store.list_queue(thread_id).unwrap_or_default();
+        self.emit(
+            "queue:update",
+            &QueueUpdatedPayload {
+                thread_id: thread_id.to_string(),
+                items,
+            },
+        );
+    }
+
+    /// Remembers handshake capabilities per instance for composer gating and
+    /// the M6 mode picker (modes come from the session handshake). An empty
+    /// mode list preserves the previously cached one — resumes that carry no
+    /// advertised list must not blind the picker.
+    fn cache_capabilities(
+        &self,
+        instance_id: &str,
+        caps: &AgentCapabilities,
+        modes: Vec<crate::protocol::types::SessionMode>,
+    ) {
+        let mut inner = self.inner.lock().expect("runtime lock poisoned");
+        let previous_modes = inner
+            .capabilities
+            .get(instance_id)
+            .map(|c| c.modes.clone())
+            .unwrap_or_default();
+        let modes = if modes.is_empty() {
+            previous_modes
+        } else {
+            modes
+        };
+        inner.capabilities.insert(
+            instance_id.to_string(),
+            CachedCaps {
+                prompt_image: caps.prompt_capabilities.image,
+                load_session: caps.load_session,
+                modes,
+            },
+        );
+    }
+
+    /// Start a run (§4.2): registers the run, persists the user message, and
+    /// hands the turn to a background task. Returns the created run. Callers
+    /// that must respect an active run use [`AgentRuntime::send`].
+    pub fn dispatch(
+        self: &Arc<Self>,
+        thread: &ThreadRecord,
+        text: &str,
+        images: &[ImageInput],
+        instance_id: &str,
+    ) -> Result<RunRecord, crate::PultError> {
+        let spawn_config = self.spawn_config_for(instance_id)?;
+
+        let active = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.threads_working.get(&thread.id).cloned()
+        };
+        if active.is_some() {
+            return Err(crate::PultError::internal(
+                "thread already has an active run; queue instead",
+            ));
+        }
+
+        let run = RunRecord {
+            id: format!("run-{}-{}", now_millis(), thread.id),
+            thread_id: thread.id.clone(),
+            idx: self.store.run_count(&thread.id)? as i64,
+            status: "running".to_string(),
+            instance_id: instance_id.to_string(),
+            model: None,
+            mode: None,
+            effort: None,
+            started_at: now_millis(),
+            stopped_at: None,
+            stop_reason: None,
+            error: None,
+        };
+        self.store.create_run(&run)?;
+        // Covers backend-created runs too (queue auto-dispatch): the UI
+        // registers the record so the timeline can select it.
+        self.emit("run:started", &RunStartedPayload { run: run.clone() });
+
+        let user_event = Event::new(
+            run.id.clone(),
+            self.store.next_seq(&run.id)?,
+            EventKind::UserMessage {
+                text: text.to_string(),
+                images: images.to_vec(),
+            },
+        );
+        self.store.append_event(&user_event)?;
+        self.emit_run_event(&run.id, &user_event);
+
+        let root = self.workspace_root_for(thread)?;
+        let (answers_tx, answers_rx) = mpsc::unbounded_channel::<(String, AnswerPayload)>();
+
+        {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.answer_queues.insert(run.id.clone(), answers_tx);
+            inner.threads_working.insert(thread.id.clone(), run.id.clone());
+        }
+        self.set_thread_status(&thread.id, "working")?;
+
+        let this = Arc::clone(self);
+        let run_id = run.id.clone();
+        let thread_id = thread.id.clone();
+        let instance_id = instance_id.to_string();
+        let text = text.to_string();
+        let prompt_images = images.to_vec();
+        tokio::spawn(async move {
+            let outcome = run_turn(RunTask {
+                runtime: this,
+                spawn_config,
+                run_id,
+                thread_id,
+                instance_id,
+                root,
+                text,
+                images: prompt_images,
+                answers_rx,
+            })
+            .await;
+            if let Err(err) = outcome {
+                tracing::error!(target: "pult::runtime", error = %err, "run task failed");
+            }
+        });
+
+        Ok(run)
+    }
+
+    /// Stop button / Esc: cancel the active run's prompt turn (§5.3).
+    pub fn cancel(&self, run_id: &str) -> Result<(), crate::PultError> {
+        let (conn, session_id) = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            match inner.runs.get(run_id) {
+                Some(state) => (Arc::clone(&state.conn), state.session_id.clone()),
+                None => {
+                    return Err(crate::PultError::internal(format!("run {run_id} is not active")))
+                }
+            }
+        };
+        tokio::runtime::Handle::try_current()
+            .map_err(|_| {
+                crate::PultError::internal("no tokio runtime — cannot reach the agent process")
+            })?
+            .spawn(async move {
+                if let Err(err) = conn.cancel(&session_id).await {
+                    tracing::warn!(target: "pult::runtime", error = %err, "cancel failed");
+                }
+            });
+        Ok(())
+    }
+
+    /// Route a permission answer from the UI into the run's queue.
+    pub fn respond_permission(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        option_id: Option<String>,
+    ) -> Result<(), crate::PultError> {
+        self.push_answer(
+            run_id,
+            request_id,
+            AnswerPayload::Permission { option_id },
+        )
+    }
+
+    /// Route an elicitation answer (accept/decline/cancel + content).
+    pub fn respond_elicitation(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        action: ElicitationAction,
+        content: Option<serde_json::Value>,
+    ) -> Result<(), crate::PultError> {
+        self.push_answer(
+            run_id,
+            request_id,
+            AnswerPayload::Elicitation { action, content },
+        )
+    }
+
+    fn push_answer(
+        &self,
+        run_id: &str,
+        request_id: &str,
+        payload: AnswerPayload,
+    ) -> Result<(), crate::PultError> {
+        let tx = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.answer_queues.get(run_id).cloned()
+        };
+        // The run loop owns the pending maps; an unknown key is silently
+        // dropped by the answers arm (e.g. a stale UI answer after the
+        // policy already resolved the request locally).
+        match tx {
+            Some(tx) => {
+                tx.send((request_id.to_string(), payload))
+                    .map_err(|_| crate::PultError::internal("run already finished"))?;
+                Ok(())
+            }
+            None => Err(crate::PultError::internal(format!("run {run_id} is not active"))),
+        }
+    }
+
+    /// Permission mode for a thread: override, else the settings default.
+    pub fn permission_mode_for(&self, thread_id: &str) -> PermissionMode {
+        {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            if let Some(mode) = inner.permission_modes.get(thread_id) {
+                return *mode;
+            }
+        }
+        self.store
+            .get_setting("permission_mode")
+            .ok()
+            .flatten()
+            .and_then(|v| PermissionMode::from_settings_value(&v))
+            .unwrap_or_else(PermissionMode::default_mode)
+    }
+
+    /// Per-thread permission mode override ("pill" in the composer chrome).
+    pub fn set_permission_mode(
+        &self,
+        thread_id: &str,
+        mode: PermissionMode,
+    ) -> Result<(), crate::PultError> {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .permission_modes
+            .insert(thread_id.to_string(), mode);
+        // The chosen mode also becomes the default for new threads (§5.7).
+        self.store.set_setting(
+            "permission_mode",
+            &serde_json::to_value(mode).unwrap_or_default(),
+        )?;
+        Ok(())
+    }
+
+    /// Remembered allow_always decision per (instance, tool class) (§5.5).
+    fn remembered_for(&self, instance_id: &str, tool_kind: &str) -> Option<String> {
+        let value = self
+            .store
+            .get_setting("remembered_permissions")
+            .ok()
+            .flatten()?;
+        Some(
+            value
+                .get(instance_id)?
+                .get(tool_kind)?
+                .as_str()?
+                .to_string(),
+        )
+    }
+
+    fn remember_decision(&self, instance_id: &str, tool_kind: &str, option_id: &str) {
+        let mut map = self
+            .store
+            .get_setting("remembered_permissions")
+            .ok()
+            .flatten()
+            .unwrap_or(serde_json::json!({}));
+        map[instance_id][tool_kind] = serde_json::Value::String(option_id.to_string());
+        if let Err(err) = self.store.set_setting("remembered_permissions", &map) {
+            tracing::warn!(target: "pult::runtime", error = %err, "remembered decision not saved");
+        }
+    }
+
+    fn set_thread_status(&self, thread_id: &str, status: &str) -> Result<(), crate::PultError> {
+        self.store.set_thread_status(thread_id, status)?;
+        self.emit_thread_updated(thread_id);
+        Ok(())
+    }
+
+    /// Pushes the current thread state to the UI ("thread:update").
+    pub fn emit_thread_updated(&self, thread_id: &str) {
+        if let Ok(thread) = self.store.get_thread(thread_id) {
+            self.emit("thread:update", &ThreadUpdatedPayload { thread });
+        }
+    }
+
+    fn emit_run_event(&self, run_id: &str, event: &Event) {
+        self.emit(
+            "run:event",
+            &RunEventPayload {
+                run_id: run_id.to_string(),
+                event: event.clone(),
+            },
+        );
+    }
+
+    /// Single fan-out point: serialize + hand to the sink.
+    fn emit(&self, event: &str, payload: &impl Serialize) {
+        let value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
+        let _ = self.sink.emit(event, value);
+    }
+
+    /// OS notification seam (the sink decides whether the window cares).
+    fn sink_notify(&self, title: &str, body: &str) {
+        self.sink.notify(title, body);
+    }
+
+    /// M1 workspace root: PULT_WORKSPACE override or ~/pult-workspace.
+    fn workspace_root(&self) -> Result<PathBuf, crate::PultError> {
+        let root = default_workspace_root();
+        std::fs::create_dir_all(&root)
+            .map_err(|e| crate::PultError::internal(format!("workspace root: {e}")))?;
+        root.canonicalize()
+            .map_err(|e| crate::PultError::internal(format!("workspace root: {e}")))
+    }
+
+    /// Global fallback root for callers that create threads before choosing
+    /// a workspace (threads_create with worktree=true and no explicit dir).
+    pub fn global_workspace_root(&self) -> Result<PathBuf, crate::PultError> {
+        self.workspace_root()
+    }
+
+    /// Session cwd for a thread: its explicit workspace (worktree threads
+    /// pin theirs at creation), else the global root (§4.4).
+fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
+        if let Some(ws) = thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let path = PathBuf::from(ws);
+            if path.is_dir() {
+                return Ok(clean_verbatim(path));
+            }
+            tracing::warn!(target: "pult::runtime",
+                workspace = %ws, "thread workspace missing on disk; falling back to global root");
+        }
+        let root = self.workspace_root()?;
+        Ok(clean_verbatim(root))
+    }
+
+    /// Writes a hidden `refs/pult/checkpoints/<run_id>` ref so any run's
+    /// resulting tree stays recoverable (§4.4; the rollback UI stays out of
+    /// scope, the data does not). Best-effort: skips non-repo workspaces.
+    fn spawn_checkpoint(self: &Arc<Self>, thread: &ThreadRecord, run_id: &str) {
+        let Some(workspace) = thread.workspace.clone() else {
+            return;
+        };
+        let run_id = run_id.to_string();
+        tokio::spawn(async move {
+            if let Err(err) = crate::git::checkpoint(Path::new(&workspace), &run_id).await {
+                tracing::info!(target: "pult::runtime", run_id = %run_id,
+                    error = %err, "checkpoint skipped");
+            }
+        });
+    }
+}
+
+fn default_workspace_root() -> PathBuf {
+    if let Ok(root) = std::env::var("PULT_WORKSPACE") {
+        return PathBuf::from(root);
+    }
+    home_dir_pub().join("pult-workspace")
+}
+
+/// Home directory helper shared with `lib.rs` (db/config paths live in `~/.pult`).
+pub fn home_dir_pub() -> PathBuf {
+    std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn mock_spawn_config() -> Option<SpawnConfig> {
+    let script = mock_agent_script()?;
+    let mut env = HashMap::new();
+    for key in [
+        "MOCK_DELAY_MS",
+        "MOCK_SLOW_TURN",
+        "MOCK_BAD_JSON",
+        "MOCK_CRASH_MID_TURN",
+        "MOCK_HANG",
+    ] {
+        if let Ok(value) = std::env::var(key) {
+            env.insert(key.to_string(), value);
+        }
+    }
+    Some(SpawnConfig {
+        command: "node".to_string(),
+        args: vec![script.to_string_lossy().into_owned()],
+        env,
+    })
+}
+
+fn mock_agent_script() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Ok(path) = std::env::var("PULT_MOCK_AGENT") {
+        candidates.push(PathBuf::from(path));
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        candidates.push(cwd.join("fixtures/mock-acp-agent.mjs"));
+        candidates.push(cwd.join("../fixtures/mock-acp-agent.mjs"));
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// Everything one prompt turn needs; keeps run_turn's arity clippy-clean.
+struct RunTask {
+    runtime: Arc<AgentRuntime>,
+    spawn_config: SpawnConfig,
+    run_id: String,
+    thread_id: String,
+    instance_id: String,
+    root: PathBuf,
+    text: String,
+    images: Vec<ImageInput>,
+    answers_rx: mpsc::UnboundedReceiver<(String, AnswerPayload)>,
+}
+
+/// Drive one prompt turn: consume projected events + client-side requests
+/// while the prompt response is pending, then finalize the run.
+async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
+    let RunTask {
+        runtime,
+        spawn_config,
+        run_id,
+        thread_id,
+        instance_id,
+        root,
+        text,
+        images,
+        mut answers_rx,
+    } = task;
+    let emit_process = |kind: &str, detail: Option<String>| {
+        runtime.emit(
+            "agent:process",
+            &ProcessEventPayload {
+                instance_id: instance_id.clone(),
+                kind: kind.to_string(),
+                detail,
+            },
+        );
+    };
+
+    emit_process("starting", None);
+    // The receivers come back separately: the run loop owns them exclusively,
+    // while the connection itself is shared through an Arc.
+    let conn_raw_parts = match AcpConn::spawn(&spawn_config) {
+        Ok(parts) => parts,
+        Err(err) => {
+            let msg = err.to_string();
+            emit_process("crashed", Some(msg.clone()));
+            runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
+            return Ok(());
+        }
+    };
+    let (conn_raw, streams) = conn_raw_parts;
+    let crate::drivers::acp::AcpStreams {
+        mut events_rx,
+        mut client_requests_rx,
+    } = streams;
+    let conn = Arc::new(conn_raw);
+    emit_process("spawned", None);
+
+    {
+        let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
+        guard.runs.insert(
+            run_id.clone(),
+            RunState {
+                conn: Arc::clone(&conn),
+                session_id: String::new(),
+                instance_id: instance_id.clone(),
+            },
+        );
+    }
+
+    let session_id = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await {
+        Ok(session_id) => session_id,
+        Err(err) => {
+            conn.kill();
+            runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(err.to_string()))?;
+            return Ok(());
+        }
+    };
+    {
+        let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
+        if let Some(state) = guard.runs.get_mut(&run_id) {
+            state.session_id = session_id.clone();
+        }
+    }
+    emit_process("running", None);
+
+    let terminals: Arc<TerminalRegistry> = {
+        let inner = runtime.inner.lock().expect("runtime lock poisoned");
+        Arc::clone(&inner.terminals)
+    };
+    let mut next_seq = runtime.store.next_seq(&run_id)?;
+    let mut pending_permissions: HashMap<String, PendingPermission> = HashMap::new();
+    let mut pending_elicitations: HashMap<String, PendingElicitation> = HashMap::new();
+    let mut failure: Option<String> = None;
+    // Assigned on every break path before the post-loop read.
+    let stop_reason: Option<String>;
+
+    let mut content = Vec::with_capacity(1 + images.len());
+    content.push(crate::protocol::types::ContentBlock::text(text.clone()));
+    for image in &images {
+        content.push(crate::protocol::types::ContentBlock::Image {
+            data: image.data.clone(),
+            mime_type: image.mime_type.clone(),
+        });
+    }
+    let prompt_fut = conn.prompt(&session_id, content);
+    tokio::pin!(prompt_fut);
+
+    loop {
+        tokio::select! {
+            answer = answers_rx.recv() => {
+                if let Some((request_id, payload)) = answer {
+                    match payload {
+                        AnswerPayload::Permission { option_id } => {
+                            if let Some(pending) = pending_permissions.remove(&request_id) {
+                                let event = Event::new(
+                                    run_id.clone(),
+                                    next_seq,
+                                    EventKind::ApprovalResponse {
+                                        request_id: request_id.clone(),
+                                        option_id: option_id.clone(),
+                                        auto: false,
+                                    },
+                                );
+                                next_seq += 1;
+                                let _ = runtime.store.append_event(&event);
+                                runtime.emit_run_event(&run_id, &event);
+                                // Remember allow_always per (instance, tool class).
+                                if let Some(option_id) = &option_id {
+                                    if let Some(kind) =
+                                        pending.option_kinds.get(option_id).cloned()
+                                    {
+                                        if crate::runtime::permissions::is_rememberable(&kind) {
+                                            runtime.remember_decision(
+                                                &instance_id,
+                                                &pending.tool_kind,
+                                                option_id,
+                                            );
+                                        }
+                                    }
+                                }
+                                // Reply with the ORIGINAL wire id, not the key.
+                                let _ = conn
+                                    .respond_client(pending.wire_id, permission_reply(option_id))
+                                    .await;
+                            }
+                        }
+                        AnswerPayload::Elicitation { action, content } => {
+                            if let Some(pending) = pending_elicitations.remove(&request_id) {
+                                let _ = conn
+                                    .respond_client(
+                                        pending.wire_id,
+                                        elicitation_reply(action, content),
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+            kind = events_rx.recv() => {
+                if let Some(kind) = kind {
+                    let event = Event::new(run_id.clone(), next_seq, kind);
+                    next_seq += 1;
+                    if let Err(err) = runtime.store.append_event(&event) {
+                        failure = Some(format!("store: {err}"));
+                        stop_reason = Some("failed".to_string());
+                        break;
+                    }
+                    runtime.emit_run_event(&run_id, &event);
+                    // Agent-chosen session titles rename the thread live
+                    // (session_info_update, §M2 auto-rename).
+                    if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
+                        if !title.trim().is_empty() {
+                            if let Err(err) = runtime.store.rename_thread(&thread_id, title) {
+                                tracing::warn!(target: "pult::runtime",
+                                    error = %err, "session title rename failed");
+                            }
+                            runtime.emit_thread_updated(&thread_id);
+                        }
+                    }
+                }
+            }
+            request = client_requests_rx.recv() => {
+                if let Some(request) = request {
+                    match request {
+                        ClientRequest::Permission { request_id, params } => {
+                            if let Err(err) = handle_permission_request(
+                                &runtime, &conn, &run_id, &thread_id, &instance_id,
+                                &root, &mut next_seq, &mut pending_permissions,
+                                &request_id, params,
+                            )
+                            .await
+                            {
+                                failure = Some(format!("permission: {err}"));
+                                stop_reason = Some("failed".to_string());
+                                break;
+                            }
+                        }
+                        ClientRequest::ReadFile { request_id, params } => {
+                            let reply = read_file_sandboxed(&root, &params);
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                        ClientRequest::WriteFile { request_id, params } => {
+                            let (reply, change) = write_file_sandboxed(&root, &params);
+                            if let Some((path, diff, added, removed)) = change {
+                                let event = Event::new(
+                                    run_id.clone(),
+                                    next_seq,
+                                    EventKind::FileChanged { path, diff, added, removed },
+                                );
+                                next_seq += 1;
+                                let _ = runtime.store.append_event(&event);
+                                runtime.emit_run_event(&run_id, &event);
+                            }
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                        ClientRequest::Elicitation { request_id, params } => {
+                            if let Err(err) = surface_elicitation(
+                                &runtime, &run_id, &mut next_seq,
+                                &mut pending_elicitations, &request_id, params,
+                            ) {
+                                failure = Some(format!("elicitation: {err}"));
+                                stop_reason = Some("failed".to_string());
+                                break;
+                            }
+                        }
+                        ClientRequest::TerminalCreate { request_id, params } => {
+                            let reply = handle_terminal_create(&terminals, &root, &params);
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                        ClientRequest::TerminalOutput { request_id, params } => {
+                            let reply = terminals.output(&params.terminal_id);
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                        ClientRequest::TerminalWait { request_id, params } => {
+                            // Answer from a detached task: waiting must not
+                            // stall the event stream (§9 no blocking lanes).
+                            let conn = Arc::clone(&conn);
+                            let terminals = Arc::clone(&terminals);
+                            tokio::spawn(async move {
+                                let reply = terminals.wait_for_exit(&params.terminal_id).await;
+                                let _ = conn.respond_client(request_id, reply).await;
+                            });
+                        }
+                        ClientRequest::TerminalKill { request_id, params } => {
+                            let reply = terminals.kill(&params.terminal_id);
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                        ClientRequest::TerminalRelease { request_id, params } => {
+                            let reply = terminals.release(&params.terminal_id);
+                            let _ = conn.respond_client(request_id, reply).await;
+                        }
+                    }
+                }
+            }
+            result = &mut prompt_fut => {
+                match result {
+                    Ok(prompt) => {
+                        stop_reason = Some(
+                            serde_json::to_value(prompt.stop_reason)
+                                .ok()
+                                .and_then(|v| v.as_str().map(str::to_string))
+                                .unwrap_or_else(|| "end_turn".to_string()),
+                        );
+                    }
+                    Err(err) => {
+                        failure = Some(err.to_string());
+                        stop_reason = Some("failed".to_string());
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    let final_reason = stop_reason.unwrap_or_else(|| "failed".to_string());
+    let status = match final_reason.as_str() {
+        "cancelled" => "cancelled",
+        "failed" => "failed",
+        _ => "finished",
+    };
+    // The agent dying mid-run is a designed error state (§8 M7): check before
+    // our own kill() so a crash is not mistaken for a normal shutdown.
+    let crashed_mid_run = conn.died_on_own();
+    conn.kill();
+    if crashed_mid_run {
+        emit_process("crashed", failure.clone());
+    }
+    runtime.finalize_run(&run_id, &thread_id, status, &final_reason, failure)?;
+    Ok(())
+}
+
+impl AgentRuntime {
+    fn finalize_run(
+        self: &Arc<Self>,
+        run_id: &str,
+        thread_id: &str,
+        status: &str,
+        stop_reason: &str,
+        failure: Option<String>,
+    ) -> Result<(), crate::PultError> {
+        let finished = Event::new(
+            run_id.to_string(),
+            self.store.next_seq(run_id)?,
+            EventKind::RunFinished {
+                stop_reason: stop_reason.to_string(),
+                error: failure.clone(),
+            },
+        );
+        self.store.append_event(&finished)?;
+        self.emit_run_event(run_id, &finished);
+        let _ = self.store.finish_run(
+            run_id,
+            now_millis(),
+            status,
+            Some(stop_reason),
+            failure.as_deref(),
+        );
+        if let Some(detail) = &failure {
+            tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
+        }
+        {
+            let mut guard = self.inner.lock().expect("runtime lock poisoned");
+            guard.runs.remove(run_id);
+            guard.answer_queues.remove(run_id);
+            guard.threads_working.remove(thread_id);
+        }
+        let _ = self.store.set_thread_status(thread_id, "settled");
+        if let Ok(thread) = self.store.get_thread(thread_id) {
+            self.spawn_checkpoint(&thread, run_id);
+            self.emit("thread:update", &ThreadUpdatedPayload { thread });
+        }
+        // Queue auto-dispatch: the oldest queued message starts its own run
+        // now that the thread is free (§6.1 queue semantics).
+        self.auto_dispatch_queue(thread_id);
+        Ok(())
+    }
+}
+
+impl AgentRuntime {
+    /// Pops the queue head and dispatches it, if the thread has one queued.
+    /// Best-effort: a dispatch error is logged, the remaining queue is kept.
+    fn auto_dispatch_queue(self: &Arc<Self>, thread_id: &str) {
+        match self.store.pop_queue_head(thread_id) {
+            Ok(Some(item)) => {
+                let thread = match self.store.get_thread(thread_id) {
+                    Ok(thread) => thread,
+                    Err(err) => {
+                        tracing::error!(target: "pult::runtime",
+                            error = %err, "queue dispatch: thread vanished");
+                        return;
+                    }
+                };
+                match self.dispatch(&thread, &item.text, &item.images, &item.instance_id) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        tracing::error!(target: "pult::runtime",
+                            error = %err, "queue auto-dispatch failed");
+                    }
+                }
+                self.emit_queue_updated(thread_id);
+            }
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(target: "pult::runtime", error = %err, "queue pop failed");
+            }
+        }
+    }
+}
+
+/// Result of a one-click connect check (§4.3 providers surface).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PreflightReport {
+    pub instance_id: String,
+    pub agent_name: String,
+    pub agent_version: Option<String>,
+    pub load_session: bool,
+    pub prompt_image: bool,
+    /// Real auth state: a probe `session/new` succeeded (T3-style
+    /// "Authenticated"), not just advertised auth methods.
+    pub auth_required: bool,
+    /// Detail when the probe failed (shown under "Needs sign-in").
+    pub auth_hint: Option<String>,
+}
+
+impl AgentRuntime {
+    /// One-click connect check: spawn the agent, complete the initialize
+    /// handshake, cache its capabilities, shut it down. No prompt is sent, so
+    /// the check costs nothing and never touches a session — this is what the
+    /// "Connect" button runs so the user never wires commands by hand.
+    pub async fn preflight(&self, instance_id: &str) -> Result<PreflightReport, crate::PultError> {
+        let spec = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner
+                .instances
+                .iter()
+                .find(|i| i.id == instance_id)
+                .cloned()
+        }
+        .ok_or_else(|| crate::PultError::internal(format!("unknown instance: {instance_id}")))?;
+        if !spec.enabled {
+            return Err(crate::PultError::internal(format!(
+                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+            )));
+        }
+        let spawn_config = self.spawn_config_for(instance_id)?;
+        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config)
+            .map_err(|e| crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name)))?;
+        let init = conn
+            .initialize()
+            .await
+            .map_err(|e| {
+                conn.kill();
+                crate::PultError::internal(format!("{} did not answer the handshake: {e}", spec.display_name))
+            })?;
+        // Auth is real only if a session can actually be created: authMethods
+        // advertise SUPPORTED methods, not a missing login (T3 semantics).
+        // The probe runs in a temp cwd and sends no prompt — free and safe.
+        let probe_cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let (auth_required, auth_hint) = match conn.new_session(&probe_cwd).await {
+            Ok(_) => (false, None),
+            Err(err) => (true, Some(err.to_string())),
+        };
+        // Capabilities cached here feed the composer gating immediately.
+        self.cache_capabilities(instance_id, &init.agent_capabilities, Vec::new());
+        conn.kill();
+        Ok(PreflightReport {
+            instance_id: instance_id.to_string(),
+            agent_name: init
+                .agent_info
+                .as_ref()
+                .map(|i| i.name.clone())
+                .unwrap_or_else(|| spec.display_name.clone()),
+            agent_version: init.agent_info.as_ref().and_then(|i| i.version.clone()),
+            load_session: init.agent_capabilities.load_session,
+            prompt_image: init.agent_capabilities.prompt_capabilities.image,
+            auth_required,
+            auth_hint,
+        })
+    }
+}
+
+async fn resolve_session(
+    conn: &AcpConn,
+    runtime: &AgentRuntime,
+    thread_id: &str,
+    instance_id: &str,
+    root: &Path,
+) -> Result<String, crate::PultError> {
+    let init = conn
+        .initialize()
+        .await
+        .map_err(|e| crate::PultError::internal(e.to_string()))?;
+    tracing::info!(target: "pult::runtime",
+        agent = %init.agent_info.as_ref().map(|i| i.name.clone()).unwrap_or_default(),
+        load_session = init.agent_capabilities.load_session,
+        "agent initialized");
+    let cwd = root.to_string_lossy().into_owned();
+    let session = match runtime.store.get_session_ref(thread_id, instance_id) {
+        Ok(Some(remote)) if init.agent_capabilities.load_session => {
+            match conn.load_session(&remote, &cwd).await {
+                Ok(loaded) => {
+                    tracing::info!(target: "pult::runtime",
+                        session = %remote, "resumed session via session/load");
+                    runtime.cache_capabilities(
+                        instance_id,
+                        &init.agent_capabilities,
+                        loaded.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                    );
+                    remote
+                }
+                Err(err) => {
+                    tracing::warn!(target: "pult::runtime",
+                        error = %err, "session/load failed; starting a new session");
+                    let fresh = conn
+                        .new_session(&cwd)
+                        .await
+                        .map_err(|e| crate::PultError::internal(e.to_string()))?;
+                    let _ = runtime.store.upsert_session_ref(thread_id, instance_id, &fresh.session_id);
+                    runtime.cache_capabilities(
+                        instance_id,
+                        &init.agent_capabilities,
+                        fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                    );
+                    fresh.session_id
+                }
+            }
+        }
+        _ => {
+            let fresh = conn
+                .new_session(&cwd)
+                .await
+                .map_err(|e| crate::PultError::internal(e.to_string()))?;
+            let _ = runtime
+                .store
+                .upsert_session_ref(thread_id, instance_id, &fresh.session_id);
+            runtime.cache_capabilities(
+                instance_id,
+                &init.agent_capabilities,
+                fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
+            );
+            fresh.session_id
+        }
+    };
+    Ok(session)
+}
+
+/// M6: the mode picker works from the advertised mode list.
+fn collect_modes(state: &crate::protocol::types::SessionModeState) -> Vec<crate::protocol::types::SessionMode> {
+    state.available_modes.clone()
+}
+
+/// Permission policy + surfacing (§5.5): the mode may auto-resolve before
+/// the UI ever sees the request; every auto resolution is traced (never
+/// silent). Surfaced requests park in `pending_permissions`.
+#[allow(clippy::too_many_arguments)]
+async fn handle_permission_request(
+    runtime: &AgentRuntime,
+    conn: &AcpConn,
+    run_id: &str,
+    thread_id: &str,
+    instance_id: &str,
+    root: &Path,
+    next_seq: &mut u64,
+    pending: &mut HashMap<String, PendingPermission>,
+    request_id: &RequestId,
+    params: RequestPermissionParams,
+) -> Result<(), crate::PultError> {
+    let request_key = request_id_key(request_id);
+    let tool_kind: String = params
+        .tool_call
+        .kind
+        .map(crate::drivers::acp::tool_kind_str)
+        .unwrap_or("other")
+        .to_string();
+    let paths: Vec<String> = params
+        .tool_call
+        .locations
+        .iter()
+        .flatten()
+        .map(|l| l.path.clone())
+        .collect();
+    let options: Vec<crate::runtime::permissions::PolicyOption> = params
+        .options
+        .iter()
+        .map(|o| crate::runtime::permissions::PolicyOption {
+            option_id: o.option_id.clone(),
+            kind: o.kind.clone(),
+        })
+        .collect();
+    let remembered = runtime.remembered_for(instance_id, &tool_kind);
+    let decision = crate::runtime::permissions::resolve(
+        runtime.permission_mode_for(thread_id),
+        root,
+        &crate::runtime::permissions::PolicyRequest {
+            tool_kind: &tool_kind,
+            paths: &paths,
+            options: &options,
+            remembered: remembered.as_deref(),
+        },
+    );
+    if let crate::runtime::permissions::PolicyDecision::AutoResolve(option_id) = decision {
+        // Trace row in the event log: never silent (§5.5).
+        let event = Event::new(
+            run_id.to_string(),
+            *next_seq,
+            EventKind::ApprovalResponse {
+                request_id: request_key,
+                option_id: Some(option_id.clone()),
+                auto: true,
+            },
+        );
+        *next_seq += 1;
+        runtime.store.append_event(&event)?;
+        runtime.emit_run_event(run_id, &event);
+        let _ = conn
+            .respond_client(request_id.clone(), permission_reply(Some(option_id)))
+            .await;
+        return Ok(());
+    }
+    surface_permission(runtime, run_id, next_seq, pending, request_id, params)
+}
+
+/// ACP ToolKind string of the permission's tool call (""other"" when absent).
+fn tool_kind_from_call(params: &RequestPermissionParams) -> String {
+    params
+        .tool_call
+        .kind
+        .map(crate::drivers::acp::tool_kind_str)
+        .unwrap_or("other")
+        .to_string()
+}
+
+/// Surface a permission request to the UI: transcript event + fan-out.
+fn surface_permission(
+    runtime: &AgentRuntime,
+    run_id: &str,
+    next_seq: &mut u64,
+    pending: &mut HashMap<String, PendingPermission>,
+    request_id: &RequestId,
+    params: RequestPermissionParams,
+) -> Result<(), crate::PultError> {
+    let request_key = request_id_key(request_id);
+    let mut option_kinds = HashMap::new();
+    for option in &params.options {
+        option_kinds.insert(option.option_id.clone(), option.kind.clone());
+    }
+    pending.insert(
+        request_key.clone(),
+        PendingPermission {
+            wire_id: request_id.clone(),
+            tool_kind: tool_kind_from_call(&params),
+            option_kinds,
+        },
+    );
+
+    let event = Event::new(
+        run_id.to_string(),
+        *next_seq,
+        EventKind::ApprovalRequest {
+            request_id: request_key.clone(),
+            tool_call_id: Some(params.tool_call.tool_call_id.clone()),
+            title: params
+                .tool_call
+                .title
+                .clone()
+                .unwrap_or_else(|| "Permission needed".to_string()),
+            options: params
+                .options
+                .iter()
+                .map(|o| AppPermissionOption {
+                    option_id: o.option_id.clone(),
+                    name: o.name.clone(),
+                    kind: o.kind.clone(),
+                })
+                .collect(),
+        },
+    );
+    *next_seq += 1;
+    runtime.store.append_event(&event)?;
+    runtime.emit_run_event(run_id, &event);
+    runtime.emit(
+        "permission:request",
+        &PermissionRequestPayload {
+            run_id: run_id.to_string(),
+            request_id: request_key.clone(),
+            title: match &event.kind {
+                EventKind::ApprovalRequest { title, .. } => title.clone(),
+                _ => String::new(),
+            },
+            options: match &event.kind {
+                EventKind::ApprovalRequest { options, .. } => options.clone(),
+                _ => Vec::new(),
+            },
+        },
+    );
+    notify_if_unfocused(runtime, "Approval needed", &request_key);
+    Ok(())
+}
+
+/// Elicitation (§5.5): surface for the modal; the run parks until answered.
+fn surface_elicitation(
+    runtime: &AgentRuntime,
+    run_id: &str,
+    next_seq: &mut u64,
+    pending: &mut HashMap<String, PendingElicitation>,
+    request_id: &RequestId,
+    params: CreateElicitationParams,
+) -> Result<(), crate::PultError> {
+    let request_key = request_id_key(request_id);
+    pending.insert(
+        request_key.clone(),
+        PendingElicitation {
+            wire_id: request_id.clone(),
+        },
+    );
+    let event = Event::new(
+        run_id.to_string(),
+        *next_seq,
+        EventKind::ElicitationRequest {
+            message: params.message.clone(),
+            detail: params.detail.clone(),
+        },
+    );
+    *next_seq += 1;
+    runtime.store.append_event(&event)?;
+    runtime.emit_run_event(run_id, &event);
+    runtime.emit(
+        "elicitation:request",
+        &ElicitationRequestPayload {
+            run_id: run_id.to_string(),
+            request_id: request_key,
+            message: params.message.clone(),
+            detail: params.detail.clone(),
+        },
+    );
+    notify_if_unfocused(runtime, "Agent needs input", "elicitation");
+    Ok(())
+}
+
+/// OS notification when the window is not focused (§5.5); the focus check
+/// lives in the AppHandle EventSink impl.
+fn notify_if_unfocused(runtime: &AgentRuntime, title: &str, body: &str) {
+    runtime.sink_notify(title, body);
+}
+
+/// `terminal/create` handler: sandbox-checked cwd + spawn (§5.5).
+fn handle_terminal_create(
+    terminals: &TerminalRegistry,
+    root: &Path,
+    params: &CreateTerminalParams,
+) -> ClientReply {
+    let cwd = match &params.cwd {
+        Some(raw) => Some(safe_path(root, raw)?),
+        None => None,
+    };
+    let env: Vec<(String, String)> = params
+        .env
+        .iter()
+        .map(|e| (e.name.clone(), e.value.clone()))
+        .collect();
+    terminals.create(
+        &params.command,
+        &params.args,
+        cwd.as_ref(),
+        &env,
+        params.output_byte_limit,
+    )
+}
+
+fn request_id_key(id: &RequestId) -> String {
+    match id {
+        RequestId::Num(n) => format!("n{n}"),
+        RequestId::Str(s) => format!("s{s}"),
+    }
+}
+
+fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply {
+    let path = safe_path(root, &params.path)?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| fs_error(format!("{}: {e}", params.path)))?;
+    let mut lines: Vec<&str> = content.lines().collect();
+    if let Some(line) = params.line {
+        let start = line.saturating_sub(1) as usize;
+        if start >= lines.len() {
+            lines.clear();
+        } else {
+            lines = lines.split_off(start);
+        }
+    }
+    if let Some(limit) = params.limit {
+        lines.truncate(limit as usize);
+    }
+    serde_json::to_value(ReadTextFileResult {
+        content: lines.join("\n"),
+    })
+    .map_err(|e| fs_error(e.to_string()))
+}
+
+/// `fs/write_text_file`: sandboxed write plus the computed diff (§5.4) —
+/// the fs layer attaches old-vs-new to the thread's "Changed files".
+fn write_file_sandboxed(
+    root: &Path,
+    params: &WriteTextFileParams,
+) -> (ClientReply, Option<(String, String, u64, u64)>) {
+    let path = match safe_path(root, &params.path) {
+        Ok(path) => path,
+        Err(err) => return (Err(err), None),
+    };
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return (Err(fs_error(format!("{}: {e}", params.path))), None);
+        }
+    }
+    if let Err(e) = std::fs::write(&path, &params.content) {
+        return (Err(fs_error(format!("{}: {e}", params.path))), None);
+    }
+    let shown_path = params.path.trim_start_matches(['/', '\\']).to_string();
+    let diff = unified_diff(&shown_path, &old, &params.content);
+    let (added, removed) = diff_stats(&diff);
+    let change = (shown_path, diff, added, removed);
+    (Ok(serde_json::json!({})), Some(change))
+}
+
+/// Unified diff of old→new (3 context lines, same header style as git).
+fn unified_diff(path: &str, old: &str, new: &str) -> String {
+    similar::TextDiff::from_lines(old, new)
+        .unified_diff()
+        .context_radius(3)
+        .header(&format!("a/{path}"), &format!("b/{path}"))
+        .to_string()
+}
+
+/// Count +added/-removed lines from a unified diff body.
+fn diff_stats(diff: &str) -> (u64, u64) {
+    let mut added = 0u64;
+    let mut removed = 0u64;
+    for line in diff.lines() {
+        match line.chars().next() {
+            Some('+') if !line.starts_with("+++") => added += 1,
+            Some('-') if !line.starts_with("---") => removed += 1,
+            _ => {}
+        }
+    }
+    (added, removed)
+}
+
+/// Reject paths escaping the workspace root (§5.5: -32002-style typed error).
+fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
+    let candidate = Path::new(raw);
+    // Rootless POSIX-style paths (/repo/src/main.rs) from an agent whose cwd
+    // is the workspace resolve against the workspace root; drive/UNC paths
+    // are taken as-is and must stay inside the root (checked below).
+    let joined = match candidate.components().next() {
+        Some(std::path::Component::Prefix(_)) => candidate.to_path_buf(),
+        Some(std::path::Component::RootDir) => {
+            let rest: PathBuf = candidate.components().skip(1).collect();
+            root.join(rest)
+        }
+        _ => root.join(candidate),
+    };
+    for component in joined.components() {
+        if component == std::path::Component::ParentDir {
+            return Err(RpcError::new(
+                ERR_RESOURCE_NOT_FOUND,
+                format!("path escapes workspace: {raw}"),
+            ));
+        }
+    }
+    // Compare canonical against canonical: `canonicalize()` returns verbatim
+    // `\?\…` paths, and mixing that with a clean root makes `starts_with`
+    // fail spuriously ("path escapes workspace" for `.`).
+    match (joined.canonicalize(), root.canonicalize()) {
+        (Ok(real), Ok(base)) => {
+            if !real.starts_with(base) {
+                return Err(RpcError::new(
+                    ERR_RESOURCE_NOT_FOUND,
+                    format!("path escapes workspace: {raw}"),
+                ));
+            }
+        }
+        _ => {
+            // New file that does not exist yet: containment is guaranteed by
+            // the ParentDir check plus an absolute-or-rooted join.
+        }
+    }
+    Ok(joined)
+}
+
+pub mod permissions;
+pub mod ptys;
+pub mod terminals;
+#[cfg(test)]
+mod tests;

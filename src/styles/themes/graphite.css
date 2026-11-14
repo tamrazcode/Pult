@@ -1,0 +1,31 @@
+/* pult graphite theme (§6.6) — near-monochrome dark: one grey-blue accent,
+   everything else neutral. Text pairs ≥ 4.5:1 (tests/theme-contrast.test.ts). */
+:root[data-theme="graphite"] {
+  --canvas: #0d0d0d;
+  --chrome: #111111;
+  --surface: #161616;
+  --surface-raised: #1b1b1b;
+  --input: #202020;
+  --hover: rgba(255, 255, 255, 0.04);
+  --active: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.14);
+  --text-primary: #f2f2f2;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #8a8a8a;
+  --accent: #9aa3b2; /* desaturated steel — the single allowed tint */
+  --accent-hover: #a8b1bf;
+  --accent-fg: #0d0d0d; /* dark text on the light-grey accent */
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #fb414a;
+  --info: #60a5fa;
+  --diff-add-bg: rgba(16, 185, 129, 0.16);
+  --diff-add-fg: #34d399;
+  --diff-del-bg: rgba(251, 65, 74, 0.16);
+  --diff-del-fg: #ff6369;
+  --code-bg: #161616;
+  --composer-blur: 16px;
+  --composer-tint: rgba(22, 22, 22, 0.8);
+  --shadow-composer: 0 14px 32px -18px rgb(0 0 0 / 75%);
+}

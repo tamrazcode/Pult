@@ -1,0 +1,7 @@
+minimumReleaseAgeExclude:
+  - "@eslint/config-array@0.23.6"
+  - eslint@10.15.0
+  - jsdom@31.0.1
+onlyBuiltDependencies:
+  - "@tailwindcss/oxide"
+  - esbuild
