@@ -174,6 +174,7 @@ export function Sidebar({ width }: { width: number }) {
       <footer className="border-t border-border-subtle p-3">
         <button
           onClick={() => void router.navigate({ to: "/usage" })}
+          aria-current={pathname.startsWith("/usage") ? "page" : undefined}
           className={`mb-1 flex w-full items-center gap-2 rounded-(--radius-md) px-2 py-1.5 text-sm transition hover:bg-hover ${
             pathname.startsWith("/usage") ? "bg-active text-text-primary" : "text-text-secondary"
           }`}

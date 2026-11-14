@@ -2,6 +2,26 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## M12 — Usage insights (2026-11-14)
+
+**Scope shipped.** `/usage` is a real screen over the persisted ACP `usage_update` events. `Store::usage_report` reads existing `events`/`runs`/`threads` rows, keeps the **last valid snapshot per run by max seq** (corrupt/legacy payloads are skipped, never fatal), and groups by thread and provider without summing gauges. IPC `usage_report` runs the query in `spawn_blocking`; outside Tauri the wrapper returns an empty report. The route shows honest KPIs (runs with usage, median and peak context at run end, latest reported cost marked "not summed"), Runs/Threads/Providers tabs, a provider filter whose thread rows are recomputed from the filtered runs, provider-scoped empty states, an IPC error with Retry, and keyboard-openable rows. Navigation: breadcrumb, `navigate.usage` palette command, sidebar button with `aria-current`. Antigravity detection stayed out: no verifiable CLI/ACP invocation exists in the repo or docs, and inventing one would break the project rule.
+
+**Verification.** Rust 115/115 (parsing valid/partial/corrupt payloads, empty DB, last-seq selection, broken latest payload fallback, even median, last cost-bearing run, camelCase serialization), clippy `-D warnings` clean. Frontend typecheck/lint green, vitest 116/116 (helpers, page states/navigation, breadcrumbs, command). Gemini final review: 1 major + 4 minor/nits; fixed the unscrollable page, provider-scoped thread rows, latest-cost consistency, deterministic tie-breakers, currency trimming, doc comment, keyboard rows and `aria-current`.
+
+**Decisions.**
+
+1. **Gauges are never summed** — context fill and agent-reported cost are per-run facts; the UI says "not summed" instead of inventing a bill.
+2. **Last valid snapshot by seq**, not timestamp or insert order; a broken newest payload falls back to the previous valid one.
+3. **Thread rows are computed from the filtered runs** so a provider filter cannot show another provider's numbers.
+4. **No index added** (`events(kind)`) to respect the no-migration constraint; the scan is a known scale limit.
+
+**Known issues / gaps.**
+
+- `usage_report` scans `events` without a `kind` index — fine at fixture scale, revisit for huge histories.
+- Tables render all rows without virtualization.
+- No live refresh while a run is streaming; the page is a snapshot with a Refresh button.
+- Real CLI usage payloads and the live window were not exercised this round.
+
 ## M11 — ACP sign-in flow (2026-11-14)
 
 **Scope shipped.** Providers that report Needs sign-in now have a real way in. `AuthMethod` carries terminal `args`/`env` (null-tolerant) and knows `is_terminal`/`is_agent`; the driver speaks `authenticate`, and only `-32000` counts as auth-required (any other RPC/start error stays an error instead of a fake sign-in prompt). `AgentRuntime::authenticate` runs the full cycle spawn → initialize → authenticate → **fresh `session/new` probe** → kill on every path, so an agent that answers `{}` without unlocking is honestly reported as "Still needs sign-in". The auth state and advertised methods are cached in `CachedCaps`, surfaced through `InstanceInfo` (status `needs_auth`, methods, hint) and `PreflightReport`, and survive navigation/`loadInstances`. The mock agent gained env-gated scenarios (`MOCK_AUTH_REQUIRED`, `_TERMINAL`, `_FAIL`, `_STILL_REQUIRED`, `_STATE_FILE`), covered by golden and runtime tests. UI: one `SignInActions` block shared by Providers and onboarding — Sign in buttons for agent-managed methods, a copyable terminal command + Re-check for terminal methods (never sent over RPC), an honest fallback when nothing is actionable, and Re-check now refreshes the cached status so the badge clears.

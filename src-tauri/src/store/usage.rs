@@ -199,8 +199,13 @@ impl Store {
             let mut by_thread: Vec<ThreadUsageSummary> = threads
                 .into_values()
                 .map(|mut group| {
-                    group.sort_by_key(|r| std::cmp::Reverse(r.started_at));
+                    group.sort_by_key(|r| (std::cmp::Reverse(r.started_at), std::cmp::Reverse(r.run_idx)));
                     let latest = group[0];
+                    let latest_cost = group
+                        .iter()
+                        .filter(|r| r.cost.is_some())
+                        .max_by_key(|r| (r.started_at, r.run_idx))
+                        .and_then(|r| r.cost.clone());
                     let peak = group.iter().filter_map(|r| r.used).max();
                     ThreadUsageSummary {
                         thread_id: latest.thread_id.clone(),
@@ -212,7 +217,7 @@ impl Store {
                         latest_used: latest.used,
                         latest_size: latest.size,
                         peak_used: peak,
-                        latest_cost: latest.cost.clone(),
+                        latest_cost,
                     }
                 })
                 .collect();
@@ -223,8 +228,13 @@ impl Store {
                 .map(|group| {
                     let latest = group
                         .iter()
-                        .max_by_key(|r| r.usage_ts)
+                        .max_by_key(|r| (r.usage_ts, r.started_at, r.run_idx))
                         .expect("group is non-empty");
+                    let latest_cost = group
+                        .iter()
+                        .filter(|r| r.cost.is_some())
+                        .max_by_key(|r| (r.started_at, r.run_idx, r.usage_ts))
+                        .and_then(|r| r.cost.clone());
                     let mut used: Vec<u64> = group.iter().filter_map(|r| r.used).collect();
                     used.sort_unstable();
                     let median_used = if used.is_empty() {
@@ -240,7 +250,7 @@ impl Store {
                         runs_with_usage: group.len() as u64,
                         median_used,
                         peak_used: used.last().copied(),
-                        latest_cost: latest.cost.clone(),
+                        latest_cost,
                         last_used_at: latest.usage_ts,
                     }
                 })
@@ -296,20 +306,19 @@ mod tests {
     }
 
     fn usage(store: &Store, run_id: &str, seq: u64, ts: i64, used: u64, size: u64, cost: f64) {
-        store
-            .append_event(&Event::new(
-                run_id,
-                seq,
-                EventKind::Usage {
-                    detail: serde_json::json!({
-                        "used": used,
-                        "size": size,
-                        "cost": {"amount": cost, "currency": "USD"}
-                    }),
-                },
-            ))
-            .unwrap();
-        let _ = ts;
+        let mut event = Event::new(
+            run_id,
+            seq,
+            EventKind::Usage {
+                detail: serde_json::json!({
+                    "used": used,
+                    "size": size,
+                    "cost": {"amount": cost, "currency": "USD"}
+                }),
+            },
+        );
+        event.ts = ts;
+        store.append_event(&event).unwrap();
     }
 
     #[test]
@@ -398,6 +407,38 @@ mod tests {
         assert_eq!(value["totalRuns"], 2);
         assert!(value["byThread"].is_array());
         assert!(value["byInstance"].is_array());
+    }
+
+    #[test]
+    fn usage_report_uses_last_cost_bearing_run_and_even_median() {
+        let store = Store::open_in_memory().unwrap();
+        store.create_thread(&thread("th")).unwrap();
+        for (idx, id) in ["r1", "r2", "r3", "r4"].iter().enumerate() {
+            store
+                .create_run(&run(id, "th", idx as i64, "mock", 100 + idx as i64 * 100))
+                .unwrap();
+        }
+        for (idx, id) in ["r1", "r2", "r3", "r4"].iter().enumerate() {
+            store
+                .append_event(&Event::new(
+                    *id,
+                    1,
+                    EventKind::Usage {
+                        detail: serde_json::json!({
+                            "used": (idx as u64 + 1) * 10_000,
+                            "size": 100_000,
+                            "cost": if idx == 1 || idx == 3 { serde_json::Value::Null } else { serde_json::json!({"amount": 0.01 * (idx as f64 + 1.0), "currency": "USD"}) }
+                        }),
+                    },
+                ))
+                .unwrap();
+        }
+        let report = store.usage_report().unwrap();
+        let inst = report.by_instance.iter().find(|i| i.instance_id == "mock").unwrap();
+        assert_eq!(inst.median_used, Some(25_000), "even median of 10k/20k/30k/40k");
+        assert_eq!(inst.latest_cost.as_ref().unwrap().amount, 0.03, "last run that reported cost");
+        let th = &report.by_thread[0];
+        assert_eq!(th.latest_cost.as_ref().unwrap().amount, 0.03);
     }
 
     #[test]

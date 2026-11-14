@@ -94,6 +94,21 @@ describe("usage page", () => {
         configOptions: [],
         authMethods: [],
       },
+      {
+        id: "codex",
+        displayName: "Codex",
+        enabled: true,
+        driver: "acp",
+        command: "codex",
+        args: [],
+        env: {},
+        status: "stopped",
+        promptImage: false,
+        loadSession: true,
+        modes: [],
+        configOptions: [],
+        authMethods: [],
+      },
     ]);
     navigate.mockReset().mockResolvedValue(undefined);
   });
@@ -124,11 +139,63 @@ describe("usage page", () => {
       target: { value: "codex" },
     });
     await waitFor(() => expect(screen.getByText("Second")).toBeTruthy());
+    await waitFor(() => expect(screen.queryByText("First")).toBeNull());
+    fireEvent.click(screen.getByRole("tab", { name: "Threads" }));
+    expect(await screen.findByText("Second")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("First")).toBeNull());
+    fireEvent.click(screen.getByRole("tab", { name: "Runs" }));
     fireEvent.click(screen.getByText("Second"));
     expect(navigate).toHaveBeenCalledWith({
       to: "/thread/$threadId",
       params: { threadId: "th2" },
     });
+  });
+
+  it("shows a provider-scoped empty state when that provider has no usage", async () => {
+    providersInstancesList.mockResolvedValue([
+      {
+        id: "mock",
+        displayName: "Mock agent",
+        enabled: true,
+        driver: "mock",
+        command: "node",
+        args: [],
+        env: {},
+        status: "stopped",
+        promptImage: false,
+        loadSession: true,
+        modes: [],
+        configOptions: [],
+        authMethods: [],
+      },
+      {
+        id: "codex",
+        displayName: "Codex",
+        enabled: true,
+        driver: "acp",
+        command: "codex",
+        args: [],
+        env: {},
+        status: "stopped",
+        promptImage: false,
+        loadSession: true,
+        modes: [],
+        configOptions: [],
+        authMethods: [],
+      },
+    ]);
+    usageReport.mockResolvedValue({
+      ...report,
+      runs: [report.runs[1]],
+      byThread: [],
+      byInstance: [],
+    });
+    render(<UsagePage />);
+    await screen.findByText("Peak context (run end)");
+    fireEvent.change(screen.getByLabelText("Filter by provider"), {
+      target: { value: "codex" },
+    });
+    expect(await screen.findByText("No usage for this provider")).toBeTruthy();
   });
 
   it("surfaces IPC errors and retries", async () => {

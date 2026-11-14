@@ -40,7 +40,7 @@ export function formatContextFill(
 
 export function formatUsageCost(cost: UsageCost | null | undefined): string {
   if (!cost || !Number.isFinite(cost.amount)) return "—";
-  const currency = cost.currency ?? "USD";
+  const currency = cost.currency?.trim() || "USD";
   if (currency.toUpperCase() === "USD") {
     const digits = cost.amount > 0 && cost.amount < 0.01 ? 3 : 2;
     return `$${cost.amount.toFixed(digits)}`;

@@ -373,6 +373,7 @@ pub async fn usage_report(
         .await
         .map_err(|e| PultError::internal(format!("usage query failed: {e}")))?
 }
+/// One-click sign-in: authenticate an agent-managed method, then re-probe the
 /// session. Terminal methods are rejected by the runtime.
 #[tauri::command]
 pub async fn providers_authenticate(

@@ -5,6 +5,15 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### M12 — Usage insights (2026-11-14)
+
+- `/usage`: last valid ACP usage snapshot per run, KPIs for context at run end and latest
+  reported cost (never summed), Runs/Threads/Providers slices, provider filter, empty/error states.
+- `Store::usage_report` over existing tables (no migrations), `usage_report` IPC via
+  `spawn_blocking`, corrupt/legacy payloads skipped.
+- Navigation: breadcrumb, palette command, sidebar entry with active state.
+- Antigravity detection intentionally out of scope (no verifiable invocation).
+
 ### M11 — ACP sign-in flow (2026-11-14)
 
 - Typed auth methods (terminal args/env), `AcpConn::authenticate`, and strict `-32000`
