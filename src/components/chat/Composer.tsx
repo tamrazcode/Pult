@@ -11,6 +11,7 @@ import {
   runsDispatch,
   runsQueueRemove,
   runsRespondPermission,
+  workspaceFiles,
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import { useGitStore } from "../../stores/git";
@@ -34,6 +35,20 @@ export function formatSlashInsertion(command: CommandInfo): string {
 /** Esc cancels the run only when nothing above (overlay, decision) owns the key. */
 export function shouldCancelOnEscape(ctx: { runActive: boolean; overlayOpen: boolean }): boolean {
   return ctx.runActive && !ctx.overlayOpen;
+}
+
+/**
+ * The `@token` being typed at the caret, for file mentions. A token must start
+ * after whitespace/bracket, so `foo@bar.com` never opens the menu.
+ */
+export function extractMentionQuery(
+  text: string,
+  caret: number,
+): { start: number; query: string } | null {
+  const before = text.slice(0, caret);
+  const match = /(^|[\s([{])@([^\s@]*)$/.exec(before);
+  if (!match) return null;
+  return { start: caret - match[2].length - 1, query: match[2] };
 }
 
 interface ImageChip {
@@ -66,6 +81,9 @@ export function Composer({ threadId }: { threadId?: string }) {
   const [busy, setBusy] = useState(false);
   const [chips, setChips] = useState<ImageChip[]>([]);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
+  const [mentionFiles, setMentionFiles] = useState<string[]>([]);
+  const [mentionIndex, setMentionIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
 
@@ -104,6 +122,31 @@ export function Composer({ threadId }: { threadId?: string }) {
     if (slashIndex >= slashMatches.length) setSlashIndex(0);
   }, [slashMatches.length, slashIndex]);
 
+  // File mentions: debounce the workspace walk while the `@token` changes.
+  useEffect(() => {
+    if (!mention || !threadId) {
+      setMentionFiles([]);
+      return;
+    }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      workspaceFiles({ threadId, query: mention.query })
+        .then((files) => {
+          if (cancelled) return;
+          setMentionFiles(files);
+          setMentionIndex(0);
+        })
+        .catch(() => {
+          if (!cancelled) setMentionFiles([]);
+        });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [mention, threadId]);
+  const mentionOpen = mention !== null && mentionFiles.length > 0;
+
   const autosize = useCallback(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -126,6 +169,8 @@ export function Composer({ threadId }: { threadId?: string }) {
   const resetDraft = useCallback(() => {
     setValue("");
     setChips([]);
+    setMention(null);
+    setMentionFiles([]);
     requestAnimationFrame(autosize);
   }, [autosize]);
 
@@ -133,6 +178,26 @@ export function Composer({ threadId }: { threadId?: string }) {
     setValue(formatSlashInsertion(command));
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
+
+  const pickMention = useCallback(
+    (path: string) => {
+      const el = textareaRef.current;
+      const caret = el?.selectionStart ?? value.length;
+      if (!mention || caret < mention.start) return;
+      const insert = `@${path} `;
+      const next = `${value.slice(0, mention.start)}${insert}${value.slice(caret)}`;
+      setValue(next);
+      setMention(null);
+      setMentionFiles([]);
+      const pos = mention.start + insert.length;
+      requestAnimationFrame(() => {
+        el?.focus();
+        el?.setSelectionRange(pos, pos);
+        autosize();
+      });
+    },
+    [mention, value, autosize],
+  );
 
   const handleSend = useCallback(() => {
     const text = value.trim();
@@ -270,6 +335,29 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mentionOpen) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) => (i + 1) % mentionFiles.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) => (i - 1 + mentionFiles.length) % mentionFiles.length);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        pickMention(mentionFiles[mentionIndex] ?? mentionFiles[0]);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMention(null);
+        setMentionFiles([]);
+        return;
+      }
+    }
     if (slashOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -388,7 +476,32 @@ export function Composer({ threadId }: { threadId?: string }) {
             <div className="h-full w-1/4 rounded-full bg-accent/70 composer-hairline" />
           </div>
         )}
-        {slashOpen && threadId && (
+        {mentionOpen && (
+          <div
+            className="absolute bottom-full left-0 mb-2 max-h-56 w-full overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+            role="listbox"
+            aria-label="Workspace files"
+          >
+            <p className="px-3 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
+              Files
+            </p>
+            {mentionFiles.map((path, i) => (
+              <button
+                key={path}
+                role="option"
+                aria-selected={i === mentionIndex}
+                onClick={() => pickMention(path)}
+                onMouseEnter={() => setMentionIndex(i)}
+                className={`flex w-full items-center px-3 py-1 text-left font-mono text-xs ${
+                  i === mentionIndex ? "bg-hover text-text-primary" : "text-text-secondary"
+                }`}
+              >
+                <span className="truncate">{path}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {slashOpen && threadId && !mentionOpen && (
           <div
             className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
             role="listbox"
@@ -442,7 +555,9 @@ export function Composer({ threadId }: { threadId?: string }) {
           ref={textareaRef}
           value={value}
           onChange={(e) => {
-            setValue(e.target.value);
+            const next = e.target.value;
+            setValue(next);
+            setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
             autosize();
           }}
           onKeyDown={onKeyDown}

@@ -9,6 +9,7 @@ pub mod ipc;
 pub mod protocol;
 pub mod runtime;
 pub mod store;
+pub mod workspace;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -152,6 +153,7 @@ pub fn run() {
             ipc::terminal_pty_list,
             ipc::providers_detect_installed,
             ipc::providers_instances_save,
+            ipc::workspace_files,
             ipc::runs_set_mode,
             ipc::diagnostics_frames,
             ipc::settings_get,

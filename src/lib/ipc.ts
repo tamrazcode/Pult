@@ -118,6 +118,18 @@ export function threadsDelete(threadId: string): Promise<void> {
   return invokeRequired<void>("threads_delete", { threadId });
 }
 
+/**
+ * Workspace-relative files for composer `@` mentions (build/VCS dirs are
+ * skipped server-side). Empty outside Tauri.
+ */
+export function workspaceFiles(params: {
+  threadId?: string;
+  workspace?: string;
+  query?: string;
+}): Promise<string[]> {
+  return invokeWithFallback<string[]>("workspace_files", [], params);
+}
+
 // ---- runs ----
 
 /**

@@ -2,23 +2,37 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import type { Run } from "../src/lib/types";
 
-const { runsCancel, runsDispatch, runsRespondPermission, runsQueueRemove } = vi.hoisted(() => ({
-  runsCancel: vi.fn(),
-  runsDispatch: vi.fn(),
-  runsRespondPermission: vi.fn(),
-  runsQueueRemove: vi.fn(),
-}));
+const { runsCancel, runsDispatch, runsRespondPermission, runsQueueRemove, workspaceFiles } =
+  vi.hoisted(() => ({
+    runsCancel: vi.fn(),
+    runsDispatch: vi.fn(),
+    runsRespondPermission: vi.fn(),
+    runsQueueRemove: vi.fn(),
+    workspaceFiles: vi.fn(),
+  }));
 
 vi.mock("../src/lib/ipc", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  return { ...actual, runsCancel, runsDispatch, runsRespondPermission, runsQueueRemove };
+  return {
+    ...actual,
+    runsCancel,
+    runsDispatch,
+    runsRespondPermission,
+    runsQueueRemove,
+    workspaceFiles,
+  };
 });
 
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate: vi.fn() }),
 }));
 
-import { Composer, formatSlashInsertion, shouldCancelOnEscape } from "../src/components/chat/Composer";
+import {
+  Composer,
+  extractMentionQuery,
+  formatSlashInsertion,
+  shouldCancelOnEscape,
+} from "../src/components/chat/Composer";
 import { useRunsStore } from "../src/stores/runs";
 import { useUiStore } from "../src/stores/ui";
 
@@ -35,6 +49,7 @@ describe("composer", () => {
   beforeEach(() => {
     runsCancel.mockReset().mockResolvedValue(undefined);
     runsRespondPermission.mockReset().mockResolvedValue(undefined);
+    workspaceFiles.mockReset().mockResolvedValue([]);
     useRunsStore.setState({
       runsByThread: {},
       viewsByRun: {},
@@ -108,6 +123,22 @@ describe("composer", () => {
     fireEvent.change(textarea, { target: { value: "/com" } });
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(textarea.value).toBe("/commit ");
+  });
+
+  it("detects an @ token at the caret and ignores emails", () => {
+    expect(extractMentionQuery("look at @src/ma", 15)).toEqual({ start: 8, query: "src/ma" });
+    expect(extractMentionQuery("foo@bar.com", 11)).toBeNull();
+    expect(extractMentionQuery("done @main.ts ", 14)).toBeNull();
+  });
+
+  it("picks a workspace file for an @ mention", async () => {
+    workspaceFiles.mockResolvedValue(["src/main.ts", "docs/readme.md"]);
+    render(<Composer threadId="th" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "look @mai" } });
+    expect(await screen.findByText("src/main.ts")).toBeTruthy();
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea.value).toBe("look @src/main.ts ");
   });
 
   it("keeps Esc priority rules explicit", () => {

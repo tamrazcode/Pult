@@ -327,6 +327,35 @@ pub async fn providers_preflight(
     runtime.preflight(&instance_id).await
 }
 
+/// Workspace files for composer `@` mentions: relative POSIX paths, filtered
+/// by `query`, capped in count and walk size. The walk runs off the async
+/// thread so a huge repo never stalls the IPC worker.
+#[tauri::command]
+pub async fn workspace_files(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: Option<String>,
+    workspace: Option<String>,
+    query: Option<String>,
+) -> Result<Vec<String>, PultError> {
+    let root = match workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(ws) => std::path::PathBuf::from(ws)
+            .canonicalize()
+            .map_err(|e| PultError::internal(format!("workspace {ws} not found: {e}")))?,
+        None => match thread_id.as_deref() {
+            Some(id) => thread_git_dir(&runtime, id)?
+                .canonicalize()
+                .map_err(|e| PultError::internal(format!("workspace not found: {e}")))?,
+            None => runtime.global_workspace_root()?,
+        },
+    };
+    let query = query.unwrap_or_default();
+    tokio::task::spawn_blocking(move || {
+        crate::workspace::list_workspace_files(&root, &query, crate::workspace::MAX_RESULTS)
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("workspace walk failed: {e}")))?
+}
+
 /// Resolves the directory git operations run against for a thread: its
 /// pinned workspace (worktree threads), else the global root.
 fn thread_git_dir(
