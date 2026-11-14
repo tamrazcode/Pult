@@ -1326,7 +1326,17 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         {
             Ok(resolved) => resolved,
             Err(err) => {
+                let died = conn.died_on_own();
+                let auth_required = matches!(
+                    &err,
+                    crate::PultError::Internal { code, .. } if code == "auth_required"
+                );
                 conn.kill();
+                if died {
+                    emit_process("crashed", Some(err.to_string()));
+                } else if !auth_required {
+                    emit_process("exited", None);
+                }
                 runtime.finalize_run(
                     &run_id,
                     &thread_id,
