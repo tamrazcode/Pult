@@ -22,7 +22,7 @@ export function splitAuthMethods(methods: AuthMethod[]): {
 }
 
 function quote(value: string): string {
-  return /[\s"']/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
+  return value === "" || /[\s"']/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
 /**

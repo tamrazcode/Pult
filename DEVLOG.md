@@ -2,6 +2,25 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## M11 — ACP sign-in flow (2026-11-14)
+
+**Scope shipped.** Providers that report Needs sign-in now have a real way in. `AuthMethod` carries terminal `args`/`env` (null-tolerant) and knows `is_terminal`/`is_agent`; the driver speaks `authenticate`, and only `-32000` counts as auth-required (any other RPC/start error stays an error instead of a fake sign-in prompt). `AgentRuntime::authenticate` runs the full cycle spawn → initialize → authenticate → **fresh `session/new` probe** → kill on every path, so an agent that answers `{}` without unlocking is honestly reported as "Still needs sign-in". The auth state and advertised methods are cached in `CachedCaps`, surfaced through `InstanceInfo` (status `needs_auth`, methods, hint) and `PreflightReport`, and survive navigation/`loadInstances`. The mock agent gained env-gated scenarios (`MOCK_AUTH_REQUIRED`, `_TERMINAL`, `_FAIL`, `_STILL_REQUIRED`, `_STATE_FILE`), covered by golden and runtime tests. UI: one `SignInActions` block shared by Providers and onboarding — Sign in buttons for agent-managed methods, a copyable terminal command + Re-check for terminal methods (never sent over RPC), an honest fallback when nothing is actionable, and Re-check now refreshes the cached status so the badge clears.
+
+**Verification.** Rust 109/109 (auth parsing/null tolerance, `-32000`-only classification, golden authenticate/failure scenarios, preflight cache, successful authenticate clears status and warms config, still-required keeps Needs sign-in, failure errors, terminal methods rejected, per-instance mock env seam), clippy `-D warnings` clean. Frontend typecheck/lint green, vitest 107/107. Gemini final review: 2 majors + 4 minors; majors fixed with tests (fresh report outranks cached status and Re-check reloads instances; UTF-8 mojibake/BOM accidentally introduced into two Rust files by a shell rewrite was reversed). Minors fixed in the same pass (auth methods cleared when no longer advertised, non-agent types rejected, "Still needs sign-in" only after a real still-required report, empty-arg quoting).
+
+**Decisions.**
+
+1. **Only `-32000` is sign-in.** Any other failure is a real error; this closes the false "Needs sign-in" class from the OpenCode episode.
+2. **The second probe is mandatory.** `authenticate` success alone proves nothing; a new `session/new` on the same connection is the honest check.
+3. **Terminal auth is a copyable command, not an in-app PTY.** The PTY registry is thread-bound and a TUI login cannot be verified without the GUI; M11 shows the exact command and a Re-check.
+4. **Mock scenarios ride per-instance env** (merged into the mock spawn) plus a `#[cfg(test)]` registry seam — process-env mutations were racing other runtime tests.
+
+**Known issues / gaps.**
+
+- No interactive auth PTY outside a thread; terminal sign-in stays a copy/paste flow.
+- Real OAuth/device-code flows were not exercised (no Claude/Gemini CLI here); protocol shapes are covered by the mock.
+- `set_instances` does not clear cached capabilities when a provider's command/driver changes, so stale auth methods can linger until the next preflight.
+
 ## M10 — Typed config options & composer pickers (2026-11-14)
 
 **Scope shipped.** Session `configOptions` are now typed end to end (select flat/grouped and boolean), with a lenient deserializer that keeps old `pult.db` rows and future option types loadable. The client advertises `session.configOptions.boolean`, the driver speaks `session/set_config_option` (string values without `type`, booleans with it), and the mock agent serves `model` (grouped: mock-fast/mock-pro, legacy mock-v1 that narrows thought levels), `thought_level` and a `web_search` toggle. Preflight caches the probe session's options, so the composer pills appear right after Connect. Picks persist per thread in the settings KV (`thread_config:<id>`), ride on `ThreadDetail.desiredConfig`, apply to the next run before the prompt (model first, then thought level), and fill `RunRecord.model`/`.effort`; a rejecting agent logs a warning and emits a Notice instead of failing the turn. The composer renders select pills with group headers and boolean toggles; `/chat` picks apply once to the new thread and are cleared; Esc closes a popover without cancelling the run. Providers and Diagnostics show the option count.

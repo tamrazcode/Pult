@@ -5,6 +5,16 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### M11 — ACP sign-in flow (2026-11-14)
+
+- Typed auth methods (terminal args/env), `AcpConn::authenticate`, and strict `-32000`
+  auth-required classification (no false Needs sign-in on start/RPC errors).
+- `AgentRuntime::authenticate`: spawn → initialize → authenticate → fresh session probe →
+  kill; cached methods/status survive navigation; terminal methods are rejected over RPC.
+- Providers and onboarding share Sign-in actions: agent buttons, copyable terminal command
+  with Re-check, honest fallback; Re-check refreshes the cached badge.
+- Mock agent reproduces auth-required, success, still-required, failure and terminal scenarios.
+
 ### M10 — Typed config options & composer pickers (2026-11-14)
 
 - ACP `configOptions` typed end to end: select (flat/grouped) and boolean, lenient

@@ -27,6 +27,8 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 
 import { ConnectRow } from "../src/components/settings/AgentConnect";
 import { SignInActions } from "../src/components/settings/SignInActions";
+import { shouldShowSignIn, statusLine } from "../src/routes/settings.providers";
+import type { InstanceInfo } from "../src/lib/types";
 
 const agent: DetectedAgent = {
   id: "mock-detect",
@@ -103,6 +105,28 @@ describe("provider sign-in", () => {
     expect(screen.queryByText(/Connected/)).toBeNull();
   });
 
+  it("a fresh report outranks the cached needs_auth status", () => {
+    const info: InstanceInfo = {
+      id: "mock",
+      displayName: "Mock",
+      enabled: true,
+      driver: "mock",
+      command: "node",
+      args: [],
+      env: {},
+      status: "needs_auth",
+      promptImage: false,
+      loadSession: false,
+      modes: [],
+      configOptions: [],
+      authMethods: [],
+    };
+    expect(shouldShowSignIn(info, undefined)).toBe(true);
+    expect(shouldShowSignIn(info, report({ authRequired: false }))).toBe(false);
+    expect(statusLine(info, report({ authRequired: false }), false).text).toMatch(/Connected/);
+    expect(statusLine(info, undefined, false).text).toBe("Needs sign-in");
+  });
+
   it("terminal method shows a copyable command and never calls authenticate", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, { clipboard: { writeText } });
@@ -110,7 +134,6 @@ describe("provider sign-in", () => {
     const onRecheck = vi.fn();
     render(
       <SignInActions
-        instanceId="mock"
         launch={{ command: "codex", args: ["acp"], env: { BASE: "1" } }}
         authMethods={[
           {

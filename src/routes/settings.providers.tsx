@@ -58,7 +58,7 @@ function specList(infos: InstanceInfo[], id: string, patch: Partial<InstanceSpec
   );
 }
 
-function statusLine(
+export function statusLine(
   info: InstanceInfo,
   report: PreflightReport | undefined,
   checking: boolean,
@@ -68,14 +68,12 @@ function statusLine(
   if (checking) return { text: "Checking connection…", tone: "muted" };
   if (authenticating) return { text: "Signing in…", tone: "muted" };
   if (!info.enabled) return { text: "Disabled", tone: "muted" };
-  if (info.status === "needs_auth") {
+  // A fresh report outranks the cached status: Re-check must clear the badge.
+  if (report?.authRequired ?? info.status === "needs_auth") {
     return { text: authAttempted ? "Still needs sign-in" : "Needs sign-in", tone: "warn" };
   }
   if (info.status === "crashed") return { text: "Crashed on last run", tone: "bad" };
   if (report) {
-    if (report.authRequired) {
-      return { text: authAttempted ? "Still needs sign-in" : "Needs sign-in", tone: "warn" };
-    }
     const caps = [report.loadSession ? "resume" : null, report.promptImage ? "images" : null]
       .filter(Boolean)
       .join(" · ");
@@ -96,6 +94,11 @@ function statusLine(
     return { text: `Connected${caps ? ` · ${caps}` : ""}`, tone: "ok" };
   }
   return { text: "Not checked yet", tone: "muted" };
+}
+
+/** A fresh report wins over the cached status (heading + actions agree). */
+export function shouldShowSignIn(info: InstanceInfo, report: PreflightReport | undefined): boolean {
+  return report ? report.authRequired : info.status === "needs_auth";
 }
 
 const TONE_CLASSES: Record<"ok" | "warn" | "muted" | "bad", string> = {
@@ -159,6 +162,7 @@ function ProvidersSettings() {
         const { [id]: _dropped, ...rest } = m;
         return rest;
       });
+      await reload();
     } catch (err) {
       setReports((m) => {
         const { [id]: _dropped, ...rest } = m;
@@ -174,9 +178,9 @@ function ProvidersSettings() {
 
   const signIn = async (id: string, methodId: string) => {
     setAuthenticating((m) => ({ ...m, [id]: true }));
-    setAuthAttempted((m) => ({ ...m, [id]: true }));
     try {
       const report = await providersAuthenticate(id, methodId);
+      setAuthAttempted((m) => ({ ...m, [id]: report.authRequired }));
       setReports((m) => ({ ...m, [id]: report }));
       setCheckError((m) => {
         const { [id]: _dropped, ...rest } = m;
@@ -296,8 +300,7 @@ function ProvidersSettings() {
                 authAttempted[selected.id],
               );
               const err = checkError[selected.id];
-              const needsAuth =
-                reports[selected.id]?.authRequired === true || selected.status === "needs_auth";
+              const needsAuth = shouldShowSignIn(selected, reports[selected.id]);
               return (
                 <div className="mt-3 rounded-(--radius-md) border border-border-subtle bg-surface p-3">
                   <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
@@ -310,14 +313,6 @@ function ProvidersSettings() {
                   ) : (
                     <>
                       <p className={`mt-1 text-sm ${TONE_CLASSES[st.tone]}`}>{st.text}</p>
-                      {reports[selected.id]?.authRequired && reports[selected.id]?.authHint && (
-                        <p
-                          className="mt-1 text-xs text-text-tertiary"
-                          title={reports[selected.id]?.authHint ?? undefined}
-                        >
-                          {reports[selected.id]?.authHint}
-                        </p>
-                      )}
                     </>
                   )}
                   <button
@@ -328,9 +323,8 @@ function ProvidersSettings() {
                     <RefreshCw size={12} className={checking[selected.id] ? "animate-spin" : ""} />
                     Check connection
                   </button>
-                  {needsAuth && (
+                  {needsAuth && selected.enabled && (
                     <SignInActions
-                      instanceId={selected.id}
                       launch={{
                         command: selected.command,
                         args: selected.args,
@@ -463,7 +457,12 @@ function ProvidersSettings() {
                   onAdded={() => void reload()}
                   onReport={(report) => {
                     setReports((m) => ({ ...m, [agent.suggestedInstanceId]: report }));
+                    setAuthAttempted((m) => ({
+                      ...m,
+                      [agent.suggestedInstanceId]: report.authRequired,
+                    }));
                     setSelectedId(agent.suggestedInstanceId);
+                    void reload();
                   }}
                 />
               ))}

@@ -8,7 +8,6 @@ import type { AuthMethod } from "../../lib/types";
  * pult never sends a terminal method over RPC.
  */
 export function SignInActions({
-  instanceId,
   launch,
   authMethods,
   authHint,
@@ -17,7 +16,6 @@ export function SignInActions({
   onSignIn,
   onRecheck,
 }: {
-  instanceId: string;
   launch: { command: string; args: string[]; env?: Record<string, string> };
   authMethods: AuthMethod[];
   authHint?: string | null;
@@ -71,7 +69,9 @@ export function SignInActions({
           >
             {signingIn ? "Signing in…" : `Sign in${method.name ? `: ${method.name}` : ""}`}
           </button>
-          {authAttempted && <span className="text-xs text-warning">Still needs sign-in</span>}
+          {authAttempted && !signingIn && (
+            <span className="text-xs text-warning">Still needs sign-in</span>
+          )}
         </div>
       ))}
       {terminal.map((method) => {
@@ -102,7 +102,6 @@ export function SignInActions({
         );
       })}
       {authHint && !authAttempted && <p className="text-xs text-text-tertiary">{authHint}</p>}
-      <span className="sr-only">{instanceId}</span>
     </div>
   );
 }

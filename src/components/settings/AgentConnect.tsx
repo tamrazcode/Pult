@@ -85,11 +85,11 @@ export function ConnectRow({
 
   const signIn = async (methodId: string) => {
     setSigningIn(true);
-    setAuthAttempted(true);
     setAuthError(null);
     try {
       const report = await providersAuthenticate(agent.suggestedInstanceId, methodId);
       onReport?.(report);
+      setAuthAttempted(report.authRequired);
       await useUiStore.getState().loadInstances();
       setState({ kind: report.authRequired ? "needs_auth" : "connected", report });
     } catch (err) {
@@ -109,6 +109,8 @@ export function ConnectRow({
     try {
       const report = await providersPreflight(agent.suggestedInstanceId);
       onReport?.(report);
+      setAuthAttempted(report.authRequired);
+      await useUiStore.getState().loadInstances();
       setState({ kind: report.authRequired ? "needs_auth" : "connected", report });
     } catch (err) {
       setAuthError(ipcErrorMessage(err));
@@ -191,7 +193,6 @@ export function ConnectRow({
             </p>
           )}
           <SignInActions
-            instanceId={agent.suggestedInstanceId}
             launch={launch}
             authMethods={state.report.authMethods}
             authHint={state.report.authHint}

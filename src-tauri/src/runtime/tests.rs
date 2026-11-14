@@ -1,4 +1,4 @@
-﻿//! Runtime-level golden tests against the real mock agent: queue
+//! Runtime-level golden tests against the real mock agent: queue
 //! auto-dispatch, resume, and the M3 callbacks (permission modes,
 //! elicitation, terminals). These run through `AgentRuntime` (store + emit +
 //! run loop), unlike `drivers/golden.rs` which drives `AcpConn` directly.
@@ -339,7 +339,7 @@ fn sink_events(sink: &TestSink) -> Vec<(String, serde_json::Value)> {
     sink.0.lock().expect("sink lock").clone()
 }
 
-/// Elicitation round-trip (В§5.5): the modal surfaces, the UI accepts with
+/// Elicitation round-trip (§5.5): the modal surfaces, the UI accepts with
 /// content, the agent's reply echoes the picked value.
 #[tokio::test]
 async fn elicitation_round_trip_reaches_the_agent() {
@@ -391,7 +391,7 @@ async fn elicitation_round_trip_reaches_the_agent() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-/// Terminal callbacks (В§5.5): create в†’ output ring в†’ wait_for_exit в†’ release.
+/// Terminal callbacks (§5.5): create → output ring → wait_for_exit → release.
 #[tokio::test]
 async fn terminal_callbacks_run_and_report() {
     let _env = env_lock();
@@ -426,7 +426,7 @@ async fn terminal_callbacks_run_and_report() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-/// auto_edit resolves an edit-kind request without the UI (В§8 M3 acceptance:
+/// auto_edit resolves an edit-kind request without the UI (§8 M3 acceptance:
 /// assert via the event log). Every resolution still leaves a trace row.
 #[tokio::test]
 async fn auto_edit_resolves_edits_without_ui_prompt() {
@@ -582,7 +582,7 @@ async fn allow_always_is_remembered_for_next_turn() {
 use crate::runtime::write_file_sandboxed;
 
 /// The fs sandbox rejects `../` escapes with the typed resource error
-/// (В§8 M3 acceptance).
+/// (§8 M3 acceptance).
 #[test]
 fn sandbox_rejects_parent_directory_escapes() {
     use crate::protocol::jsonrpc::ERR_RESOURCE_NOT_FOUND;
@@ -677,7 +677,7 @@ async fn deleting_a_thread_mid_run_releases_runtime_state() {
     pump.abort();
 }
 
-/// В§5.4: preflight caches session config options alongside modes, so pickers
+/// §5.4: preflight caches session config options alongside modes, so pickers
 /// are usable before the first prompt.
 #[tokio::test]
 async fn preflight_caches_modes_and_config_options() {
