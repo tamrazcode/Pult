@@ -400,7 +400,7 @@ impl AcpConn {
             client_info: Implementation::new("pult", env!("CARGO_PKG_VERSION")),
         };
         let value = self
-            .request("initialize", serde_json::to_value(params)?, std::time::Duration::from_secs(30))
+            .request("initialize", serde_json::to_value(params)?, std::time::Duration::from_secs(60))
             .await?;
         Ok(serde_json::from_value(value)?)
     }

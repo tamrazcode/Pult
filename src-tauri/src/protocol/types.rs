@@ -289,7 +289,7 @@ pub enum McpServer {
 #[serde(rename_all = "camelCase")]
 pub struct NewSessionParams {
     pub cwd: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Required by the schema even when empty — agents reject its absence.
     pub mcp_servers: Vec<McpServer>,
 }
 
@@ -299,7 +299,7 @@ pub struct NewSessionParams {
 pub struct LoadSessionParams {
     pub session_id: String,
     pub cwd: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Required by the schema even when empty.
     pub mcp_servers: Vec<McpServer>,
 }
 
@@ -1201,6 +1201,16 @@ mod tests {
         assert_eq!(modes.current_mode_id, "code");
         assert_eq!(modes.available_modes.len(), 2);
         assert_eq!(modes.available_modes[1].id, "architect");
+    }
+
+    #[test]
+    fn new_session_params_always_send_mcp_servers() {
+        let value = serde_json::to_value(NewSessionParams {
+            cwd: "C:\\work".to_string(),
+            mcp_servers: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(value["mcpServers"], json!([]));
     }
 
     #[test]

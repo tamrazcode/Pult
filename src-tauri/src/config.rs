@@ -184,7 +184,36 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
             });
         }
     }
+    // Google ships the Antigravity ACP runtime separately from the IDE; pult
+    // looks for the server it installs (or one on PATH).
+    if let Some(server) = antigravity_server_path() {
+        let command = server.to_string_lossy().into_owned();
+        found.push(DetectedAgent {
+            id: "antigravity".to_string(),
+            display_name: "Google Antigravity".to_string(),
+            command: command.clone(),
+            suggested_instance_id: "antigravity".to_string(),
+            suggested_command: Some(vec![command]),
+            notes: "Official Google ACP server. Cold start can take 15-25 s on Windows; sign in from Providers.",
+        });
+    }
     found
+}
+
+/// The standalone Antigravity ACP server (`agy_acp_server`), installed by pult
+/// under `%LOCALAPPDATA%\\pult\\antigravity` or available on PATH.
+fn antigravity_server_path() -> Option<std::path::PathBuf> {
+    #[cfg(windows)]
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let candidate = std::path::PathBuf::from(local)
+            .join("pult")
+            .join("antigravity")
+            .join("agy_acp_server.exe");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    which("agy_acp_server")
 }
 
 /// PATH lookup honoring PATHEXT (Windows) — a poor man's `which`.
@@ -274,7 +303,7 @@ mod tests {
         for agent in detect_installed() {
             assert!(matches!(
                 agent.id.as_str(),
-                "claude-code" | "gemini-cli" | "codex" | "opencode" | "dsh"
+                "claude-code" | "gemini-cli" | "codex" | "opencode" | "dsh" | "antigravity"
             ));
             assert!(
                 agent.suggested_command.is_some(),
