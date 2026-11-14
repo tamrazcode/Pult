@@ -10,7 +10,7 @@
 
 **Spec:** The original §-spec is not in the repo; the de-facto spec is `README.md` (user promises) plus the per-milestone `DEVLOG.md` entries (decisions, known gaps) and `CHANGELOG.md`. Audit of 2026-11-14 (Gemini, low) is the source of the task list below.
 
-**Status 2026-11-14:** Tasks 1–3 done (`a4ec67a`, `0fa89f1`, `056baf0`), plus review fixes (`d1c6d47`) and the vitest include fix (`34728e4`). Found on the way: `vitest.config.ts` never ran `*.test.tsx` (3 suites silently skipped). Remaining: Tasks 4–7.
+**Status 2026-11-14:** Tasks 1–7 done (`a4ec67a` … `665d24f`), plus review fixes (`d1c6d47`) and the vitest include fix (`34728e4`). Found on the way: `vitest.config.ts` never ran `*.test.tsx` (3 suites silently skipped). Open item: the Playwright smoke assertion is written but not verified — the local Vite dev server hangs at dependency optimization.
 
 ## Global Constraints
 
