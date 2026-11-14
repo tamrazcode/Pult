@@ -104,10 +104,15 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
   },
 
   deleteProject: async (id) => {
-    await projectsDelete(id);
-    set((s) => ({
-      projects: s.projects.filter((project) => project.id !== id),
-      selectedProjectId: s.selectedProjectId === id ? null : s.selectedProjectId,
-    }));
+    try {
+      await projectsDelete(id);
+      set((s) => ({
+        projects: s.projects.filter((project) => project.id !== id),
+        selectedProjectId: s.selectedProjectId === id ? null : s.selectedProjectId,
+      }));
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+      throw err;
+    }
   },
 }));

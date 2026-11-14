@@ -66,6 +66,15 @@ function ThreadRow({
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
   const working = thread.status === "working" || thread.status === "waiting";
+  const renameDone = useRef(false);
+  useEffect(() => {
+    if (renaming) renameDone.current = false;
+  }, [renaming]);
+  const finishRename = (title: string | null) => {
+    if (renameDone.current) return;
+    renameDone.current = true;
+    onRename(title);
+  };
   return (
     <div
       onContextMenu={onContextMenu}
@@ -78,11 +87,19 @@ function ThreadRow({
           autoFocus
           defaultValue={thread.title}
           aria-label="Thread title"
+          data-escape-layer
           onKeyDown={(event) => {
-            if (event.key === "Enter") onRename(event.currentTarget.value.trim());
-            if (event.key === "Escape") onRename(null);
+            if (event.key === "Enter") {
+              event.preventDefault();
+              finishRename(event.currentTarget.value.trim() || null);
+            }
+            if (event.key === "Escape") {
+              event.preventDefault();
+              event.stopPropagation();
+              finishRename(null);
+            }
           }}
-          onBlur={(event) => onRename(event.currentTarget.value.trim())}
+          onBlur={(event) => finishRename(event.currentTarget.value.trim() || null)}
           className="mx-1 my-0.5 h-6 min-w-0 flex-1 rounded-(--radius-sm) border border-border-strong bg-(--input) px-2 text-sm text-text-primary focus:outline-none"
         />
       ) : (
@@ -260,6 +277,13 @@ export function Sidebar({ width }: { width: number }) {
     void useUiStore.getState().loadInstances();
   };
 
+  const copyPath = (path: string) => {
+    if (!path) return;
+    void navigator.clipboard
+      ?.writeText(path)
+      .catch((err) => console.error("copy path failed", err));
+  };
+
   const projectMenuItems = (project: Project): Array<ContextMenuItem | "separator"> => [
     {
       id: "new-thread",
@@ -270,7 +294,7 @@ export function Sidebar({ width }: { width: number }) {
     {
       id: "copy-path",
       label: "Copy path",
-      onSelect: () => void navigator.clipboard.writeText(project.rootPath),
+      onSelect: () => copyPath(project.rootPath),
     },
     {
       id: "pin",
@@ -288,7 +312,11 @@ export function Sidebar({ width }: { width: number }) {
       label: "Delete",
       danger: true,
       confirmLabel: "Confirm delete",
-      onSelect: () => void useProjectsStore.getState().deleteProject(project.id),
+      onSelect: () =>
+        void useProjectsStore
+          .getState()
+          .deleteProject(project.id)
+          .catch(() => {}),
     },
   ];
 
@@ -320,8 +348,7 @@ export function Sidebar({ width }: { width: number }) {
       {
         id: "copy-path",
         label: "Copy path",
-        onSelect: () =>
-          void navigator.clipboard.writeText(thread.workspace ?? project?.rootPath ?? ""),
+        onSelect: () => copyPath(thread.workspace ?? project?.rootPath ?? ""),
       },
       {
         id: "settings",
@@ -346,7 +373,21 @@ export function Sidebar({ width }: { width: number }) {
             if (active && (active.status === "running" || active.status === "queued")) {
               await runsCancel(active.id).catch(() => {});
             }
-            await useThreadsStore.getState().deleteThread(thread.id);
+            await useThreadsStore
+              .getState()
+              .deleteThread(thread.id)
+              .catch(() => {});
+            if (
+              useThreadsStore.getState().threads.some((candidate) => candidate.id === thread.id)
+            ) {
+              return;
+            }
+            useRunsStore.getState().dropThreadState(thread.id);
+            const wasActive = useThreadsStore.getState().activeThreadId === thread.id;
+            if (wasActive) useThreadsStore.getState().setActiveThread(null);
+            if (pathname === `/thread/${thread.id}`) {
+              void router.navigate({ to: "/chat" });
+            }
           })();
         },
       },

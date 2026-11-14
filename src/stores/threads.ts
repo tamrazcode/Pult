@@ -184,24 +184,37 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   renameThread: async (threadId, title) => {
-    await threadsRename(threadId, title);
-    set((s) => ({
-      threads: s.threads.map((t) => (t.id === threadId ? { ...t, title } : t)),
-    }));
+    try {
+      await threadsRename(threadId, title);
+      set((s) => ({
+        threads: s.threads.map((t) => (t.id === threadId ? { ...t, title } : t)),
+      }));
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+    }
   },
 
   deleteThread: async (threadId) => {
-    await threadsDelete(threadId);
-    get().removeThread(threadId);
+    try {
+      await threadsDelete(threadId);
+      get().removeThread(threadId);
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+      throw err;
+    }
   },
 
   setThreadStatus: async (threadId, status) => {
-    await threadsSetStatus(threadId, status);
-    set((s) => ({
-      threads: s.threads.map((t) =>
-        t.id === threadId ? { ...t, status, pinned: status === "draft" ? false : t.pinned } : t,
-      ),
-    }));
+    try {
+      await threadsSetStatus(threadId, status);
+      set((s) => ({
+        threads: s.threads.map((t) =>
+          t.id === threadId ? { ...t, status, pinned: status === "draft" ? false : t.pinned } : t,
+        ),
+      }));
+    } catch (err) {
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+    }
   },
 
   setThreadPinned: async (threadId, pinned) => {
