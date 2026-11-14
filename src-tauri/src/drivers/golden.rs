@@ -571,3 +571,46 @@ async fn golden_config_options_new_session_and_set_config_option() {
     }
     conn.kill();
 }
+
+#[tokio::test]
+async fn golden_authenticate_unblocks_new_session() {
+    if !mock_available() {
+        panic!("fixtures/mock-acp-agent.mjs missing");
+    }
+    let (conn, _streams) = spawn_mock(&[("MOCK_AUTH_REQUIRED", "1")]);
+    let init = conn.initialize().await.expect("initialize");
+    assert_eq!(init.auth_methods.len(), 1);
+    assert!(init.auth_methods[0].is_agent());
+    assert_eq!(init.auth_methods[0].id.as_deref(), Some("mock-token"));
+
+    let err = conn.new_session(".").await.expect_err("locked before auth");
+    assert!(err.is_auth_required(), "only -32000 means sign-in: {err:?}");
+
+    conn.authenticate("mock-token").await.expect("authenticate");
+    let session = conn.new_session(".").await.expect("unblocked session");
+    assert!(session.session_id.starts_with("mock-session-"));
+    conn.kill();
+}
+
+#[tokio::test]
+async fn golden_authenticate_failure_keeps_session_locked() {
+    if !mock_available() {
+        panic!("fixtures/mock-acp-agent.mjs missing");
+    }
+    let (conn, _streams) = spawn_mock(&[
+        ("MOCK_AUTH_REQUIRED", "1"),
+        ("MOCK_AUTH_FAIL", "1"),
+    ]);
+    conn.initialize().await.expect("initialize");
+    let err = conn
+        .authenticate("mock-token")
+        .await
+        .expect_err("auth must fail");
+    match err {
+        DriverError::Rpc(rpc) => assert_eq!(rpc.code, -32603),
+        other => panic!("expected -32603, got {other:?}"),
+    }
+    let still = conn.new_session(".").await.expect_err("still locked");
+    assert!(still.is_auth_required());
+    conn.kill();
+}

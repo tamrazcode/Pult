@@ -16,6 +16,7 @@
  */
 
 import { createInterface } from "node:readline";
+import { existsSync, writeFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -29,6 +30,60 @@ const HANG = process.env.MOCK_HANG === "1";
 
 const PROTOCOL_VERSION = 1;
 const AGENT_INFO = { name: "mock-acp-agent", version: "0.1.0" };
+
+// ---- auth scenarios (env-gated so the default stays unlocked) ----
+const AUTH_REQUIRED = process.env.MOCK_AUTH_REQUIRED === "1";
+const AUTH_TERMINAL = process.env.MOCK_AUTH_TERMINAL === "1";
+const AUTH_FAIL = process.env.MOCK_AUTH_FAIL === "1";
+const AUTH_STILL_REQUIRED = process.env.MOCK_AUTH_STILL_REQUIRED === "1";
+const AUTH_STATE_FILE = process.env.MOCK_AUTH_STATE_FILE || "";
+let authUnlocked =
+  !AUTH_REQUIRED &&
+  !AUTH_TERMINAL ||
+  (AUTH_STATE_FILE !== "" && existsSync(AUTH_STATE_FILE));
+
+const AUTH_METHODS = AUTH_TERMINAL
+  ? [
+      {
+        type: "terminal",
+        id: "mock-term",
+        name: "Terminal sign-in",
+        args: ["--login"],
+        env: { MOCK_LOGIN: "1" },
+      },
+    ]
+  : AUTH_REQUIRED
+    ? [
+        {
+          id: "mock-token",
+          name: "Mock sign-in",
+          description: "Sign in with the mock account",
+        },
+      ]
+    : [];
+
+function handleAuthenticate(id, params) {
+  const methodId = params && params.methodId;
+  if (AUTH_TERMINAL || (AUTH_REQUIRED && methodId !== "mock-token")) {
+    sendError(id, -32602, `unknown auth method '${methodId}'`);
+    return;
+  }
+  if (AUTH_FAIL) {
+    sendError(id, -32603, "Authentication failed: invalid credentials");
+    return;
+  }
+  if (!AUTH_STILL_REQUIRED) {
+    authUnlocked = true;
+    if (AUTH_STATE_FILE !== "") {
+      try {
+        writeFileSync(AUTH_STATE_FILE, "ok");
+      } catch {
+        // best effort: the in-process flag is what matters for this run
+      }
+    }
+  }
+  sendResult(id, {});
+}
 
 const READ_PATH = "/repo/src/main.rs";
 const WRITE_PATH = "/repo/src/mock-out.txt";
@@ -623,12 +678,16 @@ function handleInitialize(id) {
       loadSession: true,
       promptCapabilities: { image: true, audio: false, embeddedContext: false },
     },
-    authMethods: [],
+    authMethods: AUTH_METHODS,
     agentInfo: AGENT_INFO,
   });
 }
 
 function handleNewSession(id) {
+  if (!authUnlocked) {
+    sendError(id, -32000, "Authentication required");
+    return;
+  }
   const sessionId = `mock-session-${++sessionCounter}`;
   sessions.add(sessionId);
   sendResult(id, {
@@ -693,6 +752,10 @@ function handleSetMode(id, params) {
 }
 
 function handleLoadSession(id, params) {
+  if (!authUnlocked) {
+    sendError(id, -32000, "Authentication required");
+    return;
+  }
   const sessionId =
     params && typeof params.sessionId === "string" ? params.sessionId : "mock-session-1";
   sessions.add(sessionId);
@@ -805,7 +868,7 @@ function handleMessage(line) {
       handleInitialize(msg.id);
       return;
     case "authenticate":
-      sendResult(msg.id, {});
+      handleAuthenticate(msg.id, msg.params);
       return;
     case "session/new":
       handleNewSession(msg.id);
