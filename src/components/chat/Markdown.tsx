@@ -242,6 +242,19 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
 });
 
 /** Local paths from agents (`C:\...`, UNC, file://) need the backend bridge. */
+function fileUrlToPath(src: string): string {
+  if (!src.startsWith("file://")) return src;
+  try {
+    const url = new URL(src);
+    let path = decodeURIComponent(url.pathname);
+    if (url.host && url.host !== "localhost") path = `//${url.host}${path}`;
+    if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
+    return path;
+  } catch {
+    return src;
+  }
+}
+
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
@@ -250,8 +263,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   useEffect(() => {
     if (!local || !src) return;
     let cancelled = false;
-    const path = src.startsWith("file://") ? decodeURI(src.slice("file://".length)) : src;
-    readImageDataUrl(path)
+    readImageDataUrl(fileUrlToPath(src))
       .then((url) => {
         if (!cancelled) setDataUrl(url);
       })

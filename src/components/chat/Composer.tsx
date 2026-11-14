@@ -203,7 +203,9 @@ export function Composer({ threadId }: { threadId?: string }) {
   useEffect(() => {
     setError(null);
     if (!threadId) return;
-    const remembered = useUiStore.getState().instanceByThread[threadId];
+    const lastRun = runs?.[runs.length - 1];
+    const remembered =
+      useUiStore.getState().instanceByThread[threadId] ?? lastRun?.instanceId ?? undefined;
     if (
       remembered &&
       remembered !== useUiStore.getState().selectedInstanceId &&
@@ -211,7 +213,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     ) {
       useUiStore.getState().setSelectedInstanceId(remembered);
     }
-  }, [threadId, instances]);
+  }, [threadId, instances, runs]);
   const pendingApproval = useRunsStore((s) =>
     activeRun ? s.viewsByRun[activeRun.id]?.pendingApproval : undefined,
   );
@@ -282,6 +284,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       if (!selectedInstanceId) {
         throw new Error("No agent instance selected - pick one in the header");
       }
+      useUiStore.getState().rememberInstance(targetThreadId, selectedInstanceId);
       // The picks for this send are persisted by the backend and applied to
       // the run's session.
       const outcome = await runsDispatch(

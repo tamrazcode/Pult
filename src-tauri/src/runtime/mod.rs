@@ -733,16 +733,12 @@ impl AgentRuntime {
     /// picks cannot be validated.
     fn config_option_ids(&self, instance_id: &str) -> Option<std::collections::HashSet<String>> {
         let inner = self.inner.lock().expect("runtime lock poisoned");
-        inner
-            .capabilities
-            .get(instance_id)
-            .filter(|caps| !caps.config_options.is_empty())
-            .map(|caps| {
-                caps.config_options
-                    .iter()
-                    .map(|option| option.id.clone())
-                    .collect()
-            })
+        inner.capabilities.get(instance_id).map(|caps| {
+            caps.config_options
+                .iter()
+                .map(|option| option.id.clone())
+                .collect()
+        })
     }
 
     /// Replaces the cached config options from a `set_config_option` reply or

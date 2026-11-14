@@ -815,12 +815,36 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
 #[tauri::command]
-pub async fn read_image_data_url(path: String) -> Result<String, PultError> {
+pub async fn read_image_data_url(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    path: String,
+) -> Result<String, PultError> {
+    let mut roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Ok(threads) = runtime.store().list_threads() {
+        roots.extend(threads.into_iter().filter_map(|thread| thread.workspace.map(Into::into)));
+    }
+    if let Ok(projects) = runtime.store().list_projects() {
+        roots.extend(projects.into_iter().map(|project| project.root_path.into()));
+    }
+    roots.push(crate::pult_home());
     tokio::task::spawn_blocking(move || {
         use base64::{engine::general_purpose::STANDARD, Engine as _};
+        // Never touch UNC paths: canonicalize would open an SMB connection.
+        if path.starts_with("\\\\") || path.starts_with("//") {
+            return Err(PultError::internal("network image paths are not allowed"));
+        }
         let canonical = std::path::PathBuf::from(&path)
             .canonicalize()
             .map_err(|e| PultError::internal(format!("image not found: {path} ({e})")))?;
+        let allowed = roots
+            .iter()
+            .filter_map(|root| root.canonicalize().ok())
+            .any(|root| canonical.starts_with(root));
+        if !allowed {
+            return Err(PultError::internal(
+                "image is outside the project/thread workspace",
+            ));
+        }
         let meta = std::fs::metadata(&canonical)
             .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
         if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {

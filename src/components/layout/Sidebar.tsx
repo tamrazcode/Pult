@@ -438,7 +438,7 @@ export function Sidebar({ width }: { width: number }) {
             className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
         </div>
-        <div className="relative">
+        <div>
           <button
             type="button"
             aria-label="Filter threads"
