@@ -2,6 +2,27 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## M9 — Chat, thread lifecycle & navigation integrity (2026-11-14)
+
+**Scope shipped.** The daily loop is now internally consistent. Hydration: `threads_get` carries `activeRunId` and `desiredMode` into the store; a live run no longer flips to "pult restarted while this run was active" when you switch threads, transcript events are deduped by id (both replay orders), a stale snapshot cannot resurrect a finished run, and `threads_get` reads the live-run id before the runs. Composer: Esc stops the run unless a palette/dialog/picker/slash/@ layer owns the key (layers advertise `data-escape-layer`), slash picks keep their leading `/`, the approval bar exposes every offered option (A/S/D), the textarea is read-only while a decision is pending, and `@` opens a debounced workspace file list (`workspace_files`, BFS with VCS/build skips and 3000/200 caps). Session mode: picked modes persist per thread in the settings KV (no schema change), survive restarts via `ThreadDetail.desiredMode`, apply to the next run before its prompt, and never leak from `/chat` into an existing thread; the picker prefers the remembered mode over a finished run's mode. Thread lifecycle: rename, pin, snooze, settle and delete (two-step confirm, worktree hint) live in `ChatHeader`; deleting the active thread cancels its run, drops store state and lands on `/chat` only on success; the `working` shelf no longer accepts drops. Navigation: route-aware breadcrumbs replace the static `pult / chat`, the sidebar's fake "Add project…" is an honest workspace entry, and the terminal label uses the active shell + workspace folder. Links: `open_external_url` opens http(s) in the system browser (validated, one argv element, no shell) and backs elicitation URL mode and PR links; a failed open shows an error instead of silently accepting. `fresh` detail: vitest now actually runs `*.test.tsx` (three suites had been silently skipped since M7).
+
+**Verification.** Rust 91/91 (workspace walk, desired-mode apply on the mock, delete-mid-run cleanup, URL validation), clippy `-D warnings` clean. Frontend typecheck/lint green, vitest 92/92 across 14 files. Gemini final review: 4 majors + 7 minors; the majors (mode leak from `/chat`, picker shadowing, Esc through picker/header layers, delete-mid-run runtime leak) fixed with tests, cheap minors fixed in the same pass (dedupe both directions, BFS for `@`, `key={threadId}`, store cleanup, URL whitespace/quotes, honest chevron). Playwright smoke (including the new breadcrumb assertion) was **not** verified: the local Vite dev server hangs at `[optimizer] scanning/bundling dependencies` and answers no HTTP; no live WebView2 walkthrough this round.
+
+**Decisions.**
+
+1. **Thread-scoped preferences in the settings KV, not a schema migration** — `thread_mode:<id>` survives restarts and costs no migration; `desiredMode` rides on `ThreadDetail` instead of a new IPC command.
+2. **Overlay ownership is a DOM contract** (`data-escape-layer`), not a global key router: any layer that owns Esc marks itself, and the composer checks the document. One rule, no hook-order traps with window listeners registered in different orders.
+3. **Esc cancels only when nothing is above it**; the slash and `@` menus are treated as layers too, so typing Esc never kills a turn mid-word.
+4. **`@` mentions are server-walked, BFS, hard-capped** — the UI never touches the filesystem and a monorepo cannot stall the IPC worker.
+5. **External links: validate in Rust, open with the OS handler, never a shell** — `rundll32 url.dll,FileProtocolHandler` on Windows, `open`/`xdg-open` elsewhere; http(s) only, whitespace/quotes/control chars rejected.
+
+**Known issues / gaps.**
+
+- Playwright smoke and the live WebView2 pass remain unverified this round (dev-server optimizer hang; no window run while the machine was gaming).
+- `@` mentions are thread-scoped (no mentions on `/chat` before a thread exists).
+- Sidebar rows have no context menu; bulk thread actions require opening each thread (ruling in the M9 ledger).
+- `AgentPicker`/`ModePill` Esc handlers still rely on their backdrop layer rather than calling `preventDefault` themselves.
+
 ## UX pass — composer-driven controls, one-click agents, resizable panes (2026-11-14)
 
 **Scope shipped.** The §6.1 composer contract, finally all the way: the control bar now

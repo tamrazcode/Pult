@@ -5,6 +5,20 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### M9 — Chat, thread lifecycle & navigation integrity (2026-11-14)
+
+- Thread hydration keeps live runs alive: `activeRunId`/`desiredMode` travel with
+  `threads_get`, events are deduped by id, stale snapshots cannot resurrect finished runs.
+- Composer: Esc stops the run only when no layer owns it; slash picks keep their `/`;
+  approval offers once/always/reject; decisions lock the textarea; `@` lists workspace files.
+- Session mode persists per thread (settings KV), applies before the next prompt, never
+  leaks from `/chat` into another thread, and survives restarts.
+- Threads: rename, pin, snooze, settle, delete (two-step, worktree hint) in the header;
+  deleting a live thread cancels its run and cleans store/runtime state.
+- Navigation: route-aware breadcrumbs, honest workspace entry, terminal label with shell
+  and folder; external http(s) links open in the system browser from PR/elicitation.
+- Vitest now runs `*.test.tsx` suites (three had been silently skipped).
+
 ### UX pass — composer-driven controls, one-click agents, resizable panes (2026-11-14)
 
 - Composer control bar (§6.1): agent instance ▸ session mode ▸ permission pill moved into
