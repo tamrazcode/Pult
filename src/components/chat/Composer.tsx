@@ -26,6 +26,16 @@ const BUILT_IN_COMMANDS: CommandInfo[] = [
   { name: "commit", description: "Commit this thread's changes — /commit <message>" },
 ];
 
+/** What a picked slash command inserts: the leading "/" is part of the command. */
+export function formatSlashInsertion(command: CommandInfo): string {
+  return `/${command.name} `;
+}
+
+/** Esc cancels the run only when nothing above (overlay, decision) owns the key. */
+export function shouldCancelOnEscape(ctx: { runActive: boolean; overlayOpen: boolean }): boolean {
+  return ctx.runActive && !ctx.overlayOpen;
+}
+
 interface ImageChip {
   /** Base64 payload (no data URL prefix). */
   data: string;
@@ -61,6 +71,8 @@ export function Composer({ threadId }: { threadId?: string }) {
 
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const instances = useUiStore((s) => s.instances);
+  const paletteOpen = useUiStore((s) => s.paletteOpen);
+  const activeElicitation = useRunsStore((s) => s.activeElicitation);
   const commands = useRunsStore((s) => (threadId ? s.commandsByThread[threadId] : undefined));
   const queue = useRunsStore((s) => (threadId ? s.queueByThread[threadId] : undefined));
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
@@ -118,7 +130,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, [autosize]);
 
   const pickSlash = useCallback((command: CommandInfo) => {
-    setValue(`${command.name} `);
+    setValue(formatSlashInsertion(command));
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
@@ -187,6 +199,25 @@ export function Composer({ threadId }: { threadId?: string }) {
     if (!activeRun || activeRun.status !== "running") return;
     runsCancel(activeRun.id).catch((err) => console.error("runs_cancel failed", err));
   }, [activeRun]);
+
+  // Esc stops the run (§6.1), unless an overlay or a pending decision owns
+  // the key first; the slash menu and dialogs call preventDefault themselves.
+  useEffect(() => {
+    const onKey = (e: WindowEventMap["keydown"]) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      const target = e.target;
+      const inOverlay =
+        target instanceof HTMLElement &&
+        target.closest('[role="dialog"], [role="listbox"]') !== null;
+      const overlayOpen =
+        paletteOpen || activeElicitation !== null || awaitingDecision || inOverlay;
+      if (!shouldCancelOnEscape({ runActive, overlayOpen })) return;
+      e.preventDefault();
+      handleStop();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [runActive, paletteOpen, activeElicitation, awaitingDecision, handleStop]);
 
   // Keyboard answers while a decision is pending (§6.1): A allow once,
   // S allow always, D decline. The textarea is read-only while pending,
@@ -274,44 +305,38 @@ export function Composer({ threadId }: { threadId?: string }) {
           <span className="min-w-0 flex-1 truncate text-xs text-warning">
             Decision needed: {pendingApproval.title}
           </span>
-          {(() => {
-            const once = pendingApproval.options.find((o) => o.kind === "allow_once");
-            const reject = pendingApproval.options.find((o) => o.kind.startsWith("reject"));
-            return (
-              <>
-                {once && (
-                  <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={() =>
-                      runsRespondPermission(
-                        runIdForApproval ?? "",
-                        pendingApproval.requestId,
-                        once.optionId,
-                      ).catch((err) => console.error("runs_respond_permission failed", err))
-                    }
-                  >
-                    {once.name} <span className="ml-1 text-xs opacity-70">A</span>
-                  </Button>
-                )}
-                {reject && (
-                  <Button
-                    size="sm"
-                    variant="danger_outline"
-                    onClick={() =>
-                      runsRespondPermission(
-                        runIdForApproval ?? "",
-                        pendingApproval.requestId,
-                        reject.optionId,
-                      ).catch((err) => console.error("runs_respond_permission failed", err))
-                    }
-                  >
-                    {reject.name} <span className="ml-1 text-xs opacity-70">D</span>
-                  </Button>
-                )}
-              </>
-            );
-          })()}
+          {pendingApproval.options
+            .filter(
+              (o) =>
+                o.kind === "allow_once" ||
+                o.kind === "allow_always" ||
+                o.kind.startsWith("reject"),
+            )
+            .map((option) => {
+              const hint =
+                option.kind === "allow_once" ? "A" : option.kind === "allow_always" ? "S" : "D";
+              const variant = option.kind.startsWith("reject")
+                ? "danger_outline"
+                : option.kind === "allow_once"
+                  ? "primary"
+                  : "secondary";
+              return (
+                <Button
+                  key={option.optionId}
+                  size="sm"
+                  variant={variant}
+                  onClick={() =>
+                    runsRespondPermission(
+                      runIdForApproval ?? "",
+                      pendingApproval.requestId,
+                      option.optionId,
+                    ).catch((err) => console.error("runs_respond_permission failed", err))
+                  }
+                >
+                  {option.name} <span className="ml-1 text-xs opacity-70">{hint}</span>
+                </Button>
+              );
+            })}
         </div>
       )}
       {queue && queue.length > 0 && threadId && (
