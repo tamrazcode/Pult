@@ -16,7 +16,7 @@
  */
 
 import { createInterface } from "node:readline";
-import { existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync } from "node:fs";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -27,6 +27,7 @@ const DELAY_MS = SLOW_TURN ? 300 : Number.parseInt(process.env.MOCK_DELAY_MS ?? 
 const BAD_JSON = process.env.MOCK_BAD_JSON === "1";
 const CRASH_MID_TURN = process.env.MOCK_CRASH_MID_TURN === "1";
 const HANG = process.env.MOCK_HANG === "1";
+const SPAWN_LOG = process.env.MOCK_SPAWN_LOG || "";
 
 const PROTOCOL_VERSION = 1;
 const AGENT_INFO = { name: "mock-acp-agent", version: "0.1.0" };
@@ -672,6 +673,13 @@ async function runTurn(sessionId, promptText, turnNumber, turn) {
 // ---------------------------------------------------------------------------
 
 function handleInitialize(id) {
+  if (SPAWN_LOG !== "") {
+    try {
+      appendFileSync(SPAWN_LOG, `${process.pid}\n`);
+    } catch {
+      // best-effort test logging
+    }
+  }
   sendResult(id, {
     protocolVersion: PROTOCOL_VERSION,
     agentCapabilities: {

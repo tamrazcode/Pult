@@ -549,8 +549,13 @@ impl AcpConn {
         }
     }
 
+    /// True once the stdout reader saw EOF: the agent process is gone.
+    pub fn is_dead(&self) -> bool {
+        self.dead.load(Ordering::Relaxed)
+    }
+
     /// True when the agent's stdout ended on its own and pult did not kill
-    /// it — i.e. the process crashed mid-run (M7 agent-crash error state).
+    /// it - i.e. the process crashed mid-run (M7 agent-crash error state).
     pub fn died_on_own(&self) -> bool {
         self.dead.load(Ordering::Relaxed) && !self.killed.load(Ordering::Relaxed)
     }

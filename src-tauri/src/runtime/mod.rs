@@ -239,6 +239,8 @@ pub struct AgentRuntime {
     store: Arc<Store>,
     sink: Arc<dyn EventSink>,
     inner: Mutex<Inner>,
+    /// Warm processes/sessions parked after a successful turn.
+    pub pool: crate::runtime::pool::IdlePool,
 }
 
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
@@ -279,6 +281,7 @@ impl AgentRuntime {
                 ptys: Arc::new(crate::runtime::ptys::PtyRegistry::new(sink)),
                 instances,
             }),
+            pool: crate::runtime::pool::IdlePool::new(),
         }
     }
 
@@ -424,6 +427,10 @@ impl AgentRuntime {
             }
         }
         crate::config::save_instances(&crate::pult_home(), &specs)?;
+        for spec in &specs {
+            // A saved command/env means any warm process is stale.
+            self.pool.invalidate_instance(&spec.id);
+        }
         self.inner
             .lock()
             .expect("runtime lock poisoned")
@@ -1155,81 +1162,149 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     };
 
     emit_process("starting", None);
-    // The receivers come back separately: the run loop owns them exclusively,
-    // while the connection itself is shared through an Arc.
-    let spawn_started = std::time::Instant::now();
-    let conn_raw_parts = match AcpConn::spawn(&spawn_config) {
-        Ok(parts) => parts,
-        Err(err) => {
-            let msg = err.to_string();
-            emit_process("crashed", Some(msg.clone()));
-            runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
-            return Ok(());
-        }
+    let spawn_sig = crate::runtime::pool::SpawnSig {
+        command: spawn_config.command.clone(),
+        args: spawn_config.args.clone(),
+        env: spawn_config
+            .env
+            .iter()
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
     };
-    let (conn_raw, streams) = conn_raw_parts;
-    let crate::drivers::acp::AcpStreams {
-        mut events_rx,
-        mut client_requests_rx,
-    } = streams;
-    let conn = Arc::new(conn_raw);
-    timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
-    emit_process("spawned", None);
+    // Warm process from a previous turn of this thread: skip spawn, initialize,
+    // and session/new|load; re-send only the settings that changed.
+    let pooled = runtime
+        .pool
+        .take_matching(&thread_id, &instance_id, &root, &spawn_sig);
 
-    {
-        let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
-        guard.runs.insert(
-            run_id.clone(),
-            RunState {
-                conn: Arc::clone(&conn),
-                session_id: String::new(),
-                instance_id: instance_id.clone(),
-            },
-        );
-    }
-
-    let resolved = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await {
-        Ok(resolved) => resolved,
-        Err(err) => {
-            conn.kill();
-            runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(err.to_string()))?;
-            return Ok(());
-        }
-    };
-    timing.handshake_ms = resolved.handshake_ms;
-    timing.session_ms = resolved.session_ms;
-    let session_id = resolved.session_id;
-    // A resumed session re-announces the prior transcript while `session/load`
-    // is in flight. Persisting that replay would duplicate history in this run:
-    // drop transcript items, keep session metadata.
+    let conn: Arc<AcpConn>;
+    let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
+    let mut client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>;
+    let session_id: String;
+    let mut applied_config: DesiredConfigMap;
+    let mut applied_mode: Option<String>;
     let mut replayed_metadata = Vec::new();
-    if resolved.resumed {
-        while let Ok(kind) = events_rx.try_recv() {
-            if matches!(
-                kind,
-                EventKind::CommandsUpdate { .. }
-                    | EventKind::ConfigOptions { .. }
-                    | EventKind::ModeChange { .. }
-                    | EventKind::SessionInfo { .. }
-            ) {
-                replayed_metadata.push(kind);
+
+    if let Some(entry) = pooled {
+        timing.pooled = true;
+        let crate::runtime::pool::IdleConn {
+            conn: pooled_conn,
+            events_rx: mut pooled_events,
+            client_requests_rx: pooled_requests,
+            session_id: pooled_session,
+            applied_config: pooled_config,
+            applied_mode: pooled_mode,
+            ..
+        } = entry;
+        // Anything buffered after the previous prompt completed is stale.
+        while pooled_events.try_recv().is_ok() {}
+        conn = pooled_conn;
+        events_rx = pooled_events;
+        client_requests_rx = pooled_requests;
+        session_id = pooled_session;
+        applied_config = pooled_config;
+        applied_mode = pooled_mode;
+        {
+            let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
+            guard.runs.insert(
+                run_id.clone(),
+                RunState {
+                    conn: Arc::clone(&conn),
+                    session_id: session_id.clone(),
+                    instance_id: instance_id.clone(),
+                },
+            );
+        }
+        emit_process("running", None);
+    } else {
+        // The receivers come back separately: the run loop owns them exclusively,
+        // while the connection itself is shared through an Arc.
+        let spawn_started = std::time::Instant::now();
+        let (conn_raw, streams) = match AcpConn::spawn(&spawn_config) {
+            Ok(parts) => parts,
+            Err(err) => {
+                let msg = err.to_string();
+                emit_process("crashed", Some(msg.clone()));
+                runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
+                return Ok(());
+            }
+        };
+        let crate::drivers::acp::AcpStreams {
+            events_rx: spawned_events,
+            client_requests_rx: spawned_requests,
+        } = streams;
+        conn = Arc::new(conn_raw);
+        events_rx = spawned_events;
+        client_requests_rx = spawned_requests;
+        applied_config = DesiredConfigMap::new();
+        applied_mode = None;
+        timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
+        emit_process("spawned", None);
+
+        {
+            let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
+            guard.runs.insert(
+                run_id.clone(),
+                RunState {
+                    conn: Arc::clone(&conn),
+                    session_id: String::new(),
+                    instance_id: instance_id.clone(),
+                },
+            );
+        }
+
+        let resolved = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await
+        {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                conn.kill();
+                runtime.finalize_run(
+                    &run_id,
+                    &thread_id,
+                    "failed",
+                    "failed",
+                    Some(err.to_string()),
+                )?;
+                return Ok(());
+            }
+        };
+        timing.handshake_ms = resolved.handshake_ms;
+        timing.session_ms = resolved.session_ms;
+        session_id = resolved.session_id;
+        // A resumed session re-announces the prior transcript while `session/load`
+        // is in flight. Persisting that replay would duplicate history in this
+        // run: drop transcript items, keep session metadata.
+        if resolved.resumed {
+            while let Ok(kind) = events_rx.try_recv() {
+                if matches!(
+                    kind,
+                    EventKind::CommandsUpdate { .. }
+                        | EventKind::ConfigOptions { .. }
+                        | EventKind::ModeChange { .. }
+                        | EventKind::SessionInfo { .. }
+                ) {
+                    replayed_metadata.push(kind);
+                }
             }
         }
-    }
-    {
-        let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
-        if let Some(state) = guard.runs.get_mut(&run_id) {
-            state.session_id = session_id.clone();
+        {
+            let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
+            if let Some(state) = guard.runs.get_mut(&run_id) {
+                state.session_id = session_id.clone();
+            }
         }
+        emit_process("running", None);
     }
-    emit_process("running", None);
 
-    // A mode picked before this run existed is applied to the fresh session
-    // before the prompt; a rejecting agent must not kill the send.
+    // A mode picked before this run existed is applied before the prompt; a
+    // pooled session skips the round-trip when it already has that mode.
     if let Some(mode_id) = mode.as_deref() {
-        if let Err(err) = conn.set_mode(&session_id, mode_id).await {
-            tracing::warn!(target: "pult::runtime",
-                mode = %mode_id, error = %err, "desired mode was not applied");
+        if applied_mode.as_deref() != Some(mode_id) {
+            match conn.set_mode(&session_id, mode_id).await {
+                Ok(_) => applied_mode = Some(mode_id.to_string()),
+                Err(err) => tracing::warn!(target: "pult::runtime",
+                    mode = %mode_id, error = %err, "desired mode was not applied"),
+            }
         }
     }
 
@@ -1251,15 +1326,20 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
     // first because agents narrow dependent options (thought level) when the
     // model changes.
-    let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
+    let mut picks: Vec<(String, ConfigOptionValue)> = config
+        .into_iter()
+        .filter(|(id, value)| applied_config.get(id) != Some(value))
+        .collect();
     picks.sort_by_key(|(id, _)| config_apply_order(id));
     let config_started = std::time::Instant::now();
     for (config_id, value) in picks {
+        let applied_value = value.clone();
         match conn
             .set_config_option(&session_id, &config_id, value)
             .await
         {
             Ok(result) => {
+                applied_config.insert(config_id.clone(), applied_value);
                 runtime.update_cached_config_options(&instance_id, result.config_options.clone());
                 let event = Event::new(
                     run_id.clone(),
@@ -1358,11 +1438,13 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             }
                         }
                         AnswerPayload::ConfigOption { config_id, value } => {
+                            let applied_value = value.clone();
                             match conn
                                 .set_config_option(&session_id, &config_id, value)
                                 .await
                             {
                                 Ok(result) => {
+                                    applied_config.insert(config_id.clone(), applied_value);
                                     runtime.update_cached_config_options(
                                         &instance_id,
                                         result.config_options.clone(),
@@ -1526,7 +1608,35 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // The agent dying mid-run is a designed error state (§8 M7): check before
     // our own kill() so a crash is not mistaken for a normal shutdown.
     let crashed_mid_run = conn.died_on_own();
-    conn.kill();
+    // Park a healthy session for the next turn of this thread; cancel, crash,
+    // failure, or a deleted thread must tear the process down instead.
+    let can_park = !crashed_mid_run
+        && failure.is_none()
+        && !conn.is_dead()
+        && matches!(
+            final_reason.as_str(),
+            "end_turn" | "max_tokens" | "max_turn_requests"
+        )
+        && runtime.store.get_thread(&thread_id).is_ok();
+    if can_park {
+        runtime.pool.park(
+            thread_id.clone(),
+            crate::runtime::pool::IdleConn {
+                conn: Arc::clone(&conn),
+                events_rx,
+                client_requests_rx,
+                session_id: session_id.clone(),
+                instance_id: instance_id.clone(),
+                root: root.clone(),
+                spawn_sig,
+                applied_config,
+                applied_mode,
+                last_used: std::time::Instant::now(),
+            },
+        );
+    } else {
+        conn.kill();
+    }
     if crashed_mid_run {
         emit_process("crashed", failure.clone());
     }
@@ -2345,6 +2455,7 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
 }
 
 pub mod permissions;
+pub mod pool;
 pub mod ptys;
 pub mod terminals;
 #[cfg(test)]

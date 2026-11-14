@@ -1068,3 +1068,381 @@ async fn mock_run_emits_timing_with_first_delta() {
     assert!(timings[0].handshake_ms > 0, "handshake is measured");
     assert!(timings[0].first_delta_ms.is_some(), "first delta is measured");
 }
+
+fn mock_spec_with_env(env: &[(&str, &str)]) -> crate::config::InstanceSpec {
+    let mut spec = crate::config::mock_spec();
+    spec.env = env
+        .iter()
+        .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
+        .collect();
+    spec
+}
+
+fn read_pid_lines(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+struct HomeEnvGuard {
+    userprofile: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+}
+
+impl HomeEnvGuard {
+    fn redirect(dir: &std::path::Path) -> Self {
+        let guard = Self {
+            userprofile: std::env::var_os("USERPROFILE"),
+            home: std::env::var_os("HOME"),
+        };
+        std::env::set_var("USERPROFILE", dir);
+        std::env::set_var("HOME", dir);
+        guard
+    }
+}
+
+impl Drop for HomeEnvGuard {
+    fn drop(&mut self) {
+        match &self.userprofile {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match &self.home {
+            Some(v) => std::env::set_var("HOME", v),
+            None => std::env::remove_var("HOME"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
+    let _env = env_lock();
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-pool-seq-{}", crate::events::now_millis()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let spawn_log = sandbox.join("spawns.log");
+    let spawn_log_str = spawn_log.to_string_lossy().into_owned();
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[(
+        "MOCK_SPAWN_LOG",
+        spawn_log_str.as_str(),
+    )])]);
+    let mut thread = thread_record("th-pool-seq");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+
+    let first = runtime
+        .send(&thread, "first turn", &[], "mock")
+        .expect("send 1");
+    let run1 = first.run.expect("run 1");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-seq")
+            .map(|runs| {
+                runs.iter()
+                    .any(|r| r.id == run1.id && r.status != "running")
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    let second = runtime
+        .send(&thread, "second turn", &[], "mock")
+        .expect("send 2");
+    let run2 = second.run.expect("run 2");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-seq")
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs("th-pool-seq").unwrap();
+    assert_eq!(
+        runs.iter().find(|r| r.id == run1.id).unwrap().status,
+        "finished"
+    );
+    assert_eq!(
+        runs.iter().find(|r| r.id == run2.id).unwrap().status,
+        "finished"
+    );
+
+    let pids = read_pid_lines(&spawn_log);
+    assert_eq!(
+        pids.len(),
+        1,
+        "two sequential turns on the same thread must reuse 1 spawned process; got {pids:?}"
+    );
+    assert_eq!(runtime.pool.stats().idle, 1);
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn cancelling_run_kills_process_and_leaves_pool_empty() {
+    let _env = env_lock();
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-pool-cancel-{}", crate::events::now_millis()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let spawn_log = sandbox.join("spawns.log");
+    let spawn_log_str = spawn_log.to_string_lossy().into_owned();
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[
+        ("MOCK_SLOW_TURN", "1"),
+        ("MOCK_SPAWN_LOG", spawn_log_str.as_str()),
+    ])]);
+    let mut thread = thread_record("th-pool-cancel");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    let sent = runtime
+        .send(&thread, "cancel me", &[], "mock")
+        .expect("send");
+    let run = sent.run.expect("run");
+
+    // Wait until the session handshake is complete and the turn is running.
+    wait_for(Duration::from_secs(8), || {
+        sink_events(&sink)
+            .iter()
+            .any(|(ev, payload)| ev == "agent:process" && payload["kind"] == "running")
+    })
+    .await;
+
+    runtime.cancel(&run.id).expect("cancel");
+
+    wait_for(Duration::from_secs(8), || {
+        runtime.active_run_for("th-pool-cancel").is_none()
+            && runtime
+                .store()
+                .list_runs("th-pool-cancel")
+                .map(|runs| runs.iter().all(|r| r.status != "running"))
+                .unwrap_or(false)
+    })
+    .await;
+
+    let runs = runtime.store().list_runs("th-pool-cancel").unwrap();
+    assert_eq!(runs[0].status, "cancelled");
+    assert_eq!(runtime.pool.stats().idle, 0);
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn two_threads_keep_independent_sessions() {
+    let _env = env_lock();
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-pool-multi-{}", crate::events::now_millis()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let spawn_log = sandbox.join("spawns.log");
+    let spawn_log_str = spawn_log.to_string_lossy().into_owned();
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[(
+        "MOCK_SPAWN_LOG",
+        spawn_log_str.as_str(),
+    )])]);
+    let mut thread_a = thread_record("th-pool-a");
+    thread_a.workspace = Some(sandbox.to_string_lossy().into_owned());
+    let mut thread_b = thread_record("th-pool-b");
+    thread_b.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread_a).expect("thread A");
+    runtime.store().create_thread(&thread_b).expect("thread B");
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+
+    let run_a1 = runtime
+        .send(&thread_a, "alpha-one", &[], "mock")
+        .unwrap()
+        .run
+        .unwrap();
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-a")
+            .map(|runs| {
+                runs.iter()
+                    .any(|r| r.id == run_a1.id && r.status != "running")
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    let run_b1 = runtime
+        .send(&thread_b, "beta-one", &[], "mock")
+        .unwrap()
+        .run
+        .unwrap();
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-b")
+            .map(|runs| {
+                runs.iter()
+                    .any(|r| r.id == run_b1.id && r.status != "running")
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    // Resume each thread on its own pooled process without spawning extra PIDs.
+    let run_a2 = runtime
+        .send(&thread_a, "alpha-two", &[], "mock")
+        .unwrap()
+        .run
+        .unwrap();
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-a")
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+
+    let run_b2 = runtime
+        .send(&thread_b, "beta-two", &[], "mock")
+        .unwrap()
+        .run
+        .unwrap();
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-b")
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    for tid in ["th-pool-a", "th-pool-b"] {
+        let runs = runtime.store().list_runs(tid).unwrap();
+        assert_eq!(runs.len(), 2);
+        assert!(runs.iter().all(|r| r.status == "finished"));
+    }
+
+    let pids = read_pid_lines(&spawn_log);
+    assert_eq!(
+        pids.len(),
+        2,
+        "two threads must spawn two independent processes; got {pids:?}"
+    );
+    assert_ne!(pids[0], pids[1]);
+    assert_eq!(runtime.pool.stats().idle, 2);
+
+    let a2_text: String = kinds_of(&runtime, &run_a2.id)
+        .into_iter()
+        .filter_map(|k| match k {
+            EventKind::AgentMessageDelta { delta } => Some(delta),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        a2_text.contains("alpha-two"),
+        "expected a2 output to contain 'alpha-two', got: {a2_text:?}"
+    );
+    assert!(
+        !a2_text.contains("beta-"),
+        "expected a2 output not to contain 'beta-', got: {a2_text:?}"
+    );
+
+    let b2_text: String = kinds_of(&runtime, &run_b2.id)
+        .into_iter()
+        .filter_map(|k| match k {
+            EventKind::AgentMessageDelta { delta } => Some(delta),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        b2_text.contains("beta-two"),
+        "expected b2 output to contain 'beta-two', got: {b2_text:?}"
+    );
+    assert!(
+        !b2_text.contains("alpha-"),
+        "expected b2 output not to contain 'alpha-', got: {b2_text:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn set_instances_invalidates_pooled_entries_for_instance() {
+    let _env = env_lock();
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-pool-setinst-{}", crate::events::now_millis()));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let _home = HomeEnvGuard::redirect(&sandbox);
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    let mut thread = thread_record("th-pool-inval");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    let sent = runtime.send(&thread, "park me", &[], "mock").expect("send");
+    let run = sent.run.expect("run");
+
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-pool-inval")
+            .map(|runs| runs.iter().any(|r| r.id == run.id && r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    assert_eq!(
+        runtime.pool.stats().idle,
+        1,
+        "completed turn must park entry in pool"
+    );
+
+    let mut updated = crate::config::mock_spec();
+    updated.display_name = "Mock updated".to_string();
+    runtime.set_instances(vec![updated]).expect("set_instances");
+
+    assert_eq!(
+        runtime.pool.stats().idle,
+        0,
+        "set_instances must invalidate pooled entries for that instance"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
