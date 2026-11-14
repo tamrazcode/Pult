@@ -10,6 +10,8 @@
 
 **Spec:** The original §-spec is not in the repo; the de-facto spec is `README.md` (user promises) plus the per-milestone `DEVLOG.md` entries (decisions, known gaps) and `CHANGELOG.md`. Audit of 2026-11-14 (Gemini, low) is the source of the task list below.
 
+**Status 2026-11-14:** Tasks 1–3 done (`a4ec67a`, `0fa89f1`, `056baf0`), plus review fixes (`d1c6d47`) and the vitest include fix (`34728e4`). Found on the way: `vitest.config.ts` never ran `*.test.tsx` (3 suites silently skipped). Remaining: Tasks 4–7.
+
 ## Global Constraints
 
 - No `PRAGMA user_version` bump / no new tables: thread-scoped mode/permission state goes through the existing `settings` KV; existing `~/.pult/pult.db` must keep working.
