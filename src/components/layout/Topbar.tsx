@@ -58,7 +58,10 @@ export function Topbar() {
             )}
             {crumb.to ? (
               <button
-                onClick={() => void router.navigate({ to: crumb.to })}
+                onClick={() => {
+                  if (crumb.to === "/chat") useProjectsStore.getState().selectProject(null);
+                  void router.navigate({ to: crumb.to });
+                }}
                 className="text-text-secondary transition hover:text-text-primary"
               >
                 {crumb.label}

@@ -1,4 +1,5 @@
 import { useSettingsStore } from "../stores/settings";
+import { useProjectsStore } from "../stores/projects";
 import { useUiStore } from "../stores/ui";
 
 /** Where a command navigates or what context it needs. */
@@ -28,14 +29,20 @@ export const STATIC_COMMANDS: Command[] = [
     section: "Actions",
     keywords: "create compose start",
     defaultBinding: "Mod+N",
-    run: ({ navigate }) => navigate("/chat"),
+    run: ({ navigate }) => {
+      useProjectsStore.getState().selectProject(null);
+      navigate("/chat");
+    },
   },
   {
     id: "navigate.chat",
     title: "Go to chat",
     section: "Navigate",
     keywords: "home threads",
-    run: ({ navigate }) => navigate("/chat"),
+    run: ({ navigate }) => {
+      useProjectsStore.getState().selectProject(null);
+      navigate("/chat");
+    },
   },
   {
     id: "navigate.usage",

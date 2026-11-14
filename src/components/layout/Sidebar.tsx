@@ -211,7 +211,6 @@ function ProjectRow({
 
 export function Sidebar({ width }: { width: number }) {
   const projects = useProjectsStore((s) => s.projects);
-  const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const threads = useThreadsStore((s) => s.threads);
   const unreadIds = useThreadsStore((s) => s.unreadIds);
   const collapsedProjects = useUiStore((s) => s.collapsedProjects);
@@ -491,9 +490,7 @@ export function Sidebar({ width }: { width: number }) {
         <button
           type="button"
           aria-label="New thread"
-          onClick={() =>
-            newThread(projects.find((project) => project.id === selectedProjectId) ?? null)
-          }
+          onClick={() => newThread(null)}
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
           <SquarePen size={15} />

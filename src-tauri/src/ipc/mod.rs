@@ -356,6 +356,18 @@ pub async fn threads_delete(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
 ) -> Result<(), PultError> {
+    // Stop a live run and let it release the process before touching the
+    // worktree: Windows refuses to remove directories still held open.
+    if let Some(run_id) = runtime.active_run_for(&thread_id) {
+        let _ = runtime.cancel(&run_id);
+        for _ in 0..40 {
+            if runtime.active_run_for(&thread_id).is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    }
+    runtime.pool.invalidate_thread(&thread_id);
     if let Ok(thread) = runtime.store().get_thread(&thread_id) {
         if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
             if let Err(err) = crate::git::worktree_remove(std::path::Path::new(main_repo), name).await
@@ -366,7 +378,6 @@ pub async fn threads_delete(
         }
     }
     runtime.store().delete_thread(&thread_id)?;
-    runtime.pool.invalidate_thread(&thread_id);
     let _ = runtime
         .store()
         .delete_setting(&format!("thread_mode:{thread_id}"));

@@ -371,17 +371,23 @@ export function Composer({ threadId }: { threadId?: string }) {
             .projects.find((candidate) => candidate.id === selectedProjectId);
           const explicitWorkspace = workspace.trim();
           const targetWorkspace = explicitWorkspace || project?.rootPath || undefined;
+          // An explicit folder outside the project is standalone; only the
+          // project's own folder (or no override) keeps the project link.
+          const targetProject =
+            explicitWorkspace && explicitWorkspace !== project?.rootPath ? null : project;
           // An explicit folder is the user's override; otherwise the project's
           // worktree strategy decides.
-          const targetWorktree = explicitWorkspace
-            ? worktree
-            : worktree || project?.worktreeStrategy === "worktree";
+          const targetWorktree =
+            explicitWorkspace && explicitWorkspace !== project?.rootPath
+              ? worktree
+              : worktree || project?.worktreeStrategy === "worktree";
           const thread = await useThreadsStore
             .getState()
-            .createThread(project?.id ?? null, text.slice(0, 40), {
+            .createThread(targetProject?.id ?? null, text.slice(0, 40), {
               workspace: targetWorkspace,
               worktree: targetWorktree,
             });
+          if (!targetProject && project) useProjectsStore.getState().selectProject(null);
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
           // The pending picks now belong to this thread; never to the next one.
