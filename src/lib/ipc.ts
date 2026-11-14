@@ -220,6 +220,14 @@ export function providersPreflight(instanceId: string): Promise<PreflightReport>
   return invokeRequired<PreflightReport>("providers_preflight", { instanceId });
 }
 
+/** Agent-managed sign-in: authenticate + session re-probe. */
+export function providersAuthenticate(
+  instanceId: string,
+  methodId: string,
+): Promise<PreflightReport> {
+  return invokeRequired<PreflightReport>("providers_authenticate", { instanceId, methodId });
+}
+
 /** Rewrites the agent matrix (config.toml) and swaps the live registry. */
 export function providersInstancesSave(instances: InstanceSpec[]): Promise<void> {
   return invokeRequired<void>("providers_instances_save", { instances });

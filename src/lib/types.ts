@@ -107,6 +107,10 @@ export interface InstanceInfo {
   modes: SessionMode[];
   /** Session config options (model, thought level, toggles). */
   configOptions: SessionConfigOption[];
+  /** Auth methods advertised at the last handshake. */
+  authMethods: AuthMethod[];
+  /** Why the agent needs sign-in, when it does. */
+  authHint?: string | null;
 }
 
 /** One configured agent instance (config.toml; M6 agent matrix). */
@@ -119,6 +123,18 @@ export interface InstanceSpec {
   env: Record<string, string>;
   /** Disabled providers stay configured but never spawn (T3-style toggle). */
   enabled: boolean;
+}
+
+/** One advertised ACP auth method (agent-managed or terminal). */
+export interface AuthMethod {
+  type?: string | null;
+  id?: string | null;
+  name?: string | null;
+  description?: string | null;
+  /** Terminal-only: extra argv appended to the configured agent invocation. */
+  args?: string[];
+  /** Terminal-only: env overrides on top of the instance env. */
+  env?: Record<string, string>;
 }
 
 /** A known agent CLI found on PATH (providers.detectInstalled). */
@@ -143,6 +159,8 @@ export interface PreflightReport {
   authHint: string | null;
   /** Session config options seen on the probe session (pickers warm). */
   configOptions: SessionConfigOption[];
+  /** Auth methods advertised at handshake (sign-in actions). */
+  authMethods: AuthMethod[];
 }
 
 /** A message waiting in the backend queue for the active run to finish. */
