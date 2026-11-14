@@ -101,6 +101,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         // Auto-update plumbing (M8): inert until a real endpoint + public key
         // are configured (see README "Updates"); nothing calls the updater at
         // startup, so placeholder config is harmless.

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "./tauri";
 import type {
   AgentProcessPayload,
@@ -142,6 +143,13 @@ export function projectsUpdate(
 
 export function projectsDelete(id: string): Promise<void> {
   return invokeRequired<void>("projects_delete", { id });
+}
+
+/** Native folder picker; null outside Tauri or when the user cancels. */
+export async function pickFolder(title = "Choose folder"): Promise<string | null> {
+  if (!isTauri()) return null;
+  const result = await openDialog({ directory: true, multiple: false, title });
+  return typeof result === "string" ? result : null;
 }
 
 export function threadsGet(threadId: string): Promise<ThreadDetail> {
