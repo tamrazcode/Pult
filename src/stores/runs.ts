@@ -611,7 +611,12 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         }
         appliedEvents[run.id] = applied;
         if (run.status !== "running" && run.status !== "queued") {
-          view = { ...view, streaming: false, pendingApproval: undefined };
+          view = {
+            ...view,
+            items: closeStreamingText(view.items),
+            streaming: false,
+            pendingApproval: undefined,
+          };
           if (!view.stopReason && run.stopReason) view = { ...view, stopReason: run.stopReason };
           if (!view.error && run.error) view = { ...view, error: run.error };
         }

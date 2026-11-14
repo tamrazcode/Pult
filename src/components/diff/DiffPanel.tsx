@@ -16,13 +16,17 @@ import { useThreadsStore } from "../../stores/threads";
 import type { DiffFile } from "../../lib/types";
 import { SplitLines, UnifiedLines } from "./DiffLines";
 
-/** Latest "Suggested commit message: …" line, cached on the run at finish. */
+/** Latest suggested-commit line, cached per run at finish; scans runs only. */
 function useSuggestedCommitMessage(threadId: string | null): string | null {
-  const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
-  const lastRunId = runs?.[runs.length - 1]?.id;
-  return useRunsStore((s) =>
-    lastRunId ? (s.viewsByRun[lastRunId]?.suggestedCommit ?? null) : null,
-  );
+  return useRunsStore((s) => {
+    if (!threadId) return null;
+    const runs = s.runsByThread[threadId] ?? [];
+    for (let i = runs.length - 1; i >= 0; i -= 1) {
+      const value = s.viewsByRun[runs[i].id]?.suggestedCommit;
+      if (value) return value;
+    }
+    return null;
+  });
 }
 
 function Diffstat({ added, removed }: { added: number; removed: number }) {

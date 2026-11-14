@@ -41,8 +41,25 @@ const SHIKI_LANGS = [
   "go",
   "c",
   "cpp",
+  "csharp",
   "java",
 ] as const;
+
+const LANGUAGE_ALIASES: Record<string, string> = {
+  typescript: "ts",
+  javascript: "js",
+  py: "python",
+  rs: "rust",
+  sh: "bash",
+  shell: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  markdown: "md",
+  "c++": "cpp",
+  "c#": "csharp",
+  golang: "go",
+  jsonc: "json",
+};
 
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
 const REHYPE_PLUGINS = [rehypeKatex];
@@ -65,6 +82,10 @@ function getHighlighter(): Promise<Highlighter> {
     themes: [SHIKI_THEME],
     langs: [],
     engine: createJavaScriptRegexEngine({ forgiving: true }),
+  }).catch((err) => {
+    // A transient load failure must not poison highlighting for the session.
+    highlighterPromise = undefined;
+    throw err;
   });
   return highlighterPromise;
 }
@@ -75,16 +96,27 @@ function ensureLanguage(highlighter: Highlighter, lang: string): Promise<void> {
   if (!load) {
     load = highlighter
       .loadLanguage(lang as Parameters<Highlighter["loadLanguage"]>[0])
-      .then(() => undefined);
+      .then(() => undefined)
+      .catch((err) => {
+        languageLoads.delete(lang);
+        throw err;
+      });
     languageLoads.set(lang, load);
   }
   return load;
 }
 
-/** True while a fenced block has no closing fence yet. */
+/** True while the text ends inside a fenced block (``` or ~~~, 0-3 spaces). */
 function hasOpenFence(text: string): boolean {
-  const fences = text.match(/^```/gm);
-  return ((fences?.length ?? 0) & 1) === 1;
+  let open: string | null = null;
+  for (const line of text.split("\n")) {
+    const match = /^\s{0,3}(`{3,}|~{3,})/.exec(line);
+    if (!match) continue;
+    const fence = match[1];
+    if (!open) open = fence;
+    else if (fence[0] === open[0] && fence.length >= open.length) open = null;
+  }
+  return open !== null;
 }
 
 const PlainCodeContext = createContext(false);
@@ -144,7 +176,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
   const [html, setHtml] = useState<string | null>(null);
   const lastHighlightAt = useRef(0);
   const plainOnly = useContext(PlainCodeContext);
-  const label = (lang ?? "").toLowerCase();
+  const label = LANGUAGE_ALIASES[(lang ?? "").toLowerCase()] ?? (lang ?? "").toLowerCase();
   const canHighlight = label !== "" && HIGHLIGHT_LANGS.has(label);
 
   // While a fence is still open (or text is settling) keep the plain fallback:
@@ -184,7 +216,9 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
     </div>
   );
 
-  if (html === null || plainOnly) {
+  // Keep an already-highlighted block intact when a later fence opens: only
+  // blocks with no HTML yet stay on the plain fallback.
+  if (html === null) {
     return (
       <div className="md-code">
         {header}

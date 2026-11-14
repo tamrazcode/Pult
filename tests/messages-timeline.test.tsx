@@ -201,4 +201,76 @@ describe("MessagesTimeline", () => {
 
     expect(scrollIntoView).not.toHaveBeenCalledWith(expect.objectContaining({ block: "end" }));
   });
+
+  it("skips queued rAF auto-scroll if the user scrolls away before the frame flushes", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    let nextFrameId = 1;
+    const rafCallbacks = new Map<number, FrameRequestCallback>();
+    const rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      const id = nextFrameId++;
+      rafCallbacks.set(id, cb);
+      return id;
+    });
+    const cafSpy = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      rafCallbacks.delete(id);
+    });
+
+    const flushRaf = () => {
+      act(() => {
+        for (const [id, cb] of [...rafCallbacks.entries()]) {
+          rafCallbacks.delete(id);
+          cb(performance.now());
+        }
+      });
+    };
+
+    try {
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "running", 0)] },
+        viewsByRun: {
+          r1: {
+            items: [
+              { type: "user", text: "prompt", images: [] },
+              { type: "assistant", text: "initial chunk", streaming: true },
+            ],
+            streaming: true,
+          },
+        },
+      });
+
+      const { container } = render(<MessagesTimeline threadId="th" />);
+      const scrollContainer = container.querySelector("div.flex-1.overflow-y-auto") as HTMLElement;
+      expect(scrollContainer).not.toBeNull();
+
+      // Flush initial render's auto-scroll frame, then clear recorded calls.
+      flushRaf();
+      scrollIntoView.mockClear();
+
+      Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+      Object.defineProperty(scrollContainer, "clientHeight", { value: 400, configurable: true });
+      Object.defineProperty(scrollContainer, "scrollTop", {
+        value: 100,
+        writable: true,
+        configurable: true,
+      });
+
+      // Append a delta while still pinned to bottom: this queues a scroll rAF.
+      act(() => {
+        useRunsStore.getState().receiveRunEvent("r1", deltaEvent("r1", 0, " next chunk"));
+      });
+      expect(rafCallbacks.size).toBeGreaterThan(0);
+
+      // User scrolls far from bottom before the queued rAF runs.
+      fireEvent.scroll(scrollContainer);
+
+      // Flush the pending rAF; scrollIntoView({ block: "end" }) must not run.
+      flushRaf();
+      expect(scrollIntoView).not.toHaveBeenCalledWith(expect.objectContaining({ block: "end" }));
+    } finally {
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    }
+  });
 });

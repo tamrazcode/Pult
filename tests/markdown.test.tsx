@@ -72,4 +72,56 @@ describe("Markdown", () => {
     expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
     expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const x = 1\nconst y = 2");
   });
+
+  it("treats indented backtick and tilde fences as open while streaming and highlights once closed", async () => {
+    const { rerender } = render(<Markdown text={"  ```ts\nconst x=1"} streaming />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(mockCodeToHtml).not.toHaveBeenCalled();
+
+    rerender(<Markdown text={"~~~ts\nconst x=1"} streaming />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(mockCodeToHtml).not.toHaveBeenCalled();
+
+    rerender(<Markdown text={"~~~ts\nconst x=1\n~~~"} streaming={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
+    expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const x=1");
+  });
+
+  it("clears the cached highlighter promise after a transient rejection so later blocks highlight", async () => {
+    vi.resetModules();
+    const { Markdown: FreshMarkdown } = await import("../src/components/chat/Markdown");
+
+    mockCreateHighlighter
+      .mockRejectedValueOnce(new Error("transient shiki failure"))
+      .mockResolvedValueOnce({
+        codeToHtml: mockCodeToHtml,
+        loadLanguage: mockLoadLanguage,
+      });
+
+    const { rerender } = render(
+      <FreshMarkdown text={"```ts\nconst a = 1\n```"} streaming={false} />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(mockCreateHighlighter).toHaveBeenCalledTimes(1);
+    expect(mockCodeToHtml).not.toHaveBeenCalled();
+
+    rerender(<FreshMarkdown text={"```ts\nconst b = 2\n```"} streaming={false} />);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(mockCreateHighlighter).toHaveBeenCalledTimes(2);
+    expect(mockLoadLanguage).toHaveBeenCalledWith("ts");
+    expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
+    expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const b = 2");
+  });
 });

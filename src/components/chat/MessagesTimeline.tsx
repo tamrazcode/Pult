@@ -113,10 +113,26 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   useEffect(() => {
     if (!isAtBottomRef.current) return;
     const frame = requestAnimationFrame(() => {
-      bottomRef.current?.scrollIntoView({ block: "end" });
+      // The reader may have scrolled up while the frame was pending.
+      if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
     });
     return () => cancelAnimationFrame(frame);
   }, [view]);
+
+  // Markdown's trailing throttle can grow the DOM between events; keep the
+  // view pinned when the reader has not scrolled away.
+  useEffect(() => {
+    const content = scrollRef.current?.firstElementChild;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (!isAtBottomRef.current) return;
+      requestAnimationFrame(() => {
+        if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
+      });
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [threadId]);
 
   if (!threadId || !view) return <EmptyState />;
 
@@ -180,7 +196,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         onScroll={trackActiveTick}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-32">
           {hiddenCount > 0 && (
             <button
               onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}

@@ -453,4 +453,74 @@ describe("runs store", () => {
     expect(useRunsStore.getState().runsByThread["th"][0]).toEqual(expectedRun);
     expect(useRunsStore.getState().runsByThread["th"][0].status).toBe("finished");
   });
+
+  it("closes streaming assistant items when hydrating a terminal run without run_finished", () => {
+    useRunsStore.getState().hydrateThread(
+      "th",
+      [{ ...run("r1", "th", "failed", 0), stopReason: "failed" }],
+      [
+        {
+          id: "r1-0",
+          runId: "r1",
+          seq: 0,
+          ts: 0,
+          kind: "agent_message_delta",
+          payload: { delta: "partial output" },
+        },
+      ],
+      [],
+      null,
+    );
+    const view = useRunsStore.getState().viewsByRun["r1"];
+    expect(view.streaming).toBe(false);
+    expect(view.items).toHaveLength(1);
+    const item = view.items[0];
+    expect(item.type).toBe("assistant");
+    if (item.type === "assistant") {
+      expect(item.streaming).toBe(false);
+    }
+  });
+
+  it("computes suggestedCommit independently per finished run", () => {
+    const store = useRunsStore.getState();
+    store.registerRun(run("r1", "th", "running", 0));
+    store.receiveRunEvent("r1", {
+      id: "r1-0",
+      runId: "r1",
+      seq: 0,
+      ts: 1,
+      kind: "agent_message_delta",
+      payload: { delta: "Done.\nSuggested commit message: fix: one" },
+    });
+    store.receiveRunEvent("r1", {
+      id: "r1-1",
+      runId: "r1",
+      seq: 1,
+      ts: 2,
+      kind: "run_finished",
+      payload: { stopReason: "end_turn" },
+    });
+
+    store.registerRun(run("r2", "th", "running", 1));
+    store.receiveRunEvent("r2", {
+      id: "r2-0",
+      runId: "r2",
+      seq: 0,
+      ts: 3,
+      kind: "agent_message_delta",
+      payload: { delta: "Follow-up without a commit suggestion." },
+    });
+    store.receiveRunEvent("r2", {
+      id: "r2-1",
+      runId: "r2",
+      seq: 1,
+      ts: 4,
+      kind: "run_finished",
+      payload: { stopReason: "end_turn" },
+    });
+
+    const views = useRunsStore.getState().viewsByRun;
+    expect(views["r1"].suggestedCommit).toBe("fix: one");
+    expect(views["r2"].suggestedCommit).toBeUndefined();
+  });
 });
