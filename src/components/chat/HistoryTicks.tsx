@@ -21,14 +21,24 @@ export function HistoryTicks({
 }) {
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   if (ticks.length === 0) return null;
+  const preview = ticks.find((tick) => tick.key === previewKey);
   return (
-    <div className="pointer-events-none absolute top-1/2 right-1.5 z-10 flex max-h-[70vh] -translate-y-1/2 flex-col items-end gap-1.5 overflow-y-auto py-2">
-      {ticks.map((tick) => (
-        <div key={tick.key} className="pointer-events-auto relative flex items-center">
+    <nav
+      aria-label="Message history"
+      className="pointer-events-none absolute top-1/2 right-4 z-10 -translate-y-1/2"
+    >
+      {preview && (
+        <span className="pointer-events-none absolute top-1/2 right-5 max-w-[40ch] -translate-y-1/2 truncate rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1 text-xs text-text-secondary shadow">
+          {preview.label}
+        </span>
+      )}
+      <div className="pointer-events-auto flex max-h-[70vh] flex-col items-end gap-1.5 overflow-y-auto py-2">
+        {ticks.map((tick) => (
           <button
+            key={tick.key}
             type="button"
             aria-label={tick.label}
-            title={tick.label}
+            aria-current={activeKey === tick.key ? "location" : undefined}
             onClick={() => onJump(tick)}
             onMouseEnter={() => setPreviewKey(tick.key)}
             onMouseLeave={() => setPreviewKey((key) => (key === tick.key ? null : key))}
@@ -40,13 +50,8 @@ export function HistoryTicks({
                 : "w-2.5 bg-text-tertiary/60 hover:w-4 hover:bg-accent"
             }`}
           />
-          {previewKey === tick.key && (
-            <span className="absolute right-5 max-w-[40ch] truncate rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1 text-xs text-text-secondary shadow">
-              {tick.label}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </nav>
   );
 }

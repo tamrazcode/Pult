@@ -131,7 +131,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (entry.item.type === "user") {
       historyTicks.push({
         key: entry.key,
-        label: entry.item.text.trim().slice(0, 80),
+        label: entry.item.text.trim().slice(0, 80) || "Image prompt",
         globalIndex,
       });
     }
@@ -155,7 +155,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (!container) return;
     const top = container.getBoundingClientRect().top;
     let current: string | null = null;
-    for (const row of container.querySelectorAll<HTMLElement>("[data-history-key]")) {
+    for (const row of container.querySelectorAll<HTMLElement>("[data-history-user]")) {
       if (row.getBoundingClientRect().bottom > top) {
         current = row.dataset.historyKey ?? null;
         break;
@@ -181,7 +181,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             </button>
           )}
           {windowedEntries.map(({ key, item, showCaret }) => (
-            <div key={key} data-history-key={key}>
+            <div
+              key={key}
+              data-history-key={key}
+              data-history-user={item.type === "user" ? key : undefined}
+            >
               <ChatItemRow item={item} showCaret={showCaret} />
             </div>
           ))}

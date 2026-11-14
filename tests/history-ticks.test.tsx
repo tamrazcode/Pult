@@ -272,4 +272,102 @@ describe("MessagesTimeline HistoryTicks integration", () => {
       expect.objectContaining({ block: "start", behavior: "smooth" }),
     );
   });
+
+  it("tracks active tick across scroll using only user rows and sets aria-current='location'", () => {
+    useRunsStore.setState({
+      runsByThread: {
+        th: [makeRun("r1", "finished", 0), makeRun("r2", "finished", 1)],
+      },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "First prompt", images: [] },
+            { type: "assistant", text: "First reply", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+        r2: {
+          items: [
+            { type: "user", text: "Second prompt", images: [] },
+            { type: "assistant", text: "Second reply", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    const scrollContainer = Array.from(container.querySelectorAll<HTMLElement>("div")).find(
+      (el) => el.classList.contains("overflow-y-auto") && el.querySelector("[data-history-key]"),
+    );
+    expect(scrollContainer).toBeDefined();
+
+    const makeRect = (top: number, bottom: number): DOMRect =>
+      ({
+        top,
+        bottom,
+        left: 0,
+        right: 0,
+        width: 0,
+        height: bottom - top,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    let topmostKey = "r1:i-1";
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: Element,
+    ) {
+      if (this === scrollContainer) {
+        return makeRect(100, 500);
+      }
+      if (this.getAttribute("data-history-key") === topmostKey) {
+        return makeRect(120, 150);
+      }
+      return makeRect(50, 90);
+    });
+
+    fireEvent.scroll(scrollContainer!);
+    for (const button of screen.getAllByRole("button")) {
+      expect(button).not.toHaveAttribute("aria-current");
+    }
+
+    topmostKey = "r1:i-0";
+    fireEvent.scroll(scrollContainer!);
+
+    expect(screen.getByRole("button", { name: "First prompt" })).toHaveAttribute(
+      "aria-current",
+      "location",
+    );
+    expect(screen.getByRole("button", { name: "Second prompt" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  });
+
+  it("gives an image-only user message a non-empty accessible tick name", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [makeRun("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "user",
+              text: "",
+              images: [{ data: "AAAA", mimeType: "image/png" }],
+            },
+            { type: "assistant", text: "Described image", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    expect(screen.getByRole("button", { name: "Image prompt" })).toBeInTheDocument();
+  });
 });
