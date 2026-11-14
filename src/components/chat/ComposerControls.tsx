@@ -11,6 +11,22 @@ import { useUiStore } from "../../stores/ui";
 
 const MODES: PermissionMode[] = ["supervised", "auto_edit", "auto", "full_access"];
 
+/**
+ * The picker shows the remembered pick for the next run; a live run's own
+ * mode only matters until the user chooses again or the run ends.
+ */
+export function pickerModeId(
+  activeRun: { status: string } | undefined,
+  liveModeId: string | undefined,
+  desiredModeId: string | undefined,
+): string | undefined {
+  const live =
+    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
+      ? liveModeId
+      : undefined;
+  return desiredModeId ?? live;
+}
+
 const STATUS_DOT_CLASSES: Record<InstanceInfo["status"], string> = {
   stopped: "bg-text-tertiary",
   starting: "bg-text-tertiary",
@@ -133,7 +149,10 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
   useEffect(() => {
     if (!open) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -146,8 +165,11 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
     threadId ? s.desiredModeByThread[threadId] : s.desiredModeByThread[""],
   );
   const activeRun = activeRunForThread(runs);
-  const liveModeId = activeRun ? views[activeRun.id]?.modeId : undefined;
-  const currentModeId = liveModeId ?? desiredModeId;
+  const liveModeId =
+    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
+      ? views[activeRun.id]?.modeId
+      : undefined;
+  const currentModeId = pickerModeId(activeRun, liveModeId, desiredModeId);
   if (modes.length === 0) return null;
 
   const current: SessionMode | undefined = modes.find((m) => m.id === currentModeId) ?? modes[0];
@@ -175,7 +197,7 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
       </button>
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
           <div className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
             <p className="px-3 py-1.5 text-xs text-text-tertiary">Agent session modes</p>
             {modes.map((mode) => (

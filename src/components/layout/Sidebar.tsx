@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, FolderOpen, GitPullRequest, Plus, Search } from "lucide-react";
+import { FolderOpen, GitPullRequest, Plus, Search } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
@@ -186,7 +186,6 @@ export function Sidebar({ width }: { width: number }) {
         >
           <FolderOpen size={15} className="text-text-tertiary" />
           <span>New thread with workspace…</span>
-          <ChevronDown size={12} className="ml-auto text-text-tertiary" />
         </button>
       </footer>
     </aside>

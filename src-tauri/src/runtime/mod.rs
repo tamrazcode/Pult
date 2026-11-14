@@ -555,11 +555,24 @@ impl AgentRuntime {
             stop_reason: None,
             error: None,
         };
-        self.store.create_run(&run)?;
+        // Register before the DB write so a threads_get landing in between
+        // sees the run as live instead of a zombie.
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .threads_working
+            .insert(thread.id.clone(), run.id.clone());
+        if let Err(err) = self.store.create_run(&run) {
+            self.inner
+                .lock()
+                .expect("runtime lock poisoned")
+                .threads_working
+                .remove(&thread.id);
+            return Err(err);
+        }
         // Covers backend-created runs too (queue auto-dispatch): the UI
         // registers the record so the timeline can select it.
         self.emit("run:started", &RunStartedPayload { run: run.clone() });
-
         let user_event = Event::new(
             run.id.clone(),
             self.store.next_seq(&run.id)?,
@@ -1194,14 +1207,18 @@ impl AgentRuntime {
     ) -> Result<(), crate::PultError> {
         let finished = Event::new(
             run_id.to_string(),
-            self.store.next_seq(run_id)?,
+            // A deleted thread/run must still release the runtime state below.
+            self.store.next_seq(run_id).unwrap_or(0),
             EventKind::RunFinished {
                 stop_reason: stop_reason.to_string(),
                 error: failure.clone(),
             },
         );
-        self.store.append_event(&finished)?;
-        self.emit_run_event(run_id, &finished);
+        match self.store.append_event(&finished) {
+            Ok(()) => self.emit_run_event(run_id, &finished),
+            Err(err) => tracing::warn!(target: "pult::runtime",
+                error = %err, "run_finished not persisted (thread removed?)"),
+        }
         let _ = self.store.finish_run(
             run_id,
             now_millis(),

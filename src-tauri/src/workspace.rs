@@ -2,12 +2,13 @@
 //! the workspace root and always joined from directory-entry names, never
 //! from user input, so a result can't escape the root.
 
+use std::collections::VecDeque;
 use std::path::Path;
 
 use crate::PultError;
 
 /// Directories that never belong in a mention list (VCS, build output, pult).
-const IGNORED_DIRS: [&str; 7] = [
+const IGNORED_DIRS: [&str; 11] = [
     ".git",
     "node_modules",
     "target",
@@ -15,6 +16,10 @@ const IGNORED_DIRS: [&str; 7] = [
     "test-results",
     ".pult",
     ".vite",
+    "coverage",
+    "build",
+    ".next",
+    "vendor",
 ];
 
 /// Upper bound on directory entries visited per query.
@@ -38,10 +43,12 @@ pub fn list_workspace_files(
     let needle = query.trim().to_lowercase();
     let limit = limit.clamp(1, MAX_RESULTS);
     let mut out: Vec<String> = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
+    // Breadth-first: the top levels (src/, docs/) must not lose the visit
+    // budget to one deep subtree on a big repo.
+    let mut queue = VecDeque::from([root.to_path_buf()]);
     let mut visited = 0usize;
 
-    'walk: while let Some(dir) = stack.pop() {
+    'walk: while let Some(dir) = queue.pop_front() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
@@ -61,7 +68,7 @@ pub fn list_workspace_files(
                 if IGNORED_DIRS.contains(&name.to_string_lossy().as_ref()) {
                     continue;
                 }
-                stack.push(entry.path());
+                queue.push_back(entry.path());
                 continue;
             }
             if !file_type.is_file() {

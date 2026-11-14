@@ -225,11 +225,15 @@ export function diagnosticsFrames(instanceId: string): Promise<string[]> {
 
 /** Opens an http(s) link in the system browser (external, never a shell). */
 export function openExternalUrl(url: string): Promise<void> {
+  const target = url.trim();
+  if (!/^https?:\/\//i.test(target)) {
+    return Promise.reject(new Error("only http(s) links can be opened"));
+  }
   if (!isTauri()) {
-    window.open(url, "_blank", "noopener,noreferrer");
+    window.open(target, "_blank", "noopener,noreferrer");
     return Promise.resolve();
   }
-  return invokeRequired<void>("open_external_url", { url });
+  return invokeRequired<void>("open_external_url", { url: target });
 }
 
 // ---- settings (§4.5) ----

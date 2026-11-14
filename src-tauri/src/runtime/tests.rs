@@ -652,3 +652,27 @@ async fn set_mode_before_run_persists_and_applies_on_next_mock_run() {
         "the agent's echo of the applied mode must be recorded; got {kinds:?}"
     );
 }
+
+/// Deleting a thread mid-run must not strand the runtime's in-memory state:
+/// the DB rows are gone, so finalize must clean up regardless.
+#[tokio::test]
+async fn deleting_a_thread_mid_run_releases_runtime_state() {
+    let (runtime, sink) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-m9-delete");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-delete");
+        runtime.store().create_thread(&thread).expect("create thread");
+        runtime.dispatch(&thread, "slow", &[], "mock").expect("dispatch");
+        runtime.store().delete_thread("th-delete").expect("delete thread");
+        (runtime, sink)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+
+    wait_for(Duration::from_secs(8), || runtime.active_run_for("th-delete").is_none()).await;
+    pump.abort();
+}

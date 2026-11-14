@@ -455,7 +455,22 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       delete queueByThread[threadId];
       const desiredModeByThread = { ...s.desiredModeByThread };
       delete desiredModeByThread[threadId];
-      return { runsByThread, viewsByRun, appliedEvents, queueByThread, desiredModeByThread };
+      const commandsByThread = { ...s.commandsByThread };
+      delete commandsByThread[threadId];
+      const filesByThread = { ...s.filesByThread };
+      delete filesByThread[threadId];
+      const activeElicitation =
+        s.activeElicitation && runIds.has(s.activeElicitation.runId) ? null : s.activeElicitation;
+      return {
+        runsByThread,
+        viewsByRun,
+        appliedEvents,
+        queueByThread,
+        desiredModeByThread,
+        commandsByThread,
+        filesByThread,
+        activeElicitation,
+      };
     }),
 
   registerRun: (run) =>
@@ -574,6 +589,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         return s;
       }
       const view = s.viewsByRun[runId] ?? emptyRunView(true);
+      if (s.appliedEvents[runId]?.has(event.id)) return s;
       const next = applyRunEvent(view, event);
       // Keep the run record's status live: run_finished arrives as an event
       // before any threads_get refresh, and the composer reads record status.

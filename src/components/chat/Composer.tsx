@@ -32,6 +32,15 @@ export function formatSlashInsertion(command: CommandInfo): string {
   return `/${command.name} `;
 }
 
+/**
+ * Which mode travels with a send: a thread's own pick. The `/chat` slot is
+ * only for a thread that is being created right now — never borrowed by an
+ * existing thread.
+ */
+export function modeForSend(desired: Record<string, string>, threadId?: string): string | null {
+  return (threadId ? desired[threadId] : desired[""]) || null;
+}
+
 /** Esc cancels the run only when nothing above (overlay, decision) owns the key. */
 export function shouldCancelOnEscape(ctx: { runActive: boolean; overlayOpen: boolean }): boolean {
   return ctx.runActive && !ctx.overlayOpen;
@@ -155,14 +164,12 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, []);
 
   const dispatchRun = useCallback(
-    async (targetThreadId: string, text: string, images: ImageInput[]) => {
+    async (targetThreadId: string, text: string, images: ImageInput[], mode: string | null) => {
       if (!selectedInstanceId) {
-        throw new Error("No agent instance selected — pick one in the header");
+        throw new Error("No agent instance selected - pick one in the header");
       }
-      // A mode picked on /chat or between turns travels with the send; the
-      // backend persists it and applies it to this run's session.
-      const desired = useRunsStore.getState().desiredModeByThread;
-      const mode = desired[targetThreadId] ?? desired[""] ?? null;
+      // The mode picked for this send is persisted by the backend and applied
+      // to the run's session.
       const outcome = await runsDispatch(targetThreadId, text, selectedInstanceId, images, mode);
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
@@ -243,17 +250,22 @@ export function Composer({ threadId }: { threadId?: string }) {
         if (!threadId) {
           // First send from the empty /chat route: create the thread with the
           // new-thread options (workspace / worktree), then navigate into it.
+          const desired = useRunsStore.getState().desiredModeByThread;
+          const pendingMode = modeForSend(desired);
           const { workspace, worktree } = useUiStore.getState().newThreadOptions;
           const thread = await useThreadsStore.getState().createThread(null, text.slice(0, 40), {
             workspace: workspace.trim() || undefined,
             worktree,
           });
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
-          await dispatchRun(thread.id, text, images);
+          await dispatchRun(thread.id, text, images, pendingMode);
+          // The pending pick now belongs to this thread; never to the next one.
+          if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
         } else {
           // Queue-aware: the backend queues while a run is active and
           // auto-dispatches when it finishes.
-          await dispatchRun(threadId, text, images);
+          const desired = useRunsStore.getState().desiredModeByThread;
+          await dispatchRun(threadId, text, images, modeForSend(desired, threadId));
         }
         resetDraft();
       } catch (err) {
@@ -281,14 +293,27 @@ export function Composer({ threadId }: { threadId?: string }) {
           target.closest('[role="dialog"], [role="listbox"]') !== null) ||
         document.querySelector("[data-escape-layer]") !== null;
       const overlayOpen =
-        paletteOpen || activeElicitation !== null || awaitingDecision || inOverlay;
+        paletteOpen ||
+        activeElicitation !== null ||
+        awaitingDecision ||
+        slashOpen ||
+        mentionOpen ||
+        inOverlay;
       if (!shouldCancelOnEscape({ runActive, overlayOpen })) return;
       e.preventDefault();
       handleStop();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [runActive, paletteOpen, activeElicitation, awaitingDecision, handleStop]);
+  }, [
+    runActive,
+    paletteOpen,
+    activeElicitation,
+    awaitingDecision,
+    slashOpen,
+    mentionOpen,
+    handleStop,
+  ]);
 
   // Keyboard answers while a decision is pending (§6.1): A allow once,
   // S allow always, D decline. The textarea is read-only while pending,

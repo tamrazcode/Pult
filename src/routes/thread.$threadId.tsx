@@ -27,5 +27,11 @@ function ThreadRoute() {
     };
   }, [threadId]);
 
-  return <ChatColumn threadId={threadId} title={title ?? `Thread ${threadId.slice(0, 8)}`} />;
+  return (
+    <ChatColumn
+      key={threadId}
+      threadId={threadId}
+      title={title ?? `Thread ${threadId.slice(0, 8)}`}
+    />
+  );
 }

@@ -31,8 +31,10 @@ import {
   Composer,
   extractMentionQuery,
   formatSlashInsertion,
+  modeForSend,
   shouldCancelOnEscape,
 } from "../src/components/chat/Composer";
+import { pickerModeId } from "../src/components/chat/ComposerControls";
 import { useRunsStore } from "../src/stores/runs";
 import { useUiStore } from "../src/stores/ui";
 
@@ -139,6 +141,19 @@ describe("composer", () => {
     expect(await screen.findByText("src/main.ts")).toBeTruthy();
     fireEvent.keyDown(textarea, { key: "Enter" });
     expect(textarea.value).toBe("look @src/main.ts ");
+  });
+
+  it("keeps the /chat mode out of existing threads", () => {
+    const desired = { "": "architect", th2: "code" };
+    expect(modeForSend(desired, "th2")).toBe("code");
+    expect(modeForSend(desired, "th3")).toBeNull();
+    expect(modeForSend(desired)).toBe("architect");
+  });
+
+  it("prefers the remembered mode over a finished run's mode", () => {
+    expect(pickerModeId({ status: "finished" }, "code", "architect")).toBe("architect");
+    expect(pickerModeId({ status: "running" }, "code", undefined)).toBe("code");
+    expect(pickerModeId({ status: "running" }, "code", "architect")).toBe("architect");
   });
 
   it("keeps Esc priority rules explicit", () => {

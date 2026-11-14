@@ -102,6 +102,28 @@ describe("thread actions", () => {
     expect(useRunsStore.getState().runsByThread["th"]).toBeUndefined();
   });
 
+  it("closes its action menu on Escape without leaving the thread", async () => {
+    render(<ChatHeader title="Old title" threadId="th" />);
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(document.querySelector("[data-escape-layer]")).not.toBeNull();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("menuitem", { name: /Delete thread/ })).toBeNull(),
+    );
+    expect(threadsDelete).not.toHaveBeenCalled();
+  });
+
+  it("stays on the thread when deletion fails", async () => {
+    threadsDelete.mockRejectedValueOnce(new Error("nope"));
+    render(<ChatHeader title="Old title" threadId="th" />);
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Delete thread/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th"));
+    expect(navigate).not.toHaveBeenCalled();
+    expect(useThreadsStore.getState().threads).toHaveLength(1);
+  });
+
   it("does not offer the working shelf as a drag target", () => {
     expect(shelfDropTarget("working")).toBeNull();
     expect(shelfDropTarget("snoozed")).toEqual({ status: "snoozed", pinned: false });

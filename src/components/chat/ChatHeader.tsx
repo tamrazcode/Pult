@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { CheckCheck, GitBranch, Moon, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 import { runsCancel } from "../../lib/ipc";
@@ -30,6 +30,24 @@ export function ChatHeader({
   const heading = thread?.title ?? title;
   const worktreeName = thread?.worktreeName;
 
+  // Esc closes this header's own layer without reaching the composer's
+  // run-cancel handler.
+  useEffect(() => {
+    if (!menuOpen && !confirmDelete && !editing) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setMenuOpen(false);
+      setConfirmDelete(false);
+      if (editing) {
+        setDraft(heading);
+        setEditing(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [menuOpen, confirmDelete, editing, heading]);
+
   const commitRename = () => {
     setEditing(false);
     if (!threadId) return;
@@ -58,11 +76,11 @@ export function ChatHeader({
     void useThreadsStore
       .getState()
       .deleteThread(threadId)
-      .catch((err) => console.error("threads_delete failed", err))
-      .finally(() => {
+      .then(() => {
         useRunsStore.getState().dropThreadState(threadId);
         void router.navigate({ to: "/chat" });
-      });
+      })
+      .catch((err) => console.error("threads_delete failed", err));
   };
 
   return (
@@ -77,6 +95,7 @@ export function ChatHeader({
           onKeyDown={(e) => {
             if (e.key === "Enter") commitRename();
             if (e.key === "Escape") {
+              e.preventDefault();
               setDraft(heading);
               setEditing(false);
             }
@@ -136,6 +155,7 @@ export function ChatHeader({
           {menuOpen && (
             <div
               role="menu"
+              data-escape-layer
               className="absolute right-4 top-11 z-30 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
             >
               <button
@@ -183,6 +203,7 @@ export function ChatHeader({
         <div
           role="dialog"
           aria-label="Confirm thread deletion"
+          data-escape-layer
           className="absolute right-4 top-11 z-40 w-72 rounded-(--radius-md) border border-danger/40 bg-surface-raised p-3 shadow-(--shadow-composer)"
         >
           <p className="text-sm text-text-primary">Delete this thread?</p>

@@ -76,6 +76,20 @@ describe("runs store", () => {
     expect(useRunsStore.getState().viewsByRun["r1"].items).toHaveLength(1);
   });
 
+  it("does not replay an event that arrives again after hydration", () => {
+    const event: AppEvent = {
+      id: "r1-9",
+      runId: "r1",
+      seq: 9,
+      ts: 0,
+      kind: "agent_message_delta",
+      payload: { delta: "once" },
+    };
+    useRunsStore.getState().hydrateThread("th", [run("r1", "th", "running")], [event], [], "r1");
+    useRunsStore.getState().receiveRunEvent("r1", event);
+    expect(useRunsStore.getState().viewsByRun["r1"].items).toHaveLength(1);
+  });
+
   it("stores the backend queue per thread and replaces it on queue:update", () => {
     useRunsStore.getState().setQueue("th", [
       {

@@ -522,8 +522,10 @@ pub fn validate_external_url(url: &str) -> Result<(), PultError> {
     if trimmed.len() > 2048 {
         return Err(PultError::internal("URL is too long"));
     }
-    if trimmed.chars().any(char::is_control) {
-        return Err(PultError::internal("URL contains control characters"));
+    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'') {
+        return Err(PultError::internal(
+            "URL contains whitespace, quotes or control characters",
+        ));
     }
     let lower = trimmed.to_ascii_lowercase();
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
@@ -575,5 +577,7 @@ mod external_url_tests {
         assert!(validate_external_url("javascript:alert(1)").is_err());
         assert!(validate_external_url("").is_err());
         assert!(validate_external_url("https://example.com/\nnext").is_err());
+        assert!(validate_external_url("https://example.com/a b").is_err());
+        assert!(validate_external_url("https://example.com/\"q\"").is_err());
     }
 }
