@@ -137,6 +137,17 @@ export interface AuthMethod {
   env?: Record<string, string>;
 }
 
+/** Targeted capability refresh for one instance ("agent:caps"). */
+export interface AgentCapsPayload {
+  instanceId: string;
+  promptImage: boolean;
+  loadSession: boolean;
+  modes: SessionMode[];
+  configOptions: SessionConfigOption[];
+  authMethods: AuthMethod[];
+  authHint: string | null;
+}
+
 /** A known agent CLI found on PATH (providers.detectInstalled). */
 export interface DetectedAgent {
   id: string;

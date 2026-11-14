@@ -17,8 +17,8 @@ use crate::drivers::acp::{
     elicitation_reply, fs_error, permission_reply, AcpConn, ClientReply, ClientRequest, SpawnConfig,
 };
 use crate::events::{
-    now_millis, Event, EventKind, PermissionOption as AppPermissionOption, RunEventsPayload,
-    RunTiming,
+    now_millis, AgentCapsPayload, Event, EventKind, PermissionOption as AppPermissionOption,
+    RunEventsPayload, RunTiming,
 };
 use crate::runtime::permissions::PermissionMode;
 use crate::runtime::terminals::TerminalRegistry;
@@ -101,7 +101,7 @@ pub struct InstanceInfo {
 
 /// Capabilities observed during a run's handshake, cached per instance so the
 /// UI can gate composer features before the first dispatch.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct CachedCaps {
     prompt_image: bool,
     load_session: bool,
@@ -113,6 +113,20 @@ struct CachedCaps {
     auth_methods: Vec<crate::protocol::types::AuthMethod>,
     auth_required: bool,
     auth_hint: Option<String>,
+}
+
+impl CachedCaps {
+    fn payload(&self, instance_id: &str) -> AgentCapsPayload {
+        AgentCapsPayload {
+            instance_id: instance_id.to_string(),
+            prompt_image: self.prompt_image,
+            load_session: self.load_session,
+            modes: self.modes.clone(),
+            config_options: self.config_options.clone(),
+            auth_methods: self.auth_methods.clone(),
+            auth_hint: self.auth_hint.clone(),
+        }
+    }
 }
 
 /// Result of the queue-aware send: either a fresh run or a queue slot.
@@ -636,24 +650,25 @@ impl AgentRuntime {
         modes: Vec<crate::protocol::types::SessionMode>,
         config_options: Vec<SessionConfigOption>,
     ) {
-        let mut inner = self.inner.lock().expect("runtime lock poisoned");
-        let previous = inner.capabilities.get(instance_id).cloned();
-        let modes = if modes.is_empty() {
-            previous.as_ref().map(|c| c.modes.clone()).unwrap_or_default()
-        } else {
-            modes
-        };
-        let config_options = if config_options.is_empty() {
-            previous
-                .as_ref()
-                .map(|c| c.config_options.clone())
-                .unwrap_or_default()
-        } else {
-            config_options
-        };
-        inner.capabilities.insert(
-            instance_id.to_string(),
-            CachedCaps {
+        let cached;
+        let changed;
+        {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            let previous = inner.capabilities.get(instance_id).cloned();
+            let modes = if modes.is_empty() {
+                previous.as_ref().map(|c| c.modes.clone()).unwrap_or_default()
+            } else {
+                modes
+            };
+            let config_options = if config_options.is_empty() {
+                previous
+                    .as_ref()
+                    .map(|c| c.config_options.clone())
+                    .unwrap_or_default()
+            } else {
+                config_options
+            };
+            cached = CachedCaps {
                 prompt_image: caps.prompt_capabilities.image,
                 load_session: caps.load_session,
                 modes,
@@ -663,9 +678,14 @@ impl AgentRuntime {
                     .map(|c| c.auth_methods.clone())
                     .unwrap_or_default(),
                 auth_required: previous.as_ref().map(|c| c.auth_required).unwrap_or(false),
-                auth_hint: previous.and_then(|c| c.auth_hint),
-            },
-        );
+                auth_hint: previous.as_ref().and_then(|c| c.auth_hint.clone()),
+            };
+            changed = previous.as_ref() != Some(&cached);
+            inner.capabilities.insert(instance_id.to_string(), cached.clone());
+        }
+        if changed {
+            self.emit("agent:caps", &cached.payload(instance_id));
+        }
     }
 
     /// Records the auth state observed at preflight/authenticate/session start.
@@ -676,34 +696,53 @@ impl AgentRuntime {
         auth_required: bool,
         auth_hint: Option<String>,
     ) {
-        let mut inner = self.inner.lock().expect("runtime lock poisoned");
-        let caps = inner
-            .capabilities
-            .entry(instance_id.to_string())
-            .or_insert(CachedCaps {
-                prompt_image: false,
-                load_session: false,
-                modes: Vec::new(),
-                config_options: Vec::new(),
-                auth_methods: Vec::new(),
-                auth_required: false,
-                auth_hint: None,
-            });
-        if !auth_methods.is_empty() {
-            caps.auth_methods = auth_methods;
-        } else {
-            caps.auth_methods.clear();
+        let cached;
+        let changed;
+        {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            let before = inner.capabilities.get(instance_id).cloned();
+            let caps = inner
+                .capabilities
+                .entry(instance_id.to_string())
+                .or_insert(CachedCaps {
+                    prompt_image: false,
+                    load_session: false,
+                    modes: Vec::new(),
+                    config_options: Vec::new(),
+                    auth_methods: Vec::new(),
+                    auth_required: false,
+                    auth_hint: None,
+                });
+            if !auth_methods.is_empty() {
+                caps.auth_methods = auth_methods;
+            } else {
+                caps.auth_methods.clear();
+            }
+            caps.auth_required = auth_required;
+            caps.auth_hint = auth_hint;
+            cached = caps.clone();
+            changed = before.as_ref() != Some(&cached);
         }
-        caps.auth_required = auth_required;
-        caps.auth_hint = auth_hint;
+        if changed {
+            self.emit("agent:caps", &cached.payload(instance_id));
+        }
     }
 
     /// Replaces the cached config options from a `set_config_option` reply or
     /// a live `config_option_update`.
     fn update_cached_config_options(&self, instance_id: &str, config_options: Vec<SessionConfigOption>) {
-        let mut inner = self.inner.lock().expect("runtime lock poisoned");
-        if let Some(caps) = inner.capabilities.get_mut(instance_id) {
-            caps.config_options = config_options;
+        let cached = {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            match inner.capabilities.get_mut(instance_id) {
+                Some(caps) if caps.config_options != config_options => {
+                    caps.config_options = config_options;
+                    Some(caps.clone())
+                }
+                _ => None,
+            }
+        };
+        if let Some(cached) = cached {
+            self.emit("agent:caps", &cached.payload(instance_id));
         }
     }
 

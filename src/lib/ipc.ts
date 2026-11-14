@@ -21,6 +21,7 @@ import type {
   PreflightReport,
   QueueUpdatedPayload,
   Run,
+  AgentCapsPayload,
   RunEventPayload,
   RunEventsPayload,
   SendOutcome,
@@ -361,6 +362,10 @@ export function onRunEvent(handler: (payload: RunEventPayload) => void): Promise
 
 export function onRunEvents(handler: (payload: RunEventsPayload) => void): Promise<UnlistenFn> {
   return listenOrNoop<RunEventsPayload>("run:events", handler);
+}
+
+export function onAgentCaps(handler: (payload: AgentCapsPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<AgentCapsPayload>("agent:caps", handler);
 }
 
 export function onThreadUpdate(handler: (thread: Thread) => void): Promise<UnlistenFn> {

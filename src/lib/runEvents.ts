@@ -1,4 +1,5 @@
 import {
+  onAgentCaps,
   onElicitationRequest,
   onPtyExit,
   onPtyOutput,
@@ -19,25 +20,35 @@ let unlisten: (() => void)[] | null = null;
 
 /** Post-fold side effects, shared by single and batched event deliveries. */
 function afterRunEvents(runId: string, events: AppEvent[]): void {
-  let refreshInstances = false;
   let refreshGit = false;
   for (const event of events) {
-    if (event.kind === "run_finished" || event.kind === "config_options") {
-      refreshInstances = true;
+    // Capability changes arrive as a targeted event; patch the cached
+    // instance in memory instead of re-listing every provider.
+    if (event.kind === "config_options") {
+      const instanceId = instanceIdForRun(runId);
+      if (instanceId) {
+        useUiStore.getState().patchInstance(instanceId, {
+          configOptions: event.payload.options,
+        });
+      }
     }
     if (event.kind === "file_changed" || event.kind === "run_finished") {
       refreshGit = true;
     }
   }
-  // The runtime caches agent capabilities during a run's handshake; refresh the
-  // instance list when a run ends or its config options change so composer
-  // gating and pickers stay current.
-  if (refreshInstances) void useUiStore.getState().loadInstances();
   // Diff panel freshness: every write re-projects the git diff (debounced).
   if (refreshGit) {
     const threadId = useRunsStore.getState().runThreadId(runId);
     if (threadId) scheduleGitRefresh(threadId);
   }
+}
+
+function instanceIdForRun(runId: string): string | null {
+  for (const runs of Object.values(useRunsStore.getState().runsByThread)) {
+    const run = runs.find((candidate) => candidate.id === runId);
+    if (run) return run.instanceId;
+  }
+  return null;
 }
 
 /**
@@ -54,6 +65,16 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offRunBatch = await onRunEvents(({ runId, events }) => {
     useRunsStore.getState().receiveRunEventsBatch(runId, events);
     afterRunEvents(runId, events);
+  });
+  const offCaps = await onAgentCaps((caps) => {
+    useUiStore.getState().patchInstance(caps.instanceId, {
+      promptImage: caps.promptImage,
+      loadSession: caps.loadSession,
+      modes: caps.modes,
+      configOptions: caps.configOptions,
+      authMethods: caps.authMethods,
+      authHint: caps.authHint,
+    });
   });
   const offStarted = await onRunStarted((run) => {
     useRunsStore.getState().registerRun(run);
@@ -78,5 +99,14 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offPtyExit = await onPtyExit(({ terminalId, exitCode }) => {
     useTerminalsStore.getState().markExit(terminalId, exitCode);
   });
-  unlisten = [offRun, offRunBatch, offStarted, offQueue, offElicitation, offPtyOutput, offPtyExit];
+  unlisten = [
+    offRun,
+    offRunBatch,
+    offCaps,
+    offStarted,
+    offQueue,
+    offElicitation,
+    offPtyOutput,
+    offPtyExit,
+  ];
 }

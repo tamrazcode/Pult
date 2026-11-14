@@ -147,6 +147,19 @@ pub struct RunTiming {
     pub total_ms: u64,
 }
 
+/// Targeted capability refresh emitted only when a cache entry changed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentCapsPayload {
+    pub instance_id: String,
+    pub prompt_image: bool,
+    pub load_session: bool,
+    pub modes: Vec<crate::protocol::types::SessionMode>,
+    pub config_options: Vec<SessionConfigOption>,
+    pub auth_methods: Vec<crate::protocol::types::AuthMethod>,
+    pub auth_hint: Option<String>,
+}
+
 /// Batch of run events fanned out as one Tauri event (streaming coalescing).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

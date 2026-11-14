@@ -63,6 +63,22 @@ interface UiState {
   setRightPanelWidth: (width: number, persist?: boolean) => void;
   setAppVersion: (version: string) => void;
   setSelectedInstanceId: (instanceId: string | null) => void;
+  /** Applies a "agent:caps" patch without re-listing all providers. */
+  patchInstance: (
+    instanceId: string,
+    patch: Partial<
+      Pick<
+        InstanceInfo,
+        | "configOptions"
+        | "modes"
+        | "promptImage"
+        | "loadSession"
+        | "authMethods"
+        | "authHint"
+        | "status"
+      >
+    >,
+  ) => void;
   setGlobalError: (error: GlobalError) => void;
   clearGlobalError: () => void;
   setNewThreadOptions: (patch: Partial<NewThreadOptions>) => void;
@@ -140,6 +156,12 @@ export const useUiStore = create<UiState>((set) => ({
   },
   setAppVersion: (version) => set({ appVersion: version }),
   setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
+  patchInstance: (instanceId, patch) =>
+    set((s) => ({
+      instances: s.instances.map((instance) =>
+        instance.id === instanceId ? { ...instance, ...patch } : instance,
+      ),
+    })),
   setGlobalError: (globalError) => set({ globalError }),
   clearGlobalError: () => set({ globalError: null }),
   setNewThreadOptions: (patch) =>
