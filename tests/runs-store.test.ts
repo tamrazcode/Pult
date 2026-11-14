@@ -125,9 +125,7 @@ describe("runs store", () => {
     expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({
       model: "mock-pro",
     });
-    useRunsStore
-      .getState()
-      .hydrateThread("th", [], [], [], null, null, { thought_level: "high" });
+    useRunsStore.getState().hydrateThread("th", [], [], [], null, null, { thought_level: "high" });
     expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({
       thought_level: "high",
     });

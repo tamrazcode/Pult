@@ -1,15 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
-import type { Run } from "../src/lib/types";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { Run, SessionConfigOption } from "../src/lib/types";
 
-const { runsCancel, runsDispatch, runsRespondPermission, runsQueueRemove, workspaceFiles } =
-  vi.hoisted(() => ({
-    runsCancel: vi.fn(),
-    runsDispatch: vi.fn(),
-    runsRespondPermission: vi.fn(),
-    runsQueueRemove: vi.fn(),
-    workspaceFiles: vi.fn(),
-  }));
+const {
+  runsCancel,
+  runsDispatch,
+  runsRespondPermission,
+  runsQueueRemove,
+  workspaceFiles,
+  runsSetMode,
+  runsSetConfigOption,
+} = vi.hoisted(() => ({
+  runsCancel: vi.fn(),
+  runsDispatch: vi.fn(),
+  runsRespondPermission: vi.fn(),
+  runsQueueRemove: vi.fn(),
+  workspaceFiles: vi.fn(),
+  runsSetMode: vi.fn(),
+  runsSetConfigOption: vi.fn(),
+}));
 
 vi.mock("../src/lib/ipc", async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
@@ -20,6 +29,8 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     runsRespondPermission,
     runsQueueRemove,
     workspaceFiles,
+    runsSetMode,
+    runsSetConfigOption,
   };
 });
 
@@ -29,12 +40,17 @@ vi.mock("@tanstack/react-router", () => ({
 
 import {
   Composer,
+  configForSend,
   extractMentionQuery,
   formatSlashInsertion,
   modeForSend,
   shouldCancelOnEscape,
 } from "../src/components/chat/Composer";
-import { pickerModeId } from "../src/components/chat/ComposerControls";
+import {
+  ConfigOptionPickers,
+  pickerConfigValue,
+  pickerModeId,
+} from "../src/components/chat/ComposerControls";
 import { useRunsStore } from "../src/stores/runs";
 import { useUiStore } from "../src/stores/ui";
 
@@ -154,6 +170,90 @@ describe("composer", () => {
     expect(pickerModeId({ status: "finished" }, "code", "architect")).toBe("architect");
     expect(pickerModeId({ status: "running" }, "code", undefined)).toBe("code");
     expect(pickerModeId({ status: "running" }, "code", "architect")).toBe("architect");
+  });
+
+  it("keeps /chat config picks out of existing threads", () => {
+    const desired = { "": { model: "mock-pro" }, th2: { web_search: true } };
+    expect(configForSend(desired, "th2")).toEqual({ web_search: true });
+    expect(configForSend(desired, "th3")).toBeNull();
+    expect(configForSend(desired)).toEqual({ model: "mock-pro" });
+  });
+
+  it("falls back when a remembered config value is invalid", () => {
+    const option: SessionConfigOption = {
+      type: "select",
+      id: "model",
+      name: "Model",
+      currentValue: "mock-fast",
+      options: [
+        { value: "mock-fast", name: "Fast" },
+        { value: "mock-pro", name: "Pro" },
+      ],
+    };
+    expect(pickerConfigValue(option, undefined, undefined, { model: "mock-pro" })).toBe("mock-pro");
+    expect(pickerConfigValue(option, undefined, undefined, { model: "gone" })).toBe("mock-fast");
+  });
+
+  it("renders grouped config pickers; Esc closes without cancelling", async () => {
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [
+        {
+          id: "mock",
+          displayName: "Mock",
+          enabled: true,
+          driver: "mock",
+          command: "node",
+          args: [],
+          env: {},
+          status: "running",
+          promptImage: false,
+          loadSession: true,
+          modes: [],
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "mock-fast",
+              options: [
+                {
+                  group: "recommended",
+                  name: "Recommended",
+                  options: [
+                    { value: "mock-fast", name: "Fast" },
+                    { value: "mock-pro", name: "Pro" },
+                  ],
+                },
+                {
+                  group: "legacy",
+                  name: "Legacy",
+                  options: [{ value: "mock-v1", name: "V1" }],
+                },
+              ],
+            },
+            {
+              type: "boolean",
+              id: "web_search",
+              name: "Web search",
+              category: "other",
+              currentValue: false,
+            },
+          ],
+        },
+      ],
+    });
+    render(<ConfigOptionPickers threadId="th" />);
+    fireEvent.click(screen.getByRole("button", { name: /Model/ }));
+    expect(screen.getByText("Recommended")).toBeTruthy();
+    expect(screen.getByText("Legacy")).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByText("Recommended")).toBeNull());
+    expect(runsCancel).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Web search" }));
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({ web_search: true });
   });
 
   it("keeps Esc priority rules explicit", () => {

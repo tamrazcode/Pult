@@ -30,10 +30,12 @@
 ### Task 1: Typed protocol shapes + `AcpConn::set_config_option`
 
 **Files:**
+
 - Modify: `src-tauri/src/protocol/types.rs`, `src-tauri/src/events.rs`, `src-tauri/src/drivers/acp.rs`
 - Test: inline `#[cfg(test)]` in the same files
 
 **Interfaces:**
+
 - `ConfigOptionValue`: untagged `String(String) | Bool(bool)`.
 - `SessionConfigSelectOption { value, name, description?, meta? }`, `SessionConfigSelectGroup { group, name, options, meta? }`, `SessionConfigSelectOptions`: untagged flat/grouped.
 - `SessionConfigOption { id, name, description?, category?, meta?, #[serde(flatten)] kind }` with `kind` tagged by `type`: `select { currentValue, options }` | `boolean { currentValue }`.
@@ -59,9 +61,11 @@
 ### Task 2: Mock agent serves config options; driver golden test
 
 **Files:**
+
 - Modify: `fixtures/mock-acp-agent.mjs`, `src-tauri/src/drivers/golden.rs`
 
 **Interfaces:**
+
 - `session/new`/`session/load` return three options: `model` (select, grouped Recommended: `mock-fast`/`mock-pro`; Legacy: `mock-v1`, current `mock-fast`), `thought_level` (flat low/medium/high, current medium), `web_search` (boolean false).
 - `session/set_config_option` validates id/value (select value must exist in flat or groups; boolean requires `type: "boolean"`), returns `-32602` otherwise, and replies `{configOptions}` after updating state; switching to `mock-v1` narrows `thought_level` to low/medium.
 
@@ -76,9 +80,11 @@
 ### Task 3: Runtime cache, desired config, run record, IPC
 
 **Files:**
+
 - Modify: `src-tauri/src/runtime/mod.rs`, `src-tauri/src/ipc/mod.rs`, `src-tauri/src/lib.rs`, `src-tauri/src/runtime/tests.rs`
 
 **Interfaces:**
+
 - `InstanceInfo.config_options: Vec<SessionConfigOption>`; `CachedCaps.config_options`; `PreflightReport.config_options`; preflight caches `fresh.modes` + `fresh.config_options`.
 - `DesiredConfigMap = HashMap<String, ConfigOptionValue>`; `AgentRuntime::desired_config(thread_id)` reads `thread_config:<id>` (invalid JSON → empty).
 - `AgentRuntime::set_config_option(thread_id, config_id, value)`: persists, applies to the live conn if any, updates cached options from the response, emits `ConfigOptions` into the active run; RPC errors warn + notice, never fail.
@@ -100,10 +106,12 @@
 ### Task 4: Frontend types, IPC, store
 
 **Files:**
+
 - Modify: `src/lib/types.ts`, `src/lib/ipc.ts`, `src/lib/threadLoad.ts`, `src/lib/runEvents.ts`, `src/stores/runs.ts`
 - Test: `tests/runs-store.test.ts`
 
 **Interfaces:**
+
 - TS mirrors the Rust types: `ConfigOptionValue`, select option/group, `SessionConfigOption` union; `InstanceInfo.configOptions`, `PreflightReport.configOptions`, `ThreadDetail.desiredConfig`, event `{kind:"config_options"; payload:{options: SessionConfigOption[]}}`.
 - `runsDispatch(..., mode?, configOptions?)`; `runsSetConfigOption(threadId, configId, value)`.
 - `RunView.configOptions?: SessionConfigOption[]`; `applyRunEvent` stores the latest list.
@@ -121,10 +129,12 @@
 ### Task 5: Composer pickers + provider/diagnostics status
 
 **Files:**
+
 - Modify: `src/components/chat/ComposerControls.tsx`, `src/components/chat/Composer.tsx`, `src/routes/settings.providers.tsx`, `src/routes/settings.diagnostics.tsx`
 - Test: `tests/composer.test.tsx`
 
 **Interfaces:**
+
 - `isGroupedSelectOptions`, `flattenSelectOptions`, `pickerConfigValue(option, activeRun, liveOptions, desired)` (desired only when valid → live value while running → option current), `configForSend(desired, threadId?)` (`/chat` key never borrowed by an existing thread).
 - `ConfigOptionPickers({threadId})`: pills for select (group headers supported; backdrop `data-escape-layer`; Esc preventDefault) and boolean toggles (`aria-pressed`); pick writes `setDesiredConfig(threadId ?? "", ...)` and calls `runsSetConfigOption` when the thread exists.
 - Composer order: config pills → mode → agent → permission. On `/chat` send, pass pending config once and clear `""`.

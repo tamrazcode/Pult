@@ -75,7 +75,12 @@ function statusLine(
       tone: "ok",
     };
   }
-  if (info.loadSession || info.modes.length > 0 || info.promptImage) {
+  if (
+    info.loadSession ||
+    info.modes.length > 0 ||
+    info.promptImage ||
+    info.configOptions.length > 0
+  ) {
     const caps = [info.loadSession ? "resume" : null, info.promptImage ? "images" : null]
       .filter(Boolean)
       .join(" · ");

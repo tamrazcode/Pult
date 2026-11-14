@@ -4,7 +4,7 @@ import { useRouter } from "@tanstack/react-router";
 import { ArrowUp, Plus, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import { Kbd } from "../ui/kbd";
-import { AgentModePicker, AgentPicker, ModePill } from "./ComposerControls";
+import { AgentModePicker, AgentPicker, ConfigOptionPickers, ModePill } from "./ComposerControls";
 import {
   ipcErrorMessage,
   runsCancel,
@@ -18,7 +18,7 @@ import { useGitStore } from "../../stores/git";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
-import type { CommandInfo, ImageInput } from "../../lib/types";
+import type { CommandInfo, ConfigOptionValue, ImageInput } from "../../lib/types";
 
 const MAX_HEIGHT = 10 * 24; // 10 rows at the 24px effective line step
 
@@ -39,6 +39,15 @@ export function formatSlashInsertion(command: CommandInfo): string {
  */
 export function modeForSend(desired: Record<string, string>, threadId?: string): string | null {
   return (threadId ? desired[threadId] : desired[""]) || null;
+}
+
+/** Which config picks travel with a send; the `/chat` slot never leaks. */
+export function configForSend(
+  desired: Record<string, Record<string, ConfigOptionValue>>,
+  threadId?: string,
+): Record<string, ConfigOptionValue> | null {
+  const config = threadId ? desired[threadId] : desired[""];
+  return config && Object.keys(config).length > 0 ? config : null;
 }
 
 /** Esc cancels the run only when nothing above (overlay, decision) owns the key. */
@@ -164,15 +173,33 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, []);
 
   const dispatchRun = useCallback(
-    async (targetThreadId: string, text: string, images: ImageInput[], mode: string | null) => {
+    async (
+      targetThreadId: string,
+      text: string,
+      images: ImageInput[],
+      mode: string | null,
+      config: Record<string, ConfigOptionValue> | null,
+    ) => {
       if (!selectedInstanceId) {
         throw new Error("No agent instance selected - pick one in the header");
       }
-      // The mode picked for this send is persisted by the backend and applied
-      // to the run's session.
-      const outcome = await runsDispatch(targetThreadId, text, selectedInstanceId, images, mode);
+      // The picks for this send are persisted by the backend and applied to
+      // the run's session.
+      const outcome = await runsDispatch(
+        targetThreadId,
+        text,
+        selectedInstanceId,
+        images,
+        mode,
+        config,
+      );
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
+      if (config) {
+        for (const [id, value] of Object.entries(config)) {
+          useRunsStore.getState().setDesiredConfig(targetThreadId, id, value);
+        }
+      }
       // A queued outcome is confirmed by the "queue:update" event.
     },
     [selectedInstanceId],
@@ -252,20 +279,23 @@ export function Composer({ threadId }: { threadId?: string }) {
           // new-thread options (workspace / worktree), then navigate into it.
           const desired = useRunsStore.getState().desiredModeByThread;
           const pendingMode = modeForSend(desired);
+          const pendingConfig = configForSend(useRunsStore.getState().desiredConfigByThread);
           const { workspace, worktree } = useUiStore.getState().newThreadOptions;
           const thread = await useThreadsStore.getState().createThread(null, text.slice(0, 40), {
             workspace: workspace.trim() || undefined,
             worktree,
           });
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
-          await dispatchRun(thread.id, text, images, pendingMode);
-          // The pending pick now belongs to this thread; never to the next one.
+          await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
+          // The pending picks now belong to this thread; never to the next one.
           if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
+          if (pendingConfig) useRunsStore.getState().clearDesiredConfig("");
         } else {
           // Queue-aware: the backend queues while a run is active and
           // auto-dispatches when it finishes.
           const desired = useRunsStore.getState().desiredModeByThread;
-          await dispatchRun(threadId, text, images, modeForSend(desired, threadId));
+          const config = configForSend(useRunsStore.getState().desiredConfigByThread, threadId);
+          await dispatchRun(threadId, text, images, modeForSend(desired, threadId), config);
         }
         resetDraft();
       } catch (err) {
@@ -631,6 +661,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           <div className="flex-1" />
           {/* Controls that parameterize the next message (§6.1 control bar),
               ordered like the reference apps: reasoning ▸ agents ▸ access. */}
+          <ConfigOptionPickers threadId={threadId} />
           <AgentModePicker threadId={threadId} />
           <AgentPicker />
           <ModePill threadId={threadId} />

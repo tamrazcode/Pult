@@ -62,6 +62,7 @@ function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
         caps: {info.promptImage ? "images ✓ · " : ""}
         {info.loadSession ? "resume ✓ · " : ""}
         {info.modes.length > 0 ? `${info.modes.length} modes` : "no modes advertised"}
+        {info.configOptions.length > 0 ? ` · ${info.configOptions.length} config options` : ""}
       </p>
 
       {processEvents.length > 0 && (

@@ -67,9 +67,7 @@ export interface SessionConfigSelectGroup {
   options: SessionConfigSelectOption[];
 }
 
-export type SessionConfigSelectOptions =
-  | SessionConfigSelectOption[]
-  | SessionConfigSelectGroup[];
+export type SessionConfigSelectOptions = SessionConfigSelectOption[] | SessionConfigSelectGroup[];
 
 export interface SessionConfigSelectOptionDef {
   type: "select";

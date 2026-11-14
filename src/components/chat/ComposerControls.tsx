@@ -1,9 +1,24 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { Check, ChevronDown, Layers, Settings2, ShieldCheck } from "lucide-react";
-import { runsSetMode, runsSetPermissionMode } from "../../lib/ipc";
+import {
+  Check,
+  ChevronDown,
+  Layers,
+  Settings2,
+  ShieldCheck,
+  SlidersHorizontal,
+} from "lucide-react";
+import { runsSetConfigOption, runsSetMode, runsSetPermissionMode } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
-import type { InstanceInfo, SessionMode } from "../../lib/types";
+import type {
+  ConfigOptionValue,
+  InstanceInfo,
+  SessionConfigOption,
+  SessionConfigSelectGroup,
+  SessionConfigSelectOption,
+  SessionConfigSelectOptions,
+  SessionMode,
+} from "../../lib/types";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { PERMISSION_MODE_LABELS, useSettingsStore } from "../../stores/settings";
 import type { PermissionMode } from "../../stores/settings";
@@ -25,6 +40,199 @@ export function pickerModeId(
       ? liveModeId
       : undefined;
   return desiredModeId ?? live;
+}
+
+// ---- session config options (M10) ----
+
+export function isGroupedSelectOptions(
+  options: SessionConfigSelectOptions,
+): options is SessionConfigSelectGroup[] {
+  return options.length > 0 && "group" in options[0];
+}
+
+export function flattenSelectOptions(
+  options: SessionConfigSelectOptions,
+): SessionConfigSelectOption[] {
+  return isGroupedSelectOptions(options) ? options.flatMap((group) => group.options) : options;
+}
+
+function configValueValid(option: SessionConfigOption, value: ConfigOptionValue): boolean {
+  if (option.type === "boolean") return typeof value === "boolean";
+  if (typeof value !== "string") return false;
+  return flattenSelectOptions(option.options).some((item) => item.value === value);
+}
+
+/** Remembered pick when valid, else the live run's value, else the default. */
+export function pickerConfigValue(
+  option: SessionConfigOption,
+  activeRun: { status: string } | undefined,
+  liveOptions: SessionConfigOption[] | undefined,
+  desired: Record<string, ConfigOptionValue> | undefined,
+): ConfigOptionValue {
+  const desiredValue = desired?.[option.id];
+  if (desiredValue !== undefined && configValueValid(option, desiredValue)) return desiredValue;
+  const live =
+    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
+      ? liveOptions?.find((item) => item.id === option.id)
+      : undefined;
+  return live?.currentValue ?? option.currentValue;
+}
+
+/**
+ * Model / thought-level / toggle pills from the selected agent's session
+ * config options. Picks persist per thread and apply to the next run.
+ */
+export function ConfigOptionPickers({ threadId }: { threadId?: string }) {
+  const instances = useUiStore((s) => s.instances);
+  const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
+  const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
+  const views = useRunsStore((s) => s.viewsByRun);
+  const desired = useRunsStore((s) =>
+    threadId ? s.desiredConfigByThread[threadId] : s.desiredConfigByThread[""],
+  );
+  const activeRun = activeRunForThread(runs);
+  const liveOptions =
+    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
+      ? views[activeRun.id]?.configOptions
+      : undefined;
+  const instance = instances.find((i) => i.id === selectedInstanceId);
+  const options = liveOptions ?? instance?.configOptions ?? [];
+  if (options.length === 0) return null;
+
+  const pick = (option: SessionConfigOption, value: ConfigOptionValue) => {
+    useRunsStore.getState().setDesiredConfig(threadId ?? "", option.id, value);
+    if (threadId && isTauri()) {
+      runsSetConfigOption(threadId, option.id, value).catch((err) =>
+        console.error("runs_set_config_option failed", err),
+      );
+    }
+  };
+
+  return (
+    <>
+      {options.map((option) =>
+        option.type === "boolean" ? (
+          <BooleanOptionPill
+            key={option.id}
+            option={option}
+            value={pickerConfigValue(option, activeRun, liveOptions, desired) === true}
+            onPick={(value) => pick(option, value)}
+          />
+        ) : (
+          <SelectOptionPill
+            key={option.id}
+            option={option}
+            value={String(pickerConfigValue(option, activeRun, liveOptions, desired))}
+            onPick={(value) => pick(option, value)}
+          />
+        ),
+      )}
+    </>
+  );
+}
+
+function SelectOptionPill({
+  option,
+  value,
+  onPick,
+}: {
+  option: Extract<SessionConfigOption, { type: "select" }>;
+  value: string;
+  onPick: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  const flat = flattenSelectOptions(option.options);
+  const current = flat.find((item) => item.value === value);
+  const row = (item: SessionConfigSelectOption) => (
+    <button
+      key={item.value}
+      role="option"
+      aria-selected={item.value === value}
+      onClick={() => {
+        onPick(item.value);
+        setOpen(false);
+      }}
+      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
+    >
+      <span className="min-w-0 flex-1 truncate">{item.name}</span>
+      {item.value === value && <Check size={12} className="shrink-0 text-accent" />}
+    </button>
+  );
+
+  return (
+    <div className="relative">
+      <button
+        aria-label={`${option.name}: ${current?.name ?? value}`}
+        title={option.description ?? option.name}
+        onClick={() => setOpen((o) => !o)}
+        className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
+      >
+        <SlidersHorizontal size={12} className="shrink-0 text-text-tertiary" />
+        <span className="max-w-[110px] truncate">{current?.name ?? value}</span>
+        <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
+          <div
+            role="listbox"
+            aria-label={option.name}
+            className="absolute bottom-full right-0 z-50 mb-1 max-h-64 w-64 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+          >
+            {isGroupedSelectOptions(option.options)
+              ? option.options.map((group) => (
+                  <Fragment key={group.group}>
+                    <p className="px-3 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
+                      {group.name}
+                    </p>
+                    {group.options.map(row)}
+                  </Fragment>
+                ))
+              : option.options.map(row)}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function BooleanOptionPill({
+  option,
+  value,
+  onPick,
+}: {
+  option: Extract<SessionConfigOption, { type: "boolean" }>;
+  value: boolean;
+  onPick: (value: boolean) => void;
+}) {
+  return (
+    <button
+      aria-label={option.name}
+      aria-pressed={value}
+      title={option.description ?? option.name}
+      onClick={() => onPick(!value)}
+      className={`flex items-center gap-1.5 rounded-(--radius-sm) border px-2 py-0.5 text-xs transition ${
+        value
+          ? "border-accent/40 bg-accent/10 text-text-primary"
+          : "border-border-subtle bg-surface text-text-secondary hover:bg-hover"
+      }`}
+    >
+      <SlidersHorizontal size={12} className="shrink-0 text-text-tertiary" />
+      <span className="max-w-[110px] truncate">{option.name}</span>
+    </button>
+  );
 }
 
 const STATUS_DOT_CLASSES: Record<InstanceInfo["status"], string> = {
