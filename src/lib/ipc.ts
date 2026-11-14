@@ -145,6 +145,11 @@ export function projectsDelete(id: string): Promise<void> {
   return invokeRequired<void>("projects_delete", { id });
 }
 
+/** Reads a local raster image as a data URL (Markdown image artifacts). */
+export function readImageDataUrl(path: string): Promise<string> {
+  return invokeRequired<string>("read_image_data_url", { path });
+}
+
 /** Native folder picker; null outside Tauri or when the user cancels. */
 export async function pickFolder(title = "Choose folder"): Promise<string | null> {
   if (!isTauri()) return null;

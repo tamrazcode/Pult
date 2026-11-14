@@ -812,6 +812,40 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
     Ok(())
 }
 
+/// Reads a local raster image the agent referenced and returns a data URL.
+/// Capped and restricted to common raster formats; remote URLs are not fetched.
+#[tauri::command]
+pub async fn read_image_data_url(path: String) -> Result<String, PultError> {
+    tokio::task::spawn_blocking(move || {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        let canonical = std::path::PathBuf::from(&path)
+            .canonicalize()
+            .map_err(|e| PultError::internal(format!("image not found: {path} ({e})")))?;
+        let meta = std::fs::metadata(&canonical)
+            .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
+        if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
+            return Err(PultError::internal("image must be a file up to 20 MB"));
+        }
+        let mime = match canonical
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("png") => "image/png",
+            Some("jpg" | "jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            _ => return Err(PultError::internal("unsupported image type")),
+        };
+        let bytes = std::fs::read(&canonical)
+            .map_err(|e| PultError::internal(format!("image read failed: {e}")))?;
+        Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("image read task failed: {e}")))?
+}
+
 #[cfg(test)]
 mod external_url_tests {
     use super::validate_external_url;

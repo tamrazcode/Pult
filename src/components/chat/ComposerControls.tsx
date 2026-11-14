@@ -277,7 +277,7 @@ function providerLabel(inst: { driver: string; command: string; args: string[] }
   return inst.command.replace(/\.(exe|cmd|bat)$/i, "");
 }
 
-export function AgentPicker() {
+export function AgentPicker({ threadId }: { threadId?: string }) {
   const instances = useUiStore((s) => s.instances);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const setSelectedInstanceId = useUiStore((s) => s.setSelectedInstanceId);
@@ -333,6 +333,7 @@ export function AgentPicker() {
                     key={inst.id}
                     onClick={() => {
                       setSelectedInstanceId(inst.id);
+                      if (threadId) useUiStore.getState().rememberInstance(threadId, inst.id);
                       setOpen(false);
                     }}
                     className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"

@@ -423,7 +423,7 @@ export function Sidebar({ width }: { width: number }) {
         </button>
       </div>
 
-      <div className="flex items-center gap-1 px-2 pb-2">
+      <div ref={filterRef} className="relative flex items-center gap-1 px-2 pb-2">
         <div className="relative min-w-0 flex-1">
           <Search
             size={13}
@@ -438,7 +438,7 @@ export function Sidebar({ width }: { width: number }) {
             className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
         </div>
-        <div ref={filterRef} className="relative">
+        <div className="relative">
           <button
             type="button"
             aria-label="Filter threads"
@@ -455,7 +455,7 @@ export function Sidebar({ width }: { width: number }) {
             <div
               role="menu"
               aria-label="Filters"
-              className="absolute top-full right-0 z-30 mt-1 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-xl"
+              className="absolute top-full left-0 z-30 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-xl"
             >
               {FILTERS.map((option) => (
                 <button

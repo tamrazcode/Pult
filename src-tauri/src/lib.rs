@@ -168,6 +168,7 @@ pub fn run() {
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::open_external_url,
+            ipc::read_image_data_url,
             ipc::runs_set_mode,
             ipc::runs_set_config_option,
             ipc::diagnostics_frames,

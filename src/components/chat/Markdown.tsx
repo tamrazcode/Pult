@@ -17,6 +17,7 @@ import rehypeKatex from "rehype-katex";
 import { createHighlighter, createJavaScriptRegexEngine } from "shiki";
 import type { Highlighter } from "shiki";
 import { Check, Copy } from "lucide-react";
+import { readImageDataUrl } from "../../lib/ipc";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
 
@@ -240,7 +241,61 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
   );
 });
 
+/** Local paths from agents (`C:\...`, UNC, file://) need the backend bridge. */
+function LocalImage({ src, alt }: { src?: string; alt?: string }) {
+  const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    if (!local || !src) return;
+    let cancelled = false;
+    const path = src.startsWith("file://") ? decodeURI(src.slice("file://".length)) : src;
+    readImageDataUrl(path)
+      .then((url) => {
+        if (!cancelled) setDataUrl(url);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [local, src]);
+
+  if (!local) {
+    return (
+      <img
+        src={src}
+        alt={alt ?? ""}
+        loading="lazy"
+        className="my-2 max-h-80 rounded-(--radius-md) border border-border-subtle"
+      />
+    );
+  }
+  if (failed) {
+    return (
+      <span title={src} className="text-sm text-text-tertiary">
+        Image unavailable: {alt || src}
+      </span>
+    );
+  }
+  if (!dataUrl) {
+    return <span className="text-sm text-text-tertiary">Loading image…</span>;
+  }
+  return (
+    <a href={dataUrl} target="_blank" rel="noreferrer" title={alt || src}>
+      <img
+        src={dataUrl}
+        alt={alt ?? ""}
+        className="my-2 max-h-80 rounded-(--radius-md) border border-border-subtle"
+      />
+    </a>
+  );
+}
+
 const COMPONENTS: Components = {
+  img: ({ src, alt }) => <LocalImage src={src} alt={alt} />,
   pre: ({ children }) => {
     const { code, lang } = extractCode(children);
     return <CodeBlock code={code} lang={lang} />;

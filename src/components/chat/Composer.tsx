@@ -169,7 +169,7 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
             <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
               Agent
             </p>
-            <AgentPicker />
+            <AgentPicker threadId={threadId} />
           </section>
         </div>
       )}
@@ -197,6 +197,21 @@ export function Composer({ threadId }: { threadId?: string }) {
   const queue = useRunsStore((s) => (threadId ? s.queueByThread[threadId] : undefined));
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const activeRun = activeRunForThread(runs);
+
+  // Reopening a thread restores the provider it last used; a stale send error
+  // from another thread must not leak into this composer.
+  useEffect(() => {
+    setError(null);
+    if (!threadId) return;
+    const remembered = useUiStore.getState().instanceByThread[threadId];
+    if (
+      remembered &&
+      remembered !== useUiStore.getState().selectedInstanceId &&
+      instances.some((instance) => instance.id === remembered)
+    ) {
+      useUiStore.getState().setSelectedInstanceId(remembered);
+    }
+  }, [threadId, instances]);
   const pendingApproval = useRunsStore((s) =>
     activeRun ? s.viewsByRun[activeRun.id]?.pendingApproval : undefined,
   );
@@ -387,6 +402,17 @@ export function Composer({ threadId }: { threadId?: string }) {
               workspace: targetWorkspace,
               worktree: targetWorktree,
             });
+          // The picks made on /chat now belong to this thread: remember the
+          // provider and persist mode/config for its next turn too.
+          if (selectedInstanceId) {
+            useUiStore.getState().rememberInstance(thread.id, selectedInstanceId);
+          }
+          if (pendingMode) useRunsStore.getState().setDesiredMode(thread.id, pendingMode);
+          if (pendingConfig) {
+            for (const [configId, configValue] of Object.entries(pendingConfig)) {
+              useRunsStore.getState().setDesiredConfig(thread.id, configId, configValue);
+            }
+          }
           if (!targetProject && project) useProjectsStore.getState().selectProject(null);
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);

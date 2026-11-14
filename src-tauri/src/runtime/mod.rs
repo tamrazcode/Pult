@@ -728,6 +728,23 @@ impl AgentRuntime {
         }
     }
 
+    /// Ids advertised by the agent at the last handshake. `None` means the
+    /// agent exposes no config options (or none are cached yet) and stale
+    /// picks cannot be validated.
+    fn config_option_ids(&self, instance_id: &str) -> Option<std::collections::HashSet<String>> {
+        let inner = self.inner.lock().expect("runtime lock poisoned");
+        inner
+            .capabilities
+            .get(instance_id)
+            .filter(|caps| !caps.config_options.is_empty())
+            .map(|caps| {
+                caps.config_options
+                    .iter()
+                    .map(|option| option.id.clone())
+                    .collect()
+            })
+    }
+
     /// Replaces the cached config options from a `set_config_option` reply or
     /// a live `config_option_update`.
     fn update_cached_config_options(&self, instance_id: &str, config_options: Vec<SessionConfigOption>) {
@@ -1426,7 +1443,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
     // first because agents narrow dependent options (thought level) when the
     // model changes.
-    let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
+    let advertised_config = runtime.config_option_ids(&instance_id);
+    let mut picks: Vec<(String, ConfigOptionValue)> = config
+        .into_iter()
+        .filter(|(id, _)| {
+            advertised_config
+                .as_ref()
+                .is_none_or(|ids| ids.contains(id))
+        })
+        .collect();
     picks.sort_by_key(|(id, _)| config_apply_order(id));
     let config_started = std::time::Instant::now();
     for (config_id, value) in picks {

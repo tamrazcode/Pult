@@ -67,6 +67,9 @@ interface UiState {
   setRightPanelWidth: (width: number, persist?: boolean) => void;
   setAppVersion: (version: string) => void;
   setSelectedInstanceId: (instanceId: string | null) => void;
+  /** Remember the selected provider per thread (restored when reopening). */
+  instanceByThread: Record<string, string>;
+  rememberInstance: (threadId: string, instanceId: string) => void;
   /** Applies a "agent:caps" patch without re-listing all providers. */
   patchInstance: (
     instanceId: string,
@@ -141,6 +144,7 @@ export const useUiStore = create<UiState>((set) => ({
   appVersion: null,
   instances: [],
   selectedInstanceId: null,
+  instanceByThread: {},
   paletteOpen: false,
   processEvents: {},
   globalError: null,
@@ -167,6 +171,10 @@ export const useUiStore = create<UiState>((set) => ({
   },
   setAppVersion: (version) => set({ appVersion: version }),
   setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
+  rememberInstance: (threadId, instanceId) =>
+    set((s) => ({
+      instanceByThread: { ...s.instanceByThread, [threadId]: instanceId },
+    })),
   patchInstance: (instanceId, patch) =>
     set((s) => ({
       instances: s.instances.map((instance) =>
