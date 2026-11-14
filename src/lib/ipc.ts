@@ -94,9 +94,14 @@ export function threadsCreate(
   projectId: string | null,
   title: string,
   workspace?: string | null,
-  worktree = false,
+  worktree?: boolean | null,
 ): Promise<Thread> {
-  return invokeRequired<Thread>("threads_create", { projectId, title, workspace, worktree });
+  return invokeRequired<Thread>("threads_create", {
+    projectId,
+    title,
+    workspace,
+    worktree: worktree ?? null,
+  });
 }
 
 export function threadsList(): Promise<Thread[]> {

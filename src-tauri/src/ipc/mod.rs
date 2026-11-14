@@ -43,16 +43,9 @@ pub async fn threads_create(
     project_id: Option<String>,
     title: String,
     workspace: Option<String>,
-    worktree: bool,
+    worktree: Option<bool>,
 ) -> Result<ThreadRecord, PultError> {
-    create_thread_with_runtime(
-        runtime.inner(),
-        project_id,
-        title,
-        workspace,
-        Some(worktree),
-    )
-    .await
+    create_thread_with_runtime(runtime.inner(), project_id, title, workspace, worktree).await
 }
 
 /// Pure thread creation used by the IPC command and tests: resolves a
@@ -75,26 +68,40 @@ pub(crate) async fn create_thread_with_runtime(
     let mut workspace_value = match workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(ws) => {
             let path = std::path::PathBuf::from(ws);
+            if !path.is_absolute() {
+                return Err(PultError::with_code(
+                    "workspace.missing",
+                    format!("Folder must be an absolute path: {ws}"),
+                ));
+            }
             let canonical = path.canonicalize().map_err(|e| {
                 PultError::with_code(
                     "workspace.missing",
                     format!("Folder not found: {} ({e})", path.display()),
                 )
             })?;
-            Some(canonical.to_string_lossy().into_owned())
+            Some(
+                crate::runtime::clean_verbatim(canonical)
+                    .to_string_lossy()
+                    .into_owned(),
+            )
         }
         None => None,
     };
     if workspace_value.is_none() {
         if let Some(project) = &project {
             let root = std::path::PathBuf::from(&project.root_path);
-            if !root.is_dir() {
+            if !root.is_absolute() || !root.is_dir() {
                 return Err(PultError::with_code(
                     "workspace.missing",
                     format!("Project or thread folder not found: {}", project.root_path),
                 ));
             }
-            workspace_value = Some(root.to_string_lossy().into_owned());
+            workspace_value = Some(
+                crate::runtime::clean_verbatim(root)
+                    .to_string_lossy()
+                    .into_owned(),
+            );
         }
     }
     let worktree = worktree.unwrap_or_else(|| {
@@ -120,6 +127,19 @@ pub(crate) async fn create_thread_with_runtime(
         );
         main_repo = Some(repo.to_string_lossy().into_owned());
         workspace_value = Some(outcome.path);
+    }
+    // A project may be deleted while the worktree is being created: do not
+    // persist a thread that the FK would reject, and clean the worktree.
+    if let Some(pid) = &project_id {
+        if runtime.store().get_project(pid).is_err() {
+            if let (Some(repo), Some(name)) = (&main_repo, &worktree_name) {
+                let _ = crate::git::worktree_remove(std::path::Path::new(repo), name).await;
+            }
+            return Err(PultError::with_code(
+                "workspace.missing",
+                format!("Project {pid} was deleted"),
+            ));
+        }
     }
     let record = ThreadRecord {
         id,
@@ -158,7 +178,7 @@ pub fn projects_create(
         return Err(PultError::internal("project name must not be empty"));
     }
     let path = std::path::PathBuf::from(root_path.trim());
-    if !path.is_dir() {
+    if !path.is_absolute() || !path.is_dir() {
         return Err(PultError::with_code(
             "workspace.missing",
             format!("Folder not found: {}", path.display()),
@@ -170,6 +190,7 @@ pub fn projects_create(
             format!("Folder not found: {} ({e})", path.display()),
         )
     })?;
+    let canonical = crate::runtime::clean_verbatim(canonical);
     let strategy = worktree_strategy.unwrap_or_else(|| "root".to_string());
     if strategy != "root" && strategy != "worktree" {
         return Err(PultError::internal(
@@ -187,7 +208,7 @@ pub fn projects_create(
         created_at: crate::events::now_millis(),
     };
     runtime.store().create_project(&project)?;
-    runtime.emit("projects:update", &project);
+    emit_projects(runtime.inner());
     Ok(project)
 }
 
@@ -200,6 +221,18 @@ pub fn projects_update(
     worktree_strategy: Option<String>,
     pinned: Option<bool>,
 ) -> Result<ProjectRecord, PultError> {
+    if let Some(name) = name.as_deref() {
+        if name.trim().is_empty() {
+            return Err(PultError::internal("project name must not be empty"));
+        }
+    }
+    if let Some(strategy) = worktree_strategy.as_deref() {
+        if strategy != "root" && strategy != "worktree" {
+            return Err(PultError::internal(
+                "worktree strategy must be root or worktree",
+            ));
+        }
+    }
     let project = runtime.store().update_project(
         &id,
         name.as_deref(),
@@ -207,7 +240,7 @@ pub fn projects_update(
         worktree_strategy.as_deref(),
         pinned,
     )?;
-    runtime.emit("projects:update", &project);
+    emit_projects(runtime.inner());
     Ok(project)
 }
 
@@ -217,13 +250,29 @@ pub fn projects_delete(
     id: String,
 ) -> Result<(), PultError> {
     let project = runtime.store().get_project(&id)?;
+    let affected: Vec<String> = runtime
+        .store()
+        .list_threads()?
+        .into_iter()
+        .filter(|thread| thread.project_id.as_deref() == Some(id.as_str()))
+        .map(|thread| thread.id)
+        .collect();
     runtime.store().delete_project(&id)?;
     runtime
         .pool
         .invalidate_root(std::path::Path::new(&project.root_path));
-    runtime.emit("projects:update", &serde_json::json!({ "deletedId": id }));
-    runtime.emit("threads:update", &serde_json::json!({}));
+    emit_projects(runtime.inner());
+    for thread_id in affected {
+        runtime.emit_thread_updated(&thread_id);
+    }
     Ok(())
+}
+
+/// One snapshot event keeps the sidebar consistent for create/update/delete.
+fn emit_projects(runtime: &AgentRuntime) {
+    if let Ok(projects) = runtime.store().list_projects() {
+        runtime.emit("projects:update", &projects);
+    }
 }
 
 #[tauri::command]
@@ -557,10 +606,7 @@ fn thread_git_dir(
     thread_id: &str,
 ) -> Result<std::path::PathBuf, PultError> {
     let thread = runtime.store().get_thread(thread_id)?;
-    match thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-        Some(ws) => Ok(std::path::PathBuf::from(ws)),
-        None => runtime.global_workspace_root(),
-    }
+    runtime.workspace_root_for(&thread)
 }
 
 #[tauri::command]

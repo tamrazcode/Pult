@@ -261,7 +261,7 @@ pub struct AgentRuntime {
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
 /// and reject the prefix (opencode answers -32602 "cwd must be an absolute
 /// path"). Strip it; UNC verbatim form maps back to `\\server\share`.
-fn clean_verbatim(path: PathBuf) -> PathBuf {
+pub(crate) fn clean_verbatim(path: PathBuf) -> PathBuf {
     let s = path.to_string_lossy();
     if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{rest}"));
@@ -1081,10 +1081,10 @@ impl AgentRuntime {
     /// Session cwd for a thread: its explicit workspace (worktree threads
     /// pin theirs at creation), else its project's folder, else the global
     /// root. A missing folder is an explicit error, never a silent fallback.
-    fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
+    pub(crate) fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
         if let Some(ws) = thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let path = PathBuf::from(ws);
-            if !path.is_dir() {
+            if !path.is_absolute() || !path.is_dir() {
                 return Err(crate::PultError::with_code(
                     "workspace.missing",
                     format!("Project or thread folder not found: {ws}"),
@@ -1100,7 +1100,7 @@ impl AgentRuntime {
                 )
             })?;
             let path = PathBuf::from(&project.root_path);
-            if !path.is_dir() {
+            if !path.is_absolute() || !path.is_dir() {
                 return Err(crate::PultError::with_code(
                     "workspace.missing",
                     format!("Project or thread folder not found: {}", project.root_path),

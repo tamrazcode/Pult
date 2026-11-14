@@ -104,7 +104,7 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
       projectId,
       title,
       options?.workspace ?? undefined,
-      options?.worktree ?? false,
+      options?.worktree ?? null,
     );
     get().upsertThread(thread);
     return thread;
