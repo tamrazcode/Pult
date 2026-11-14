@@ -5,6 +5,13 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### Connection fixes — OpenCode/Codex and Antigravity (2026-11-14)
+
+- `session/new` / `session/load` always send the schema-required `mcpServers` array;
+  fixes `-32602 Invalid params` from OpenCode 2.3.0 and Codex ACP 2.6.0.
+- Google Antigravity detected through its standalone `agy_acp_server.exe`; official
+  zip verified by sha256, cold-start initialize timeout 60 s; OAuth sign-in verified live.
+
 ### M12 — Usage insights (2026-11-14)
 
 - `/usage`: last valid ACP usage snapshot per run, KPIs for context at run end and latest

@@ -2,6 +2,23 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## Connection fixes — required `mcpServers`, Antigravity (2026-11-14)
+
+**Scope shipped.** OpenCode and Codex ACP sessions failed with `-32602 Invalid params` because `session/new`/`session/load` omitted `mcpServers` when the list was empty (serde `skip_serializing_if`), while the schema marks it required. Both fields now always serialize (`"mcpServers": []`); live probes confirmed OpenCode 2.3.0 and Codex ACP 2.6.0 complete initialize + session/new, and the app's preflight reports Connected with full config options. Added Google Antigravity: pult detects the standalone `agy_acp_server.exe` (installed under `%LOCALAPPDATA%\pult\antigravity`, or on PATH), verifies the official Google zip's sha256 before use, and raises the ACP initialize timeout to 60 s for its 12–25 s Windows cold start. The server itself runs the OAuth flow and opens the browser (verified: `Authentication successful`, provider Connected 1.5.0 in the app).
+
+**Verification.** `cargo test` 116/116, clippy clean; vitest 116/116, typecheck/lint clean. Live: OpenCode 2.3.0 Connected · resume · images; Codex 2.6.0 Connected; Google Antigravity 1.5.0 Connected after Google login. The async Gemini review of these fixes failed at the provider level (`Provider turn failed`), so they carry the live-probe evidence instead of a second reviewer.
+
+**Decisions.**
+
+1. **Always send schema-required empty arrays.** A lenient `skip_serializing_if` is wrong for required fields; strict agents reject the whole request.
+2. **Antigravity's standalone server is the supported ACP path** (same artifact T3 Code downloads); the IDE alone is not an agent. pult owns the install path, but never auto-downloads during detection.
+3. **Cold start gets a longer initialize timeout**, not a per-agent fork: 60 s only delays failure for a hung agent.
+
+**Known issues / gaps.**
+
+- The OAuth browser is opened by the Antigravity server from a background process; Windows may keep pult focused. Opening the URL from pult would steal focus but risks a second tab; not wired yet.
+- pult does not download Antigravity automatically; the exe must be present (the docs path above).
+
 ## M12 — Usage insights (2026-11-14)
 
 **Scope shipped.** `/usage` is a real screen over the persisted ACP `usage_update` events. `Store::usage_report` reads existing `events`/`runs`/`threads` rows, keeps the **last valid snapshot per run by max seq** (corrupt/legacy payloads are skipped, never fatal), and groups by thread and provider without summing gauges. IPC `usage_report` runs the query in `spawn_blocking`; outside Tauri the wrapper returns an empty report. The route shows honest KPIs (runs with usage, median and peak context at run end, latest reported cost marked "not summed"), Runs/Threads/Providers tabs, a provider filter whose thread rows are recomputed from the filtered runs, provider-scoped empty states, an IPC error with Retry, and keyboard-openable rows. Navigation: breadcrumb, `navigate.usage` palette command, sidebar button with `aria-current`. Antigravity detection stayed out: no verifiable CLI/ACP invocation exists in the repo or docs, and inventing one would break the project rule.
