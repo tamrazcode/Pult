@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useRouter } from "@tanstack/react-router";
+import { useRouter, useRouterState } from "@tanstack/react-router";
 import { Copy, Minus, PanelLeft, PanelRight, Settings, Square, X } from "lucide-react";
+import { resolveBreadcrumbs } from "../../lib/breadcrumbs";
+import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
 import { appVersion } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
@@ -14,6 +16,8 @@ export function Topbar() {
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const setAppVersion = useUiStore((s) => s.setAppVersion);
+  const threads = useThreadsStore((s) => s.threads);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   const router = useRouter();
 
   useEffect(() => {
@@ -34,12 +38,28 @@ export function Topbar() {
       data-tauri-drag-region
       className="flex h-12 shrink-0 select-none items-center gap-3 border-b border-border-subtle bg-chrome pr-0 pl-4"
     >
-      {/* breadcrumbs "project / thread" — static for M0, wired to routes in M2 */}
-      <div data-tauri-drag-region className="flex items-center gap-1.5 text-sm">
-        <span className="font-semibold text-text-primary">pult</span>
-        <span className="text-text-tertiary">/</span>
-        <span className="text-text-secondary">chat</span>
-      </div>
+      {/* breadcrumbs "pult / where you are" — route-aware, never static */}
+      <nav
+        aria-label="Breadcrumbs"
+        data-tauri-drag-region
+        className="flex items-center gap-1.5 text-sm"
+      >
+        {resolveBreadcrumbs(pathname, threads).map((crumb, i) => (
+          <span key={`${crumb.label}-${i}`} className="flex items-center gap-1.5">
+            {i > 0 && <span className="text-text-tertiary">/</span>}
+            {crumb.to ? (
+              <button
+                onClick={() => void router.navigate({ to: crumb.to })}
+                className="text-text-secondary transition hover:text-text-primary"
+              >
+                {crumb.label}
+              </button>
+            ) : (
+              <span className="text-text-secondary">{crumb.label}</span>
+            )}
+          </span>
+        ))}
+      </nav>
 
       <div data-tauri-drag-region className="flex-1" />
 

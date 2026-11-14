@@ -3,6 +3,7 @@ import { Plus, SquareTerminal, X } from "lucide-react";
 import { terminalPtyCreate, terminalPtyKill, terminalPtyList } from "../../lib/ipc";
 import { useRunsStore } from "../../stores/runs";
 import type { ToolChatItem } from "../../stores/runs";
+import { useThreadsStore } from "../../stores/threads";
 import { useTerminalsStore } from "../../stores/terminals";
 import { TerminalPane } from "./TerminalPane";
 
@@ -62,6 +63,9 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
   const addTerminal = useTerminalsStore((s) => s.addTerminal);
   const removeTerminal = useTerminalsStore((s) => s.removeTerminal);
   const setList = useTerminalsStore((s) => s.setList);
+  const workspace = useThreadsStore((s) =>
+    threadId ? s.threads.find((t) => t.id === threadId)?.workspace : undefined,
+  );
   const agentTerminals = useAgentTerminals(threadId);
 
   // Re-sync the list whenever the thread changes (a restart orphans old ids).
@@ -107,6 +111,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
 
   const active = terminals?.find((t) => t.terminalId === activeId);
   const showEmpty = !terminals || terminals.length === 0;
+  const workspaceLabel = workspace?.split(/[\\/]/).filter(Boolean).pop() ?? "workspace";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -118,7 +123,9 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
         >
           <Plus size={13} /> New terminal
         </button>
-        <span className="ml-auto text-[10px] text-text-tertiary">PowerShell · workspace</span>
+        <span className="ml-auto text-[10px] text-text-tertiary">
+          {active ? `${active.title} · ${workspaceLabel}` : `Shell · ${workspaceLabel}`}
+        </span>
       </div>
 
       {showEmpty ? (

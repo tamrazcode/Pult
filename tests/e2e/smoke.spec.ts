@@ -56,6 +56,7 @@ test("palette navigates to settings routes", async ({ page }) => {
   await page.getByLabel("Search commands").fill("keybindings");
   await page.getByRole("dialog").getByRole("option", { name: "Settings: Keybindings" }).click();
   await expect(page.getByText("Press a row, then the new combination")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText("Keybindings");
 
   await page.keyboard.press("Control+k");
   await page.getByLabel("Search commands").fill("appearance");
