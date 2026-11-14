@@ -664,3 +664,381 @@ fn load_thread_events_orders_across_runs() {
     assert_eq!(ids, vec!["r-1-0", "r-1-1", "r-2-0", "r-2-1", "r-2-2"]);
     assert!(store.load_thread_events("missing-thread").unwrap().is_empty());
 }
+
+#[test]
+fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
+    let path = unique_temp_path("migration_v3_to_v4");
+    remove_db_files(&path);
+
+    {
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch(
+            r#"
+            PRAGMA foreign_keys = ON;
+            CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                root_path TEXT NOT NULL,
+                color TEXT,
+                worktree_strategy TEXT NOT NULL DEFAULT 'root',
+                created_at INTEGER NOT NULL
+            );
+            CREATE TABLE threads (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NULL REFERENCES projects(id) ON DELETE SET NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                pinned INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                workspace TEXT,
+                main_repo TEXT,
+                worktree_name TEXT
+            );
+            CREATE TABLE runs (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                idx INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                model TEXT,
+                mode TEXT,
+                effort TEXT,
+                started_at INTEGER NOT NULL,
+                stopped_at INTEGER,
+                stop_reason TEXT,
+                error TEXT
+            );
+            CREATE TABLE events (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                seq INTEGER NOT NULL,
+                ts INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                payload TEXT NOT NULL,
+                UNIQUE(run_id, seq)
+            );
+            CREATE TABLE provider_session_refs (
+                thread_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                remote_session_id TEXT NOT NULL,
+                PRIMARY KEY(thread_id, instance_id)
+            );
+            CREATE TABLE settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE queue_items (
+                id TEXT PRIMARY KEY,
+                thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+                instance_id TEXT NOT NULL,
+                text TEXT NOT NULL,
+                images TEXT NOT NULL DEFAULT '[]',
+                created_at INTEGER NOT NULL
+            );
+            PRAGMA user_version = 3;
+            "#,
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO projects (id, name, root_path, color, worktree_strategy, created_at)
+             VALUES ('p-1', 'Pult', '/tmp/pult', '#346bf1', 'root', 1000)",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO threads (id, project_id, title, status, pinned, created_at, updated_at, workspace)
+             VALUES ('t-1', 'p-1', 'Existing thread', 'draft', 0, 1000, 2000, '/tmp/pult')",
+            [],
+        )
+        .unwrap();
+    }
+
+    let store = Store::open(&path).unwrap();
+
+    let version: i64 = store
+        .with_conn(|conn| {
+            conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+                .map_err(|e| sql("read user_version", e))
+        })
+        .unwrap();
+    assert_eq!(version, 4, "migration v4 should bump user_version to 4");
+
+    let has_pinned_col: bool = store
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(projects)")
+                .map_err(|e| sql("pragma table_info", e))?;
+            let cols = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| sql("pragma table_info rows", e))?;
+            for col in cols {
+                if col.map_err(|e| sql("col name", e))? == "pinned" {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        })
+        .unwrap();
+    assert!(has_pinned_col, "projects.pinned column must exist after v4 migration");
+
+    let raw_pinned: i64 = store
+        .with_conn(|conn| {
+            conn.query_row("SELECT pinned FROM projects WHERE id = 'p-1'", [], |row| row.get(0))
+                .map_err(|e| sql("read project pinned", e))
+        })
+        .unwrap();
+    assert_eq!(raw_pinned, 0, "projects.pinned must default to 0");
+
+    let proj = store.get_project("p-1").unwrap();
+    assert_eq!(proj.name, "Pult");
+    assert!(!proj.pinned);
+
+    let preserved = store.get_thread("t-1").unwrap();
+    assert_eq!(preserved.project_id.as_deref(), Some("p-1"));
+    assert_eq!(preserved.title, "Existing thread");
+    assert_eq!(preserved.workspace.as_deref(), Some("/tmp/pult"));
+    assert_eq!(preserved.updated_at, 2_000);
+
+    drop(store);
+    remove_db_files(&path);
+}
+
+#[test]
+fn projects_crud_ordering_partial_update_and_delete() {
+    use crate::store::records::ProjectRecord;
+
+    let store = Store::open_in_memory().unwrap();
+    let p_alpha = ProjectRecord {
+        id: "p-alpha".to_string(),
+        name: "Alpha".to_string(),
+        root_path: "/tmp/alpha".to_string(),
+        color: Some("#10b981".to_string()),
+        worktree_strategy: "root".to_string(),
+        pinned: false,
+        created_at: 1_000,
+    };
+    let p_beta = ProjectRecord {
+        id: "p-beta".to_string(),
+        name: "Beta".to_string(),
+        root_path: "/tmp/beta".to_string(),
+        color: None,
+        worktree_strategy: "root".to_string(),
+        pinned: false,
+        created_at: 2_000,
+    };
+    let p_pinned = ProjectRecord {
+        id: "p-pinned".to_string(),
+        name: "Zeta".to_string(),
+        root_path: "/tmp/zeta".to_string(),
+        color: Some("#346bf1".to_string()),
+        worktree_strategy: "worktree".to_string(),
+        pinned: true,
+        created_at: 500,
+    };
+
+    store.create_project(&p_alpha).unwrap();
+    store.create_project(&p_beta).unwrap();
+    store.create_project(&p_pinned).unwrap();
+
+    assert_eq!(store.get_project("p-alpha").unwrap(), p_alpha);
+
+    let listed = store.list_projects().unwrap();
+    assert_eq!(listed.len(), 3);
+    assert_eq!(
+        listed[0].id, "p-pinned",
+        "pinned project must sort before unpinned projects regardless of name/created_at"
+    );
+
+    // Partial update: only name + color
+    let updated = store
+        .update_project("p-alpha", Some("Alpha Renamed"), Some("#ef4444"), None, None)
+        .unwrap();
+    assert_eq!(updated.name, "Alpha Renamed");
+    assert_eq!(updated.color.as_deref(), Some("#ef4444"));
+    assert_eq!(updated.worktree_strategy, "root");
+    assert!(!updated.pinned);
+
+    // Partial update: only worktree_strategy + pinned
+    let updated2 = store
+        .update_project("p-alpha", None, None, Some("worktree"), Some(true))
+        .unwrap();
+    assert_eq!(updated2.name, "Alpha Renamed");
+    assert_eq!(updated2.color.as_deref(), Some("#ef4444"));
+    assert_eq!(updated2.worktree_strategy, "worktree");
+    assert!(updated2.pinned);
+
+    let fetched = store.get_project("p-alpha").unwrap();
+    assert_eq!(fetched, updated2);
+
+    store.delete_project("p-beta").unwrap();
+    assert!(store.get_project("p-beta").is_err(), "deleted project must error on get_project");
+    assert_eq!(store.list_projects().unwrap().len(), 2);
+}
+
+#[test]
+fn delete_project_nulls_thread_project_id_without_deleting_thread() {
+    use crate::store::records::ProjectRecord;
+
+    let store = Store::open_in_memory().unwrap();
+    let project = ProjectRecord {
+        id: "p-del".to_string(),
+        name: "Disposable".to_string(),
+        root_path: "/tmp/disposable".to_string(),
+        color: None,
+        worktree_strategy: "root".to_string(),
+        pinned: false,
+        created_at: 1_000,
+    };
+    store.create_project(&project).unwrap();
+
+    let mut th = thread("t-proj", 2_000);
+    th.project_id = Some("p-del".to_string());
+    th.workspace = Some("/tmp/disposable".to_string());
+    store.create_thread(&th).unwrap();
+
+    store.delete_project("p-del").unwrap();
+
+    assert!(store.get_project("p-del").is_err());
+    let surviving = store.get_thread("t-proj").unwrap();
+    assert_eq!(surviving.id, "t-proj");
+    assert_eq!(surviving.project_id, None, "deleting project must NULL out thread.project_id");
+    assert_eq!(surviving.workspace.as_deref(), Some("/tmp/disposable"));
+}
+
+#[tokio::test]
+async fn threads_create_defaults_workspace_and_worktree_from_project() {
+    use std::sync::Arc;
+    use crate::runtime::{AgentRuntime, EventSink};
+    use crate::store::records::ProjectRecord;
+
+    struct NullSink;
+    impl EventSink for NullSink {
+        fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+        fn notify(&self, _title: &str, _body: &str) {}
+    }
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root_dir = std::env::temp_dir().join(format!("pult_proj_root_{}_{}", std::process::id(), nanos));
+    let wt_repo_dir = std::env::temp_dir().join(format!("pult_proj_wt_{}_{}", std::process::id(), nanos));
+    std::fs::create_dir_all(&root_dir).unwrap();
+    std::fs::create_dir_all(&wt_repo_dir).unwrap();
+
+    // Initialize a real git repo for the worktree_strategy = "worktree" project.
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["config", "user.email", "t@t"][..],
+        &["config", "user.name", "t"][..],
+    ] {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&wt_repo_dir)
+            .output()
+            .expect("git init/config");
+        assert!(out.status.success(), "git {args:?} failed");
+    }
+    std::fs::write(wt_repo_dir.join("README.md"), "hello\n").unwrap();
+    for args in [&["add", "."][..], &["commit", "-q", "-m", "init"][..]] {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&wt_repo_dir)
+            .output()
+            .expect("git add/commit");
+        assert!(out.status.success(), "git {args:?} failed");
+    }
+
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let runtime = Arc::new(AgentRuntime::new(Arc::clone(&store), Arc::new(NullSink)));
+
+    let root_canon = root_dir.canonicalize().unwrap().to_string_lossy().into_owned();
+    let wt_canon = wt_repo_dir.canonicalize().unwrap().to_string_lossy().into_owned();
+
+    store
+        .create_project(&ProjectRecord {
+            id: "proj-root".to_string(),
+            name: "RootProj".to_string(),
+            root_path: root_canon.clone(),
+            color: None,
+            worktree_strategy: "root".to_string(),
+            pinned: false,
+            created_at: 1_000,
+        })
+        .unwrap();
+    store
+        .create_project(&ProjectRecord {
+            id: "proj-wt".to_string(),
+            name: "WtProj".to_string(),
+            root_path: wt_canon.clone(),
+            color: None,
+            worktree_strategy: "worktree".to_string(),
+            pinned: false,
+            created_at: 2_000,
+        })
+        .unwrap();
+
+    // 1. Project with worktree_strategy = "root" and no explicit workspace/worktree override:
+    let t_root = crate::ipc::create_thread_with_runtime(
+        &runtime,
+        Some("proj-root".to_string()),
+        "Root thread".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(t_root.project_id.as_deref(), Some("proj-root"));
+    assert_eq!(
+        std::fs::canonicalize(t_root.workspace.as_deref().unwrap()).unwrap(),
+        std::fs::canonicalize(&root_canon).unwrap(),
+        "thread created with project_id must default workspace to project.root_path"
+    );
+    assert!(t_root.main_repo.is_none());
+    assert!(t_root.worktree_name.is_none());
+
+    // 2. Project with worktree_strategy = "worktree" and no explicit worktree override:
+    let t_wt = crate::ipc::create_thread_with_runtime(
+        &runtime,
+        Some("proj-wt".to_string()),
+        "Worktree thread".to_string(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(t_wt.project_id.as_deref(), Some("proj-wt"));
+    assert!(t_wt.worktree_name.is_some(), "must create worktree when project.worktree_strategy == 'worktree'");
+    assert_eq!(
+        std::fs::canonicalize(t_wt.main_repo.as_deref().unwrap()).unwrap(),
+        std::fs::canonicalize(&wt_canon).unwrap()
+    );
+    let wt_ws = std::fs::canonicalize(t_wt.workspace.as_deref().unwrap()).unwrap();
+    assert!(wt_ws.is_dir());
+    assert_ne!(wt_ws, std::fs::canonicalize(&wt_canon).unwrap());
+
+    // 3. Explicit caller override worktree = Some(false) overrides project.worktree_strategy:
+    let t_override = crate::ipc::create_thread_with_runtime(
+        &runtime,
+        Some("proj-wt".to_string()),
+        "Override thread".to_string(),
+        None,
+        Some(false),
+    )
+    .await
+    .unwrap();
+    assert!(t_override.worktree_name.is_none());
+    assert!(t_override.main_repo.is_none());
+    assert_eq!(
+        std::fs::canonicalize(t_override.workspace.as_deref().unwrap()).unwrap(),
+        std::fs::canonicalize(&wt_canon).unwrap()
+    );
+
+    let _ = std::fs::remove_dir_all(&root_dir);
+    let _ = std::fs::remove_dir_all(&wt_repo_dir);
+}
+

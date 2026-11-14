@@ -628,7 +628,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               ? "Decision needed — respond to the approval above"
               : "Ask anything. @ files, / commands"
           }
-          className="block max-h-60 w-full resize-none bg-transparent px-4 pt-3.5 text-base text-text-primary placeholder:text-text-tertiary focus:outline-none"
+          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-4 pt-4 pb-2 text-base text-text-primary placeholder:text-text-tertiary focus:outline-none"
         />
         <div className="flex items-center gap-1.5 px-3 pb-2.5 pt-1">
           {imageCapable ? (

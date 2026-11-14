@@ -1591,3 +1591,123 @@ fn caps_change_event_is_emitted_only_on_actual_change() {
     assert_eq!(caps_events.len(), 2);
     assert_eq!(caps_events[1].1["instanceId"].as_str(), Some("mock"));
 }
+
+#[tokio::test]
+async fn workspace_missing_fails_dispatch_without_fallback() {
+    use crate::store::records::ProjectRecord;
+
+    let _env = env_lock();
+    let tag = crate::events::now_millis();
+    let global_sandbox = std::env::temp_dir().join(format!("pult-ws-missing-global-{tag}"));
+    let deleted_ws = std::env::temp_dir().join(format!("pult-ws-missing-dir-{tag}"));
+    let deleted_proj_dir = std::env::temp_dir().join(format!("pult-ws-missing-proj-{tag}"));
+
+    let _ = std::fs::remove_dir_all(&global_sandbox);
+    let _ = std::fs::remove_dir_all(&deleted_ws);
+    let _ = std::fs::remove_dir_all(&deleted_proj_dir);
+    std::fs::create_dir_all(&global_sandbox).unwrap();
+    std::fs::create_dir_all(&deleted_ws).unwrap();
+    std::fs::create_dir_all(&deleted_proj_dir).unwrap();
+
+    let spawn_log = global_sandbox.join("spawns.log");
+    let spawn_log_str = spawn_log.to_string_lossy().into_owned();
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &global_sandbox);
+
+    let (runtime, _sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[(
+        "MOCK_SPAWN_LOG",
+        spawn_log_str.as_str(),
+    )])]);
+
+    // Case 1: Thread with explicit workspace pointing to a deleted directory.
+    let mut thread_ws = thread_record("th-ws-missing");
+    thread_ws.workspace = Some(deleted_ws.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread_ws).expect("create thread_ws");
+    std::fs::remove_dir_all(&deleted_ws).unwrap();
+
+    match runtime.dispatch(&thread_ws, "hello", &[], "mock") {
+        Err(err) => {
+            assert!(
+                matches!(&err, crate::PultError::Internal { code, .. } if code == "workspace.missing"),
+                "expected workspace.missing error code, got: {err:?}"
+            );
+        }
+        Ok(run) => {
+            wait_for(Duration::from_secs(5), || {
+                runtime
+                    .store()
+                    .list_runs(&thread_ws.id)
+                    .map(|runs| runs.iter().any(|r| r.id == run.id && r.status != "running"))
+                    .unwrap_or(false)
+            })
+            .await;
+            let runs = runtime.store().list_runs(&thread_ws.id).unwrap();
+            let finished = runs.iter().find(|r| r.id == run.id).expect("run");
+            assert_eq!(finished.status, "failed", "missing workspace must fail run, not succeed in global root");
+            let err_text = finished.error.as_deref().unwrap_or("");
+            assert!(
+                err_text.contains("workspace.missing") || err_text.contains("not found"),
+                "expected workspace.missing/not found error detail, got: {err_text:?}"
+            );
+        }
+    }
+    assert!(
+        !spawn_log.exists(),
+        "agent must NOT be spawned in global root when thread workspace is missing"
+    );
+
+    // Case 2: Thread with project_id (workspace: None) whose project root_path was deleted.
+    runtime
+        .store()
+        .create_project(&ProjectRecord {
+            id: "proj-deleted-dir".to_string(),
+            name: "DeletedDirProj".to_string(),
+            root_path: deleted_proj_dir.to_string_lossy().into_owned(),
+            color: None,
+            worktree_strategy: "root".to_string(),
+            pinned: false,
+            created_at: tag,
+        })
+        .expect("create project");
+    let mut thread_proj = thread_record("th-proj-ws-missing");
+    thread_proj.project_id = Some("proj-deleted-dir".to_string());
+    thread_proj.workspace = None;
+    runtime.store().create_thread(&thread_proj).expect("create thread_proj");
+    std::fs::remove_dir_all(&deleted_proj_dir).unwrap();
+
+    match runtime.dispatch(&thread_proj, "hello", &[], "mock") {
+        Err(err) => {
+            assert!(
+                matches!(&err, crate::PultError::Internal { code, .. } if code == "workspace.missing"),
+                "expected workspace.missing error code for missing project root_path, got: {err:?}"
+            );
+        }
+        Ok(run) => {
+            wait_for(Duration::from_secs(5), || {
+                runtime
+                    .store()
+                    .list_runs(&thread_proj.id)
+                    .map(|runs| runs.iter().any(|r| r.id == run.id && r.status != "running"))
+                    .unwrap_or(false)
+            })
+            .await;
+            let runs = runtime.store().list_runs(&thread_proj.id).unwrap();
+            let finished = runs.iter().find(|r| r.id == run.id).expect("run");
+            assert_eq!(finished.status, "failed", "missing project root_path must fail run, not succeed in global root");
+            let err_text = finished.error.as_deref().unwrap_or("");
+            assert!(
+                err_text.contains("workspace.missing") || err_text.contains("not found"),
+                "expected workspace.missing/not found error detail, got: {err_text:?}"
+            );
+        }
+    }
+    assert!(
+        !spawn_log.exists(),
+        "agent must NOT be spawned in global root when project root_path is missing"
+    );
+
+    let _ = std::fs::remove_dir_all(&global_sandbox);
+}
+
