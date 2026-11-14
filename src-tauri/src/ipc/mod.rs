@@ -126,7 +126,11 @@ pub(crate) async fn create_thread_with_runtime(
                 .to_string(),
         );
         main_repo = Some(repo.to_string_lossy().into_owned());
-        workspace_value = Some(outcome.path);
+        workspace_value = Some(
+            crate::runtime::clean_verbatim(std::path::PathBuf::from(outcome.path))
+                .to_string_lossy()
+                .into_owned(),
+        );
     }
     // A project may be deleted while the worktree is being created: do not
     // persist a thread that the FK would reject, and clean the worktree.
@@ -258,9 +262,9 @@ pub fn projects_delete(
         .map(|thread| thread.id)
         .collect();
     runtime.store().delete_project(&id)?;
-    runtime
-        .pool
-        .invalidate_root(std::path::Path::new(&project.root_path));
+    runtime.pool.invalidate_root(&crate::runtime::clean_verbatim(
+        std::path::PathBuf::from(&project.root_path),
+    ));
     emit_projects(runtime.inner());
     for thread_id in affected {
         runtime.emit_thread_updated(&thread_id);
