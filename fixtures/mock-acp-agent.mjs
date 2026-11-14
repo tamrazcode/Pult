@@ -44,13 +44,74 @@ const MODES = {
   ],
 };
 
-/** PermissionOption list — schema $defs/PermissionOption (optionId, name, kind). */
+/** PermissionOption list - schema $defs/PermissionOption (optionId, name, kind). */
 const PERMISSION_OPTIONS = [
   { optionId: "mock-allow", name: "Allow", kind: "allow_once" },
   { optionId: "mock-allow-always", name: "Always allow", kind: "allow_always" },
   { optionId: "mock-reject", name: "Reject", kind: "reject_once" },
   { optionId: "mock-reject-always", name: "Always reject", kind: "reject_always" },
 ];
+
+/** Per-session config state for session/set_config_option (model / effort / toggle). */
+const SESSION_CONFIGS = new Map();
+
+function sessionConfig(sessionId) {
+  let config = SESSION_CONFIGS.get(sessionId);
+  if (!config) {
+    config = { model: "mock-fast", thought_level: "medium", web_search: false };
+    SESSION_CONFIGS.set(sessionId, config);
+  }
+  return config;
+}
+
+function thoughtLevelsFor(model) {
+  return model === "mock-v1" ? ["low", "medium"] : ["low", "medium", "high"];
+}
+
+function configOptionsFor(config) {
+  return [
+    {
+      id: "model",
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue: config.model,
+      options: [
+        {
+          group: "recommended",
+          name: "Recommended",
+          options: [
+            { value: "mock-fast", name: "Mock Fast" },
+            { value: "mock-pro", name: "Mock Pro" },
+          ],
+        },
+        {
+          group: "legacy",
+          name: "Legacy",
+          options: [{ value: "mock-v1", name: "Mock v1" }],
+        },
+      ],
+    },
+    {
+      id: "thought_level",
+      name: "Thought level",
+      category: "thought_level",
+      type: "select",
+      currentValue: config.thought_level,
+      options: thoughtLevelsFor(config.model).map((value) => ({
+        value,
+        name: value[0].toUpperCase() + value.slice(1),
+      })),
+    },
+    {
+      id: "web_search",
+      name: "Web search",
+      category: "other",
+      type: "boolean",
+      currentValue: config.web_search,
+    },
+  ];
+}
 
 // ---------------------------------------------------------------------------
 // Wire helpers
@@ -570,7 +631,54 @@ function handleInitialize(id) {
 function handleNewSession(id) {
   const sessionId = `mock-session-${++sessionCounter}`;
   sessions.add(sessionId);
-  sendResult(id, { sessionId, modes: MODES });
+  sendResult(id, {
+    sessionId,
+    modes: MODES,
+    configOptions: configOptionsFor(sessionConfig(sessionId)),
+  });
+}
+
+function handleSetConfigOption(id, params) {
+  const sessionId = params && params.sessionId;
+  const configId = params && params.configId;
+  const value = params && params.value;
+  if (typeof sessionId !== "string" || !sessions.has(sessionId) || typeof configId !== "string") {
+    sendError(id, -32602, "set_config_option: unknown session or config id");
+    return;
+  }
+  const config = sessionConfig(sessionId);
+  if (configId === "model") {
+    if (typeof value !== "string" || !["mock-fast", "mock-pro", "mock-v1"].includes(value)) {
+      sendError(id, -32602, `set_config_option: bad model '${value}'`);
+      return;
+    }
+    config.model = value;
+    if (!thoughtLevelsFor(value).includes(config.thought_level)) {
+      config.thought_level = "medium";
+    }
+  } else if (configId === "thought_level") {
+    const allowed = thoughtLevelsFor(config.model);
+    if (typeof value !== "string" || !allowed.includes(value)) {
+      sendError(id, -32602, `set_config_option: bad thought level '${value}'`);
+      return;
+    }
+    config.thought_level = value;
+  } else if (configId === "web_search") {
+    if (params.type !== "boolean" || typeof value !== "boolean") {
+      sendError(id, -32602, "set_config_option: web_search needs a boolean value");
+      return;
+    }
+    config.web_search = value;
+  } else {
+    sendError(id, -32602, `set_config_option: unknown config '${configId}'`);
+    return;
+  }
+  const configOptions = configOptionsFor(config);
+  notifySessionUpdate(sessionId, {
+    sessionUpdate: "config_option_update",
+    configOptions,
+  });
+  sendResult(id, { configOptions });
 }
 
 function handleSetMode(id, params) {
@@ -598,9 +706,9 @@ function handleLoadSession(id, params) {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "(replayed) earlier agent reply" },
   });
-  // $defs/LoadSessionResponse carries modes/configOptions only (no sessionId —
+  // $defs/LoadSessionResponse carries modes/configOptions only (no sessionId -
   // the client already knows the id it asked to load).
-  sendResult(id, { modes: MODES });
+  sendResult(id, { modes: MODES, configOptions: configOptionsFor(sessionConfig(sessionId)) });
 }
 
 function handlePrompt(id, params) {
@@ -709,8 +817,7 @@ function handleMessage(line) {
       handleSetMode(msg.id, params);
       return;
     case "session/set_config_option":
-      // $defs/SetSessionConfigOptionResponse requires configOptions.
-      sendResult(msg.id, { configOptions: [] });
+      handleSetConfigOption(msg.id, params);
       return;
     case "session/prompt":
       handlePrompt(msg.id, params);

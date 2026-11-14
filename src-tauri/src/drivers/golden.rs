@@ -497,3 +497,77 @@ async fn golden_image_prompt_round_trips() {
     answer_task.abort();
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+/// §5.4 config pickers: session/new advertises model, thought level and a
+/// boolean toggle; set_config_option updates them and rejects bad values.
+#[tokio::test]
+async fn golden_config_options_new_session_and_set_config_option() {
+    use crate::protocol::types::{
+        ConfigOptionValue, SessionConfigOptionKind, SessionConfigSelectOptions,
+    };
+    if !mock_available() {
+        panic!("fixtures/mock-acp-agent.mjs missing");
+    }
+    let (conn, _streams) = spawn_mock(&[]);
+    conn.initialize().await.expect("initialize");
+    let session = conn.new_session(".").await.expect("new session");
+
+    let ids: Vec<&str> = session.config_options.iter().map(|o| o.id.as_str()).collect();
+    assert_eq!(ids, vec!["model", "thought_level", "web_search"]);
+    match &session.config_options[0].kind {
+        SessionConfigOptionKind::Select { current_value, options } => {
+            assert_eq!(current_value, "mock-fast");
+            assert!(matches!(options, SessionConfigSelectOptions::Grouped(g) if g.len() == 2));
+        }
+        other => panic!("model must be a select: {other:?}"),
+    }
+
+    let updated = conn
+        .set_config_option(
+            &session.session_id,
+            "thought_level",
+            ConfigOptionValue::String("high".into()),
+        )
+        .await
+        .expect("set thought level");
+    let thought = updated
+        .config_options
+        .iter()
+        .find(|o| o.id == "thought_level")
+        .expect("thought option");
+    assert!(matches!(
+        thought.kind,
+        SessionConfigOptionKind::Select { ref current_value, .. } if current_value == "high"
+    ));
+
+    let toggled = conn
+        .set_config_option(
+            &session.session_id,
+            "web_search",
+            ConfigOptionValue::Bool(true),
+        )
+        .await
+        .expect("set boolean");
+    let search = toggled
+        .config_options
+        .iter()
+        .find(|o| o.id == "web_search")
+        .expect("search option");
+    assert!(matches!(
+        search.kind,
+        SessionConfigOptionKind::Boolean { current_value: true }
+    ));
+
+    let bad = conn
+        .set_config_option(
+            &session.session_id,
+            "thought_level",
+            ConfigOptionValue::String("bogus".into()),
+        )
+        .await;
+    match bad {
+        Err(DriverError::Rpc(err)) => assert_eq!(err.code, -32602),
+        other => panic!("expected -32602, got {other:?}"),
+    }
+    conn.kill();
+}
