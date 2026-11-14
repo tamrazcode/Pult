@@ -39,6 +39,7 @@ import type { PlanEntry } from "../../lib/types";
 import { runsRespondPermission } from "../../lib/ipc";
 import { Button } from "../ui/button";
 import Markdown from "./Markdown";
+import { HistoryTicks, type HistoryTick } from "./HistoryTicks";
 
 const TOOL_ICONS: Record<string, LucideIcon> = {
   read: Eye,
@@ -92,14 +93,17 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
   const entries = threadTimelineItems(runs, views);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
+  const [activeHistoryKey, setActiveHistoryKey] = useState<string | null>(null);
 
   // Reset the window when switching threads, not when a new run starts: the
   // merged transcript of the same thread must keep its expanded window.
   useEffect(() => {
     setWindowSize(TRANSCRIPT_WINDOW);
+    setActiveHistoryKey(null);
   }, [threadId]);
 
   // Follow the stream: any new/patched view scrolls the sentinel into view.
@@ -122,51 +126,97 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const retryText = [...view.items].reverse().find((item) => item.type === "user")?.text;
   const hiddenCount = Math.max(entries.length - windowSize, 0);
   const windowedEntries = entries.slice(hiddenCount);
+  const historyTicks: HistoryTick[] = [];
+  entries.forEach((entry, globalIndex) => {
+    if (entry.item.type === "user") {
+      historyTicks.push({
+        key: entry.key,
+        label: entry.item.text.trim().slice(0, 80),
+        globalIndex,
+      });
+    }
+  });
+
+  const jumpToTick = (tick: HistoryTick) => {
+    if (tick.globalIndex < hiddenCount) {
+      setWindowSize((size) => Math.max(size, entries.length - tick.globalIndex + 20));
+    }
+    // After the expansion renders, scroll the newly mounted row into view.
+    requestAnimationFrame(() => {
+      scrollRef.current
+        ?.querySelector(`[data-history-key="${tick.key}"]`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+  };
+
+  // Active tick = topmost user row still visible in the scroll container.
+  const trackActiveTick = () => {
+    const container = scrollRef.current;
+    if (!container) return;
+    const top = container.getBoundingClientRect().top;
+    let current: string | null = null;
+    for (const row of container.querySelectorAll<HTMLElement>("[data-history-key]")) {
+      if (row.getBoundingClientRect().bottom > top) {
+        current = row.dataset.historyKey ?? null;
+        break;
+      }
+    }
+    setActiveHistoryKey((previous) => (previous === current ? previous : current));
+  };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
-        {hiddenCount > 0 && (
-          <button
-            onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}
-            className="mx-auto rounded-(--radius-sm) border border-border-subtle px-3 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            Earlier messages ({hiddenCount} hidden)
-          </button>
-        )}
-        {windowedEntries.map(({ key, item, showCaret }) => (
-          <ChatItemRow key={key} item={item} showCaret={showCaret} />
-        ))}
+    <div className="relative flex min-h-0 flex-1">
+      <div
+        ref={scrollRef}
+        onScroll={trackActiveTick}
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+      >
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}
+              className="mx-auto rounded-(--radius-sm) border border-border-subtle px-3 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              Earlier messages ({hiddenCount} hidden)
+            </button>
+          )}
+          {windowedEntries.map(({ key, item, showCaret }) => (
+            <div key={key} data-history-key={key}>
+              <ChatItemRow item={item} showCaret={showCaret} />
+            </div>
+          ))}
 
-        {entries.length === 0 && view.streaming && (
-          <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-            Working…
-          </div>
-        )}
+          {entries.length === 0 && view.streaming && (
+            <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+              Working…
+            </div>
+          )}
 
-        {view.plan && view.plan.length > 0 && <PlanCard entries={view.plan} />}
+          {view.plan && view.plan.length > 0 && <PlanCard entries={view.plan} />}
 
-        {view.pendingApproval && runId && (
-          <ApprovalCard runId={runId} approval={view.pendingApproval} />
-        )}
+          {view.pendingApproval && runId && (
+            <ApprovalCard runId={runId} approval={view.pendingApproval} />
+          )}
 
-        {crashed && (
-          <CrashBanner
-            detail={view.error ?? "The run failed without a reported reason"}
-            retryText={retryText}
-            onRetry={
-              threadId && retryText ? () => void retryLastMessage(threadId, retryText) : undefined
-            }
-          />
-        )}
+          {crashed && (
+            <CrashBanner
+              detail={view.error ?? "The run failed without a reported reason"}
+              retryText={retryText}
+              onRetry={
+                threadId && retryText ? () => void retryLastMessage(threadId, retryText) : undefined
+              }
+            />
+          )}
 
-        {!view.streaming && view.stopReason && (
-          <FinishDivider stopReason={view.stopReason} usage={view.usage} />
-        )}
+          {!view.streaming && view.stopReason && (
+            <FinishDivider stopReason={view.stopReason} usage={view.usage} />
+          )}
 
-        <div ref={bottomRef} />
+          <div ref={bottomRef} />
+        </div>
       </div>
+      <HistoryTicks ticks={historyTicks} activeKey={activeHistoryKey} onJump={jumpToTick} />
     </div>
   );
 }
