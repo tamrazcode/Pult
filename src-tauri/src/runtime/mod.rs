@@ -1,8 +1,8 @@
-//! AgentRuntime (§4.4): run orchestration, permission policy, event fan-out
+﻿//! AgentRuntime (В§4.4): run orchestration, permission policy, event fan-out
 //! (persist + emit to the UI), and the fs sandbox for client callbacks.
 //!
 //! M1 simplifications (DEVLOG): one ACP connection per RUN (spawn on dispatch,
-//! kill on finish — the mock agent is single-session; pooling lands in M6);
+//! kill on finish вЂ” the mock agent is single-session; pooling lands in M6);
 //! supervised permission policy only (auto modes + tests land in M3); one
 //! implicit workspace project (projects UI comes later).
 
@@ -30,7 +30,7 @@ use crate::store::Store;
 
 /// Event fan-out seam: the production sink is the Tauri app handle; tests
 /// record emissions in memory. Payloads are serialized once here. `notify`
-/// posts an OS notification when the window is unfocused (§5.5); the focus
+/// posts an OS notification when the window is unfocused (В§5.5); the focus
 /// check lives in the sink implementation.
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
@@ -84,6 +84,10 @@ pub struct InstanceInfo {
     pub modes: Vec<crate::protocol::types::SessionMode>,
     /// Session config options (model, thought level, toggles) from the cache.
     pub config_options: Vec<SessionConfigOption>,
+    /// Auth methods advertised at the last handshake.
+    pub auth_methods: Vec<crate::protocol::types::AuthMethod>,
+    /// A hint explaining why the agent still needs sign-in.
+    pub auth_hint: Option<String>,
 }
 
 /// Capabilities observed during a run's handshake, cached per instance so the
@@ -96,6 +100,10 @@ struct CachedCaps {
     modes: Vec<crate::protocol::types::SessionMode>,
     /// Session config options from the last handshake or update.
     config_options: Vec<SessionConfigOption>,
+    /// Auth state observed at the last preflight/handshake.
+    auth_methods: Vec<crate::protocol::types::AuthMethod>,
+    auth_required: bool,
+    auth_hint: Option<String>,
 }
 
 /// Result of the queue-aware send: either a fresh run or a queue slot.
@@ -147,7 +155,7 @@ struct PendingPermission {
     wire_id: RequestId,
     /// ACP ToolKind of the pending tool call (the remembered key class).
     tool_kind: String,
-    /// optionId → ACP kind, for remembered-decision bookkeeping.
+    /// optionId в†’ ACP kind, for remembered-decision bookkeeping.
     option_kinds: HashMap<String, String>,
 }
 
@@ -201,21 +209,21 @@ struct RunState {
 }
 
 struct Inner {
-    /// Active runs: run_id → live connection/session.
+    /// Active runs: run_id в†’ live connection/session.
     runs: HashMap<String, RunState>,
     /// Per-run queue the IPC layer pushes UI answers into.
     answer_queues: HashMap<String, mpsc::UnboundedSender<(String, AnswerPayload)>>,
-    /// thread_id → active run_id (§4.2: at most one active run per thread).
+    /// thread_id в†’ active run_id (В§4.2: at most one active run per thread).
     threads_working: HashMap<String, String>,
-    /// instance_id → capabilities observed at the last handshake.
+    /// instance_id в†’ capabilities observed at the last handshake.
     capabilities: HashMap<String, CachedCaps>,
-    /// thread_id → permission mode override (settings default otherwise).
+    /// thread_id в†’ permission mode override (settings default otherwise).
     permission_modes: HashMap<String, PermissionMode>,
-    /// Terminal callbacks registry (§5.5); survives runs for M5 reattach.
+    /// Terminal callbacks registry (В§5.5); survives runs for M5 reattach.
     terminals: Arc<TerminalRegistry>,
     /// User-facing PTY terminals (M5 panel): ConPTY-backed, event-streamed.
     ptys: Arc<crate::runtime::ptys::PtyRegistry>,
-    /// The agent matrix (§4.5 config.toml instances; mock fallback).
+    /// The agent matrix (В§4.5 config.toml instances; mock fallback).
     instances: Vec<crate::config::InstanceSpec>,
 }
 
@@ -239,7 +247,7 @@ fn clean_verbatim(path: PathBuf) -> PathBuf {
 impl AgentRuntime {
     pub fn new(store: Arc<Store>, sink: Arc<dyn EventSink>) -> Self {
         // Runs live only as long as the process: threads left in a run-state
-        // by a previous shutdown are orphans — make them drafts at boot.
+        // by a previous shutdown are orphans вЂ” make them drafts at boot.
         match store.reset_orphaned_run_states() {
             Ok(0) => {}
             Ok(n) => tracing::info!(target: "pult::runtime", count = n, "reset orphaned run states at boot"),
@@ -281,7 +289,7 @@ impl AgentRuntime {
         &self.store
     }
 
-    /// Agent matrix projection (§4.3): configured instances + capabilities
+    /// Agent matrix projection (В§4.3): configured instances + capabilities
     /// from the last handshake each completed (empty until the first run).
     pub fn instances(&self) -> Vec<InstanceInfo> {
         let inner = self.inner.lock().expect("runtime lock poisoned");
@@ -294,6 +302,9 @@ impl AgentRuntime {
                     load_session: false,
                     modes: Vec::new(),
                     config_options: Vec::new(),
+                    auth_methods: Vec::new(),
+                    auth_required: false,
+                    auth_hint: None,
                 });
                 InstanceInfo {
                     id: spec.id.clone(),
@@ -307,14 +318,29 @@ impl AgentRuntime {
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
-                    status: "stopped".to_string(),
+                    status: if caps.auth_required {
+                        "needs_auth".to_string()
+                    } else {
+                        "stopped".to_string()
+                    },
                     prompt_image: caps.prompt_image,
                     load_session: caps.load_session,
                     modes: caps.modes,
                     config_options: caps.config_options,
+                    auth_methods: caps.auth_methods,
+                    auth_hint: caps.auth_hint,
                 }
             })
             .collect()
+    }
+
+    /// Test seam: swap the registry without writing `config.toml`.
+    #[cfg(test)]
+    pub fn set_instances_in_memory(&self, specs: Vec<crate::config::InstanceSpec>) {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .instances = specs;
     }
 
     /// Spawn configuration for an instance (M6): `"mock"` resolves the
@@ -335,13 +361,25 @@ impl AgentRuntime {
         };
         if !spec.enabled {
             return Err(crate::PultError::internal(format!(
-                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
         match spec.driver.as_str() {
-            "mock" => mock_spawn_config().ok_or_else(|| {
-                crate::PultError::internal("mock agent script not found (fixtures/mock-acp-agent.mjs)")
-            }),
+            "mock" => {
+                let mut config = mock_spawn_config().ok_or_else(|| {
+                    crate::PultError::internal(
+                        "mock agent script not found (fixtures/mock-acp-agent.mjs)",
+                    )
+                })?;
+                // Per-instance env wins: lets tests (and users) scope mock
+                // scenarios without touching the process environment.
+                config.env.extend(
+                    spec.env
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone())),
+                );
+                Ok(config)
+            }
             "acp" => Ok(SpawnConfig {
                 command: spec.command.clone(),
                 args: spec.args.clone(),
@@ -385,8 +423,8 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Diagnostics (§8 M6): last raw protocol frames from any live run of
-    /// this instance; no live session → typed error.
+    /// Diagnostics (В§8 M6): last raw protocol frames from any live run of
+    /// this instance; no live session в†’ typed error.
     pub fn diagnostics_frames(&self, instance_id: &str) -> Result<Vec<String>, crate::PultError> {
         let inner = self.inner.lock().expect("runtime lock poisoned");
         for state in inner.runs.values() {
@@ -395,11 +433,11 @@ impl AgentRuntime {
             }
         }
         Err(crate::PultError::internal(format!(
-            "no live session for {instance_id} — frames appear while a run is active"
+            "no live session for {instance_id} вЂ” frames appear while a run is active"
         )))
     }
 
-    /// Switches the session mode (§5.4 session/set_mode). The choice is
+    /// Switches the session mode (В§5.4 session/set_mode). The choice is
     /// remembered even when no run is live (connection-per-run): the next
     /// dispatch applies it before its first prompt.
     pub fn set_mode(&self, thread_id: &str, mode_id: &str) -> Result<(), crate::PultError> {
@@ -420,10 +458,10 @@ impl AgentRuntime {
             }
         };
         let mode_id = mode_id.to_string();
-        // Sync commands run on the main thread — reach the reactor through a
+        // Sync commands run on the main thread вЂ” reach the reactor through a
         // handle instead of panicking outside the tokio context.
         let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            crate::PultError::internal("no tokio runtime — cannot reach the agent process")
+            crate::PultError::internal("no tokio runtime вЂ” cannot reach the agent process")
         })?;
         handle.spawn(async move {
             if let Err(err) = conn.set_mode(&session_id, &mode_id).await {
@@ -506,7 +544,7 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Queue-aware send (§6.1 composer semantics): if the thread is working,
+    /// Queue-aware send (В§6.1 composer semantics): if the thread is working,
     /// the message is stored and auto-dispatches when the active run ends;
     /// otherwise it starts a run immediately.
     pub fn send(
@@ -545,7 +583,7 @@ impl AgentRuntime {
         })
     }
 
-    /// The thread's live run id, if any (§4.2: at most one active run).
+    /// The thread's live run id, if any (В§4.2: at most one active run).
     pub fn active_run_for(&self, thread_id: &str) -> Option<String> {
         self.inner
             .lock()
@@ -569,7 +607,7 @@ impl AgentRuntime {
 
     /// Remembers handshake capabilities per instance for composer gating and
     /// the M6 mode picker (modes come from the session handshake). An empty
-    /// mode list preserves the previously cached one — resumes that carry no
+    /// mode list preserves the previously cached one вЂ” resumes that carry no
     /// advertised list must not blind the picker.
     fn cache_capabilities(
         &self,
@@ -600,8 +638,42 @@ impl AgentRuntime {
                 load_session: caps.load_session,
                 modes,
                 config_options,
+                auth_methods: previous
+                    .as_ref()
+                    .map(|c| c.auth_methods.clone())
+                    .unwrap_or_default(),
+                auth_required: previous.as_ref().map(|c| c.auth_required).unwrap_or(false),
+                auth_hint: previous.and_then(|c| c.auth_hint),
             },
         );
+    }
+
+    /// Records the auth state observed at preflight/authenticate/session start.
+    fn cache_auth_state(
+        &self,
+        instance_id: &str,
+        auth_methods: Vec<crate::protocol::types::AuthMethod>,
+        auth_required: bool,
+        auth_hint: Option<String>,
+    ) {
+        let mut inner = self.inner.lock().expect("runtime lock poisoned");
+        let caps = inner
+            .capabilities
+            .entry(instance_id.to_string())
+            .or_insert(CachedCaps {
+                prompt_image: false,
+                load_session: false,
+                modes: Vec::new(),
+                config_options: Vec::new(),
+                auth_methods: Vec::new(),
+                auth_required: false,
+                auth_hint: None,
+            });
+        if !auth_methods.is_empty() {
+            caps.auth_methods = auth_methods;
+        }
+        caps.auth_required = auth_required;
+        caps.auth_hint = auth_hint;
     }
 
     /// Replaces the cached config options from a `set_config_option` reply or
@@ -613,7 +685,7 @@ impl AgentRuntime {
         }
     }
 
-    /// Start a run (§4.2): registers the run, persists the user message, and
+    /// Start a run (В§4.2): registers the run, persists the user message, and
     /// hands the turn to a background task. Returns the created run. Callers
     /// that must respect an active run use [`AgentRuntime::send`].
     pub fn dispatch(
@@ -723,7 +795,7 @@ impl AgentRuntime {
         Ok(run)
     }
 
-    /// Stop button / Esc: cancel the active run's prompt turn (§5.3).
+    /// Stop button / Esc: cancel the active run's prompt turn (В§5.3).
     pub fn cancel(&self, run_id: &str) -> Result<(), crate::PultError> {
         let (conn, session_id) = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
@@ -736,7 +808,7 @@ impl AgentRuntime {
         };
         tokio::runtime::Handle::try_current()
             .map_err(|_| {
-                crate::PultError::internal("no tokio runtime — cannot reach the agent process")
+                crate::PultError::internal("no tokio runtime вЂ” cannot reach the agent process")
             })?
             .spawn(async move {
                 if let Err(err) = conn.cancel(&session_id).await {
@@ -825,7 +897,7 @@ impl AgentRuntime {
             .expect("runtime lock poisoned")
             .permission_modes
             .insert(thread_id.to_string(), mode);
-        // The chosen mode also becomes the default for new threads (§5.7).
+        // The chosen mode also becomes the default for new threads (В§5.7).
         self.store.set_setting(
             "permission_mode",
             &serde_json::to_value(mode).unwrap_or_default(),
@@ -833,7 +905,7 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Remembered allow_always decision per (instance, tool class) (§5.5).
+    /// Remembered allow_always decision per (instance, tool class) (В§5.5).
     fn remembered_for(&self, instance_id: &str, tool_kind: &str) -> Option<String> {
         let value = self
             .store
@@ -912,7 +984,7 @@ impl AgentRuntime {
     }
 
     /// Session cwd for a thread: its explicit workspace (worktree threads
-    /// pin theirs at creation), else the global root (§4.4).
+    /// pin theirs at creation), else the global root (В§4.4).
 fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
         if let Some(ws) = thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let path = PathBuf::from(ws);
@@ -927,7 +999,7 @@ fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::Pu
     }
 
     /// Writes a hidden `refs/pult/checkpoints/<run_id>` ref so any run's
-    /// resulting tree stays recoverable (§4.4; the rollback UI stays out of
+    /// resulting tree stays recoverable (В§4.4; the rollback UI stays out of
     /// scope, the data does not). Best-effort: skips non-repo workspaces.
     fn spawn_checkpoint(self: &Arc<Self>, thread: &ThreadRecord, run_id: &str) {
         let Some(workspace) = thread.workspace.clone() else {
@@ -967,6 +1039,11 @@ fn mock_spawn_config() -> Option<SpawnConfig> {
         "MOCK_BAD_JSON",
         "MOCK_CRASH_MID_TURN",
         "MOCK_HANG",
+        "MOCK_AUTH_REQUIRED",
+        "MOCK_AUTH_FAIL",
+        "MOCK_AUTH_STILL_REQUIRED",
+        "MOCK_AUTH_TERMINAL",
+        "MOCK_AUTH_STATE_FILE",
     ] {
         if let Ok(value) = std::env::var(key) {
             env.insert(key.to_string(), value);
@@ -1100,7 +1177,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
 
     // Apply the thread's config picks to this fresh session, then tell the
     // timeline about the effective option set. A rejecting agent never kills
-    // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
+    // the prompt (В§5.4: stale picks must degrade, not fail). `model` goes
     // first because agents narrow dependent options (thought level) when the
     // model changes.
     let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
@@ -1264,7 +1341,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         runtime.update_cached_config_options(&instance_id, options.clone());
                     }
                     // Agent-chosen session titles rename the thread live
-                    // (session_info_update, §M2 auto-rename).
+                    // (session_info_update, В§M2 auto-rename).
                     if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
                         if !title.trim().is_empty() {
                             if let Err(err) = runtime.store.rename_thread(&thread_id, title) {
@@ -1330,7 +1407,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         }
                         ClientRequest::TerminalWait { request_id, params } => {
                             // Answer from a detached task: waiting must not
-                            // stall the event stream (§9 no blocking lanes).
+                            // stall the event stream (В§9 no blocking lanes).
                             let conn = Arc::clone(&conn);
                             let terminals = Arc::clone(&terminals);
                             tokio::spawn(async move {
@@ -1375,7 +1452,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         "failed" => "failed",
         _ => "finished",
     };
-    // The agent dying mid-run is a designed error state (§8 M7): check before
+    // The agent dying mid-run is a designed error state (В§8 M7): check before
     // our own kill() so a crash is not mistaken for a normal shutdown.
     let crashed_mid_run = conn.died_on_own();
     conn.kill();
@@ -1431,7 +1508,7 @@ impl AgentRuntime {
             self.emit("thread:update", &ThreadUpdatedPayload { thread });
         }
         // Queue auto-dispatch: the oldest queued message starts its own run
-        // now that the thread is free (§6.1 queue semantics).
+        // now that the thread is free (В§6.1 queue semantics).
         self.auto_dispatch_queue(thread_id);
         Ok(())
     }
@@ -1468,7 +1545,7 @@ impl AgentRuntime {
     }
 }
 
-/// Result of a one-click connect check (§4.3 providers surface).
+/// Result of a one-click connect check (В§4.3 providers surface).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreflightReport {
@@ -1484,12 +1561,45 @@ pub struct PreflightReport {
     pub auth_hint: Option<String>,
     /// Session config options observed on the probe session (pickers warm).
     pub config_options: Vec<SessionConfigOption>,
+    /// Auth methods advertised at the handshake (sign-in actions).
+    pub auth_methods: Vec<crate::protocol::types::AuthMethod>,
 }
 
 impl AgentRuntime {
+    /// Shared `session/new` for the result path: only -32000 flips the
+    /// provider to Needs sign-in and gets the typed `auth_required` code.
+    async fn open_session(
+        &self,
+        conn: &AcpConn,
+        cwd: &str,
+        instance_id: &str,
+        methods: &[crate::protocol::types::AuthMethod],
+    ) -> Result<crate::protocol::types::NewSessionResult, crate::PultError> {
+        match conn.new_session(cwd).await {
+            Ok(session) => {
+                self.cache_auth_state(instance_id, methods.to_vec(), false, None);
+                Ok(session)
+            }
+            Err(err) if err.is_auth_required() => {
+                let hint = err.to_string();
+                self.cache_auth_state(instance_id, methods.to_vec(), true, Some(hint.clone()));
+                self.emit(
+                    "agent:process",
+                    &ProcessEventPayload {
+                        instance_id: instance_id.to_string(),
+                        kind: "needs_auth".to_string(),
+                        detail: Some(hint.clone()),
+                    },
+                );
+                Err(crate::PultError::with_code("auth_required", hint))
+            }
+            Err(err) => Err(crate::PultError::internal(err.to_string())),
+        }
+    }
+
     /// One-click connect check: spawn the agent, complete the initialize
     /// handshake, cache its capabilities, shut it down. No prompt is sent, so
-    /// the check costs nothing and never touches a session — this is what the
+    /// the check costs nothing and never touches a session вЂ” this is what the
     /// "Connect" button runs so the user never wires commands by hand.
     pub async fn preflight(&self, instance_id: &str) -> Result<PreflightReport, crate::PultError> {
         let spec = {
@@ -1503,7 +1613,7 @@ impl AgentRuntime {
         .ok_or_else(|| crate::PultError::internal(format!("unknown instance: {instance_id}")))?;
         if !spec.enabled {
             return Err(crate::PultError::internal(format!(
-                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
         let spawn_config = self.spawn_config_for(instance_id)?;
@@ -1518,11 +1628,18 @@ impl AgentRuntime {
             })?;
         // Auth is real only if a session can actually be created: authMethods
         // advertise SUPPORTED methods, not a missing login (T3 semantics).
-        // The probe runs in a temp cwd and sends no prompt — free and safe.
+        // The probe runs in a temp cwd and sends no prompt вЂ” free and safe.
         let probe_cwd = std::env::temp_dir().to_string_lossy().into_owned();
         let (auth_required, auth_hint, config_options) = match conn.new_session(&probe_cwd).await {
             Ok(session) => (false, None, session.config_options),
-            Err(err) => (true, Some(err.to_string()), Vec::new()),
+            Err(err) if err.is_auth_required() => (true, Some(err.to_string()), Vec::new()),
+            Err(err) => {
+                conn.kill();
+                return Err(crate::PultError::internal(format!(
+                    "{} session probe failed: {err}",
+                    spec.display_name
+                )));
+            }
         };
         // Capabilities cached here feed the composer gating immediately.
         self.cache_capabilities(
@@ -1531,6 +1648,22 @@ impl AgentRuntime {
             Vec::new(),
             config_options.clone(),
         );
+        self.cache_auth_state(
+            instance_id,
+            init.auth_methods.clone(),
+            auth_required,
+            auth_hint.clone(),
+        );
+        if auth_required {
+            self.emit(
+                "agent:process",
+                &ProcessEventPayload {
+                    instance_id: instance_id.to_string(),
+                    kind: "needs_auth".to_string(),
+                    detail: auth_hint.clone(),
+                },
+            );
+        }
         conn.kill();
         Ok(PreflightReport {
             instance_id: instance_id.to_string(),
@@ -1545,6 +1678,150 @@ impl AgentRuntime {
             auth_required,
             auth_hint,
             config_options,
+            auth_methods: init.auth_methods.clone(),
+        })
+    }
+
+    /// Runs an agent-managed sign-in: initialize в†’ authenticate(method) в†’
+    /// fresh `session/new` probe в†’ kill. The second probe is the only honest
+    /// proof: an agent may answer `{}` and still keep sessions locked.
+    pub async fn authenticate(
+        &self,
+        instance_id: &str,
+        method_id: &str,
+    ) -> Result<PreflightReport, crate::PultError> {
+        if method_id.trim().is_empty() {
+            return Err(crate::PultError::internal("auth method id is empty"));
+        }
+        let (spec, cached_methods) = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            let spec = inner
+                .instances
+                .iter()
+                .find(|i| i.id == instance_id)
+                .cloned()
+                .ok_or_else(|| {
+                    crate::PultError::internal(format!("unknown instance: {instance_id}"))
+                })?;
+            let methods = inner
+                .capabilities
+                .get(instance_id)
+                .map(|c| c.auth_methods.clone())
+                .unwrap_or_default();
+            (spec, methods)
+        };
+        if !spec.enabled {
+            return Err(crate::PultError::internal(format!(
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
+            )));
+        }
+        if !cached_methods.is_empty() {
+            match cached_methods
+                .iter()
+                .find(|m| m.id.as_deref() == Some(method_id))
+            {
+                Some(method) if method.is_terminal() => {
+                    return Err(crate::PultError::internal(
+                        "terminal sign-in runs the agent CLI outside pult; use Copy command",
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    return Err(crate::PultError::internal(format!(
+                        "unknown auth method: {method_id}"
+                    )));
+                }
+            }
+        }
+
+        let spawn_config = self.spawn_config_for(instance_id)?;
+        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
+            crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
+        })?;
+        let init = conn.initialize().await.map_err(|e| {
+            conn.kill();
+            crate::PultError::internal(format!(
+                "{} did not answer the handshake: {e}",
+                spec.display_name
+            ))
+        })?;
+        match init
+            .auth_methods
+            .iter()
+            .find(|m| m.id.as_deref() == Some(method_id))
+        {
+            Some(method) if method.is_terminal() => {
+                conn.kill();
+                return Err(crate::PultError::internal(
+                    "terminal sign-in runs the agent CLI outside pult; use Copy command",
+                ));
+            }
+            Some(_) => {}
+            None => {
+                conn.kill();
+                return Err(crate::PultError::internal(format!(
+                    "{} did not advertise auth method {method_id}",
+                    spec.display_name
+                )));
+            }
+        }
+        if let Err(err) = conn.authenticate(method_id).await {
+            conn.kill();
+            return Err(crate::PultError::internal(format!(
+                "{} sign-in failed: {err}",
+                spec.display_name
+            )));
+        }
+
+        let probe_cwd = std::env::temp_dir().to_string_lossy().into_owned();
+        let (auth_required, auth_hint, config_options) = match conn.new_session(&probe_cwd).await {
+            Ok(session) => (false, None, session.config_options),
+            Err(err) if err.is_auth_required() => (true, Some(err.to_string()), Vec::new()),
+            Err(err) => {
+                conn.kill();
+                return Err(crate::PultError::internal(format!(
+                    "{} session probe after sign-in failed: {err}",
+                    spec.display_name
+                )));
+            }
+        };
+        self.cache_capabilities(
+            instance_id,
+            &init.agent_capabilities,
+            Vec::new(),
+            config_options.clone(),
+        );
+        self.cache_auth_state(
+            instance_id,
+            init.auth_methods.clone(),
+            auth_required,
+            auth_hint.clone(),
+        );
+        if auth_required {
+            self.emit(
+                "agent:process",
+                &ProcessEventPayload {
+                    instance_id: instance_id.to_string(),
+                    kind: "needs_auth".to_string(),
+                    detail: auth_hint.clone(),
+                },
+            );
+        }
+        conn.kill();
+        Ok(PreflightReport {
+            instance_id: instance_id.to_string(),
+            agent_name: init
+                .agent_info
+                .as_ref()
+                .map(|i| i.name.clone())
+                .unwrap_or_else(|| spec.display_name.clone()),
+            agent_version: init.agent_info.as_ref().and_then(|i| i.version.clone()),
+            load_session: init.agent_capabilities.load_session,
+            prompt_image: init.agent_capabilities.prompt_capabilities.image,
+            auth_required,
+            auth_hint,
+            config_options,
+            auth_methods: init.auth_methods.clone(),
         })
     }
 }
@@ -1571,6 +1848,7 @@ async fn resolve_session(
                 Ok(loaded) => {
                     tracing::info!(target: "pult::runtime",
                         session = %remote, "resumed session via session/load");
+                    runtime.cache_auth_state(instance_id, init.auth_methods.clone(), false, None);
                     runtime.cache_capabilities(
                         instance_id,
                         &init.agent_capabilities,
@@ -1582,10 +1860,9 @@ async fn resolve_session(
                 Err(err) => {
                     tracing::warn!(target: "pult::runtime",
                         error = %err, "session/load failed; starting a new session");
-                    let fresh = conn
-                        .new_session(&cwd)
-                        .await
-                        .map_err(|e| crate::PultError::internal(e.to_string()))?;
+                    let fresh = runtime
+                        .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                        .await?;
                     let _ = runtime.store.upsert_session_ref(thread_id, instance_id, &fresh.session_id);
                     runtime.cache_capabilities(
                         instance_id,
@@ -1598,10 +1875,9 @@ async fn resolve_session(
             }
         }
         _ => {
-            let fresh = conn
-                .new_session(&cwd)
-                .await
-                .map_err(|e| crate::PultError::internal(e.to_string()))?;
+            let fresh = runtime
+                .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                .await?;
             let _ = runtime
                 .store
                 .upsert_session_ref(thread_id, instance_id, &fresh.session_id);
@@ -1640,7 +1916,7 @@ fn config_apply_order(id: &str) -> u8 {
     }
 }
 
-/// Permission policy + surfacing (§5.5): the mode may auto-resolve before
+/// Permission policy + surfacing (В§5.5): the mode may auto-resolve before
 /// the UI ever sees the request; every auto resolution is traced (never
 /// silent). Surfaced requests park in `pending_permissions`.
 #[allow(clippy::too_many_arguments)]
@@ -1690,7 +1966,7 @@ async fn handle_permission_request(
         },
     );
     if let crate::runtime::permissions::PolicyDecision::AutoResolve(option_id) = decision {
-        // Trace row in the event log: never silent (§5.5).
+        // Trace row in the event log: never silent (В§5.5).
         let event = Event::new(
             run_id.to_string(),
             *next_seq,
@@ -1788,7 +2064,7 @@ fn surface_permission(
     Ok(())
 }
 
-/// Elicitation (§5.5): surface for the modal; the run parks until answered.
+/// Elicitation (В§5.5): surface for the modal; the run parks until answered.
 fn surface_elicitation(
     runtime: &AgentRuntime,
     run_id: &str,
@@ -1828,13 +2104,13 @@ fn surface_elicitation(
     Ok(())
 }
 
-/// OS notification when the window is not focused (§5.5); the focus check
+/// OS notification when the window is not focused (В§5.5); the focus check
 /// lives in the AppHandle EventSink impl.
 fn notify_if_unfocused(runtime: &AgentRuntime, title: &str, body: &str) {
     runtime.sink_notify(title, body);
 }
 
-/// `terminal/create` handler: sandbox-checked cwd + spawn (§5.5).
+/// `terminal/create` handler: sandbox-checked cwd + spawn (В§5.5).
 fn handle_terminal_create(
     terminals: &TerminalRegistry,
     root: &Path,
@@ -1887,7 +2163,7 @@ fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply 
     .map_err(|e| fs_error(e.to_string()))
 }
 
-/// `fs/write_text_file`: sandboxed write plus the computed diff (§5.4) —
+/// `fs/write_text_file`: sandboxed write plus the computed diff (В§5.4) вЂ”
 /// the fs layer attaches old-vs-new to the thread's "Changed files".
 fn write_file_sandboxed(
     root: &Path,
@@ -1913,7 +2189,7 @@ fn write_file_sandboxed(
     (Ok(serde_json::json!({})), Some(change))
 }
 
-/// Unified diff of old→new (3 context lines, same header style as git).
+/// Unified diff of oldв†’new (3 context lines, same header style as git).
 fn unified_diff(path: &str, old: &str, new: &str) -> String {
     similar::TextDiff::from_lines(old, new)
         .unified_diff()
@@ -1936,7 +2212,7 @@ fn diff_stats(diff: &str) -> (u64, u64) {
     (added, removed)
 }
 
-/// Reject paths escaping the workspace root (§5.5: -32002-style typed error).
+/// Reject paths escaping the workspace root (В§5.5: -32002-style typed error).
 fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     let candidate = Path::new(raw);
     // Rootless POSIX-style paths (/repo/src/main.rs) from an agent whose cwd
@@ -1959,7 +2235,7 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
         }
     }
     // Compare canonical against canonical: `canonicalize()` returns verbatim
-    // `\?\…` paths, and mixing that with a clean root makes `starts_with`
+    // `\?\вЂ¦` paths, and mixing that with a clean root makes `starts_with`
     // fail spuriously ("path escapes workspace" for `.`).
     match (joined.canonicalize(), root.canonicalize()) {
         (Ok(real), Ok(base)) => {

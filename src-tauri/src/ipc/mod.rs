@@ -363,6 +363,17 @@ pub async fn providers_preflight(
     runtime.preflight(&instance_id).await
 }
 
+/// One-click sign-in: run an agent-managed auth method and re-probe the
+/// session. Terminal methods are rejected by the runtime.
+#[tauri::command]
+pub async fn providers_authenticate(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    instance_id: String,
+    method_id: String,
+) -> Result<crate::runtime::PreflightReport, PultError> {
+    runtime.authenticate(&instance_id, &method_id).await
+}
+
 /// Workspace files for composer `@` mentions: relative POSIX paths, filtered
 /// by `query`, capped in count and walk size. The walk runs off the async
 /// thread so a huge repo never stalls the IPC worker.

@@ -1,4 +1,4 @@
-//! Runtime-level golden tests against the real mock agent: queue
+﻿//! Runtime-level golden tests against the real mock agent: queue
 //! auto-dispatch, resume, and the M3 callbacks (permission modes,
 //! elicitation, terminals). These run through `AgentRuntime` (store + emit +
 //! run loop), unlike `drivers/golden.rs` which drives `AcpConn` directly.
@@ -339,7 +339,7 @@ fn sink_events(sink: &TestSink) -> Vec<(String, serde_json::Value)> {
     sink.0.lock().expect("sink lock").clone()
 }
 
-/// Elicitation round-trip (§5.5): the modal surfaces, the UI accepts with
+/// Elicitation round-trip (В§5.5): the modal surfaces, the UI accepts with
 /// content, the agent's reply echoes the picked value.
 #[tokio::test]
 async fn elicitation_round_trip_reaches_the_agent() {
@@ -391,7 +391,7 @@ async fn elicitation_round_trip_reaches_the_agent() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-/// Terminal callbacks (§5.5): create → output ring → wait_for_exit → release.
+/// Terminal callbacks (В§5.5): create в†’ output ring в†’ wait_for_exit в†’ release.
 #[tokio::test]
 async fn terminal_callbacks_run_and_report() {
     let _env = env_lock();
@@ -426,7 +426,7 @@ async fn terminal_callbacks_run_and_report() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-/// auto_edit resolves an edit-kind request without the UI (§8 M3 acceptance:
+/// auto_edit resolves an edit-kind request without the UI (В§8 M3 acceptance:
 /// assert via the event log). Every resolution still leaves a trace row.
 #[tokio::test]
 async fn auto_edit_resolves_edits_without_ui_prompt() {
@@ -582,7 +582,7 @@ async fn allow_always_is_remembered_for_next_turn() {
 use crate::runtime::write_file_sandboxed;
 
 /// The fs sandbox rejects `../` escapes with the typed resource error
-/// (§8 M3 acceptance).
+/// (В§8 M3 acceptance).
 #[test]
 fn sandbox_rejects_parent_directory_escapes() {
     use crate::protocol::jsonrpc::ERR_RESOURCE_NOT_FOUND;
@@ -677,7 +677,7 @@ async fn deleting_a_thread_mid_run_releases_runtime_state() {
     pump.abort();
 }
 
-/// §5.4: preflight caches session config options alongside modes, so pickers
+/// В§5.4: preflight caches session config options alongside modes, so pickers
 /// are usable before the first prompt.
 #[tokio::test]
 async fn preflight_caches_modes_and_config_options() {
@@ -864,4 +864,140 @@ fn config_apply_order_puts_model_before_dependent_options() {
     let mut ids = vec!["web_search", "thought_level", "model"];
     ids.sort_by_key(|id| super::config_apply_order(id));
     assert_eq!(ids, vec!["model", "thought_level", "web_search"]);
+}
+
+
+/// Auth scenarios are per-instance env (no process-env races with other tests).
+fn auth_runtime(env: &[(&str, &str)]) -> (Arc<AgentRuntime>, Arc<TestSink>) {
+    let (runtime, sink) = mock_runtime();
+    let spec = crate::config::InstanceSpec {
+        id: "mock".to_string(),
+        display_name: "Mock Auth".to_string(),
+        driver: "mock".to_string(),
+        command: String::new(),
+        args: Vec::new(),
+        enabled: true,
+        env: env
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+    };
+    runtime.set_instances_in_memory(vec![spec]);
+    (runtime, sink)
+}
+
+#[tokio::test]
+async fn preflight_caches_auth_methods_and_marks_needs_auth() {
+    let (runtime, _sink) = auth_runtime(&[("MOCK_AUTH_REQUIRED", "1")]);
+    let report = runtime.preflight("mock").await.expect("preflight");
+    assert!(report.auth_required);
+    assert_eq!(report.auth_methods.len(), 1);
+    assert_eq!(report.auth_methods[0].id.as_deref(), Some("mock-token"));
+    let info = runtime
+        .instances()
+        .into_iter()
+        .find(|i| i.id == "mock")
+        .expect("mock instance");
+    assert_eq!(info.status, "needs_auth");
+    assert_eq!(info.auth_methods.len(), 1);
+}
+
+#[tokio::test]
+async fn authenticate_succeeds_clears_needs_auth_and_warms_config() {
+    let state = std::env::temp_dir().join(format!(
+        "pult-m11-auth-{}.state",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_file(&state);
+    let state_str = state.to_string_lossy().into_owned();
+    let (runtime, sink) = auth_runtime(&[
+        ("MOCK_AUTH_REQUIRED", "1"),
+        ("MOCK_AUTH_STATE_FILE", state_str.as_str()),
+    ]);
+    let before = runtime.preflight("mock").await.expect("preflight");
+    assert!(before.auth_required);
+    let report = runtime
+        .authenticate("mock", "mock-token")
+        .await
+        .expect("authenticate");
+    assert!(!report.auth_required);
+    assert!(!report.config_options.is_empty());
+    let info = runtime
+        .instances()
+        .into_iter()
+        .find(|i| i.id == "mock")
+        .expect("mock instance");
+    assert_eq!(info.status, "stopped");
+
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-m11-auth-ws-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::create_dir_all(&sandbox);
+    let mut thread = thread_record("th-authed");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread).expect("thread");
+    runtime.dispatch(&thread, "hello", &[], "mock").expect("dispatch");
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-authed")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+    assert_eq!(
+        runtime.store().list_runs("th-authed").unwrap()[0].status,
+        "finished"
+    );
+    let _ = std::fs::remove_file(&state);
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn authenticate_still_needs_sign_in_when_probe_keeps_failing() {
+    let (runtime, _sink) = auth_runtime(&[
+        ("MOCK_AUTH_REQUIRED", "1"),
+        ("MOCK_AUTH_STILL_REQUIRED", "1"),
+    ]);
+    runtime.preflight("mock").await.expect("preflight");
+    let report = runtime
+        .authenticate("mock", "mock-token")
+        .await
+        .expect("authenticate");
+    assert!(report.auth_required);
+    let info = runtime
+        .instances()
+        .into_iter()
+        .find(|i| i.id == "mock")
+        .expect("mock instance");
+    assert_eq!(info.status, "needs_auth");
+}
+
+#[tokio::test]
+async fn authenticate_failure_errors_and_terminal_methods_are_rejected() {
+    {
+        let (runtime, _sink) = auth_runtime(&[
+            ("MOCK_AUTH_REQUIRED", "1"),
+            ("MOCK_AUTH_FAIL", "1"),
+        ]);
+        runtime.preflight("mock").await.expect("preflight");
+        assert!(runtime.authenticate("mock", "mock-token").await.is_err());
+    }
+    {
+        let (runtime, _sink) = auth_runtime(&[("MOCK_AUTH_TERMINAL", "1")]);
+        let report = runtime.preflight("mock").await.expect("preflight");
+        let terminal = report
+            .auth_methods
+            .iter()
+            .find(|m| m.is_terminal())
+            .expect("terminal method");
+        assert_eq!(terminal.args, vec!["--login".to_string()]);
+        assert!(runtime
+            .authenticate("mock", terminal.id.as_deref().unwrap_or_default())
+            .await
+            .is_err());
+    }
 }

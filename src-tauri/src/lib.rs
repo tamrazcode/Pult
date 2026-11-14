@@ -44,6 +44,14 @@ impl PultError {
             message: message.into(),
         }
     }
+
+    /// Typed code for recoverable states the UI renders (e.g. auth_required).
+    pub fn with_code(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::Internal {
+            code: code.into(),
+            message: message.into(),
+        }
+    }
 }
 
 impl Serialize for PultError {
@@ -161,6 +169,7 @@ pub fn run() {
             ipc::settings_get,
             ipc::settings_set,
             ipc::providers_preflight,
+            ipc::providers_authenticate,
         ])
         .run(tauri::generate_context!())
         .expect("pult: failed to start tauri application");
