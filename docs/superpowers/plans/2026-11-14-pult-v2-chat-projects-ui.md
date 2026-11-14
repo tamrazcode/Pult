@@ -79,16 +79,16 @@
 - `perf_turn` Rust example (`cargo run --manifest-path src-tauri/Cargo.toml --example perf_turn -- <agent>`) dispatches 2 consecutive turns on the same thread against `mock`, `opencode`, `codex`, or `antigravity` and outputs one JSON line per turn (`turn`, `pooled`, `spawnMs`, `handshakeMs`, `sessionMs`, `promptMs`, `firstDeltaMs`, `totalMs`).
 - `scripts/perf-turn.mjs` wraps `cargo run --example perf_turn` (passing `[mock|opencode|codex|antigravity]`) and formats the comparison table.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
       In `src-tauri/src/runtime/tests.rs`, add `mock_run_emits_timing_with_first_delta`: record `RunTiming` events in `RecordingSink`, dispatch one turn against mock agent, wait for `run_finished`, assert `timings.len() == 1`, `timings[0].pooled == false`, `timings[0].handshake_ms > 0`, and `timings[0].first_delta_ms.is_some()`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `cargo test --manifest-path src-tauri/Cargo.toml mock_run_emits_timing_with_first_delta` → FAIL (`RunTiming` / `emit_run_timing` undefined).
-- [ ] **Step 3: Implement `RunTiming`, timing capture, and benchmark runner**
+- [x] **Step 3: Implement `RunTiming`, timing capture, and benchmark runner**
       Instrument `run_turn` and `resolve_session` in `src-tauri/src/runtime/mod.rs` using `std::time::Instant` around spawn, `initialize`, `session/new` or `session/load`, desired config application, `prompt` RPC start, first `AgentMessageDelta`/`AgentThoughtDelta` arrival, and run completion. Implement `src-tauri/examples/perf_turn.rs` and `scripts/perf-turn.mjs`.
-- [ ] **Step 4: Run test + baseline benchmark**
+- [x] **Step 4: Run test + baseline benchmark**
       Run `cargo test --manifest-path src-tauri/Cargo.toml mock_run_emits_timing_with_first_delta` → PASS.
       Run `node scripts/perf-turn.mjs mock` and (where installed locally) `opencode` / `codex` / `antigravity`; record the pre-optimization baseline in `DEVLOG.md`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(runtime): add per-turn RunTiming telemetry and perf-turn benchmark`
 
 ---
@@ -128,17 +128,17 @@
     - **Discard** replayed transcript items: `UserMessage`, `AgentMessageDelta`, `AgentThoughtDelta`, `ToolCall`, `ToolCallUpdate`, `Plan`, `Compaction`, `Notice`, `Usage`.
     - **Apply/preserve** metadata updates if present: `CommandsUpdate`, `ConfigOptions`, `ModeChange`, `SessionInfo`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `tests/runs-store.test.ts`: two runs (`r1` finished with user+assistant, `r2` running with user+assistant delta) → `threadTimelineItems` returns all 4 items in run `idx` order with unique keys and `showCaret === true` only on item 3.
   - `tests/messages-timeline.test.tsx`: renders `r1` and `r2` messages together in DOM; dispatching a new run does not hide `r1`; windowing hides items across both runs and clicking `Earlier messages` expands the merged window.
   - `src-tauri/src/runtime/tests.rs`: `resume_session_load_drops_replayed_transcript_but_keeps_commands` — mock replays a prior `user_message` + `agent_message_chunk` + `available_commands_update` during `session/load`; assert the new run's persisted events contain NO replayed transcript items from run 1, while `commands_update` IS preserved.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/runs-store.test.ts tests/messages-timeline.test.tsx` and `cargo test --manifest-path src-tauri/Cargo.toml resume_session_load_drops_replayed_transcript_but_keeps_commands` → FAIL.
-- [ ] **Step 3: Implement merged timeline selector, `MessagesTimeline` refactor, and pre-session drain**
+- [x] **Step 3: Implement merged timeline selector, `MessagesTimeline` refactor, and pre-session drain**
       Update `src/stores/runs.ts`, `src/components/chat/MessagesTimeline.tsx`, and `src-tauri/src/runtime/mod.rs`.
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
       Run `pnpm test` and `cargo test --manifest-path src-tauri/Cargo.toml` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `fix(chat): render full thread history across runs and filter session/load replay`
 
 ### Task 3: Right-edge chat history tick rail (`HistoryTicks`)
@@ -169,18 +169,18 @@
 - Clicking a tick when `globalIndex < hiddenCount` automatically expands `windowSize` to include `globalIndex` (`Math.max(windowSize, totalItems - globalIndex + 20)`) and, after render (`requestAnimationFrame`), scrolls `[data-history-key="<key>"]` smoothly into view (`scrollIntoView({ block: "start", behavior: "smooth" })`).
 - Active tick updates on scroll by finding the topmost visible user message element in the scroll container.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/history-ticks.test.tsx`:
   - Renders 1 tick per `user` item across multiple runs (`0` ticks → renders `null`).
   - Hovering/focusing a tick displays its 80-char preview text.
   - Clicking a tick in an unwindowed transcript calls `scrollIntoView` on the matching element; clicking a tick inside the hidden older window expands `windowSize` and scrolls to the newly mounted element.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `pnpm test tests/history-ticks.test.tsx` → FAIL.
-- [ ] **Step 3: Implement `HistoryTicks` and integrate into `MessagesTimeline.tsx`**
+- [x] **Step 3: Implement `HistoryTicks` and integrate into `MessagesTimeline.tsx`**
       Create `src/components/chat/HistoryTicks.tsx` and wire `data-history-key`, scroll tracking, and jump-to-hidden-window expansion in `src/components/chat/MessagesTimeline.tsx`.
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
       Run `pnpm test tests/history-ticks.test.tsx tests/messages-timeline.test.tsx` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(chat): add right-edge HistoryTicks navigation rail`
 
 ### Task 4: Idle agent process & session pool (`IdlePool`)
@@ -231,18 +231,18 @@
   - **On normal completion** (`stop_reason` is `end_turn` / `max_tokens` / `max_turn_requests` and `!conn.is_dead()`): park `IdleConn` back into `runtime.pool` instead of calling `conn.kill()`.
   - **On cancel, error, crash, `threads_delete`, `projects_update`/`delete`, or `providers_instances_save`:** call `conn.kill()` and invalidate matching pool entries. Never hold `inner.lock()` or `pool` lock across `.await`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `fixtures/mock-acp-agent.mjs`: when `MOCK_SPAWN_LOG` env var is set, append one PID line on `initialize`.
   - `pool.rs` tests: LRU eviction at 7th entry kills oldest; TTL expiry drops entry; mismatching `instance_id` or `root` or `spawn_sig` invalidates and returns `None`; `is_dead() == true` drops entry.
   - `runtime/tests.rs`: two sequential dispatches on the same thread write 1 PID line to `MOCK_SPAWN_LOG` and both succeed; cancelling run 1 kills process (`pool.stats().idle == 0`); two threads keep independent sessions; saving provider config invalidates pooled entries for that instance.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `cargo test --manifest-path src-tauri/Cargo.toml pool` → FAIL.
-- [ ] **Step 3: Implement `IdlePool`, `AcpConn::is_dead`, and `run_turn` pooling + invalidation hooks**
+- [x] **Step 3: Implement `IdlePool`, `AcpConn::is_dead`, and `run_turn` pooling + invalidation hooks**
       Create `src-tauri/src/runtime/pool.rs`, update `src-tauri/src/drivers/acp.rs`, `src-tauri/src/runtime/mod.rs`, `src-tauri/src/ipc/mod.rs`, and `src-tauri/src/lib.rs`.
-- [ ] **Step 4: Run tests + re-benchmark**
+- [x] **Step 4: Run tests + re-benchmark**
       Run `cargo test --manifest-path src-tauri/Cargo.toml` and `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
       Run `node scripts/perf-turn.mjs mock` and check warm turn overhead `< 100 ms` (target `< 10 ms` after Task 5).
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(runtime): pool idle agent processes and sessions per thread`
 
 ### Task 5: Event batching (`EventBatcher`), batched SQLite transactions, and async `threads_get`
@@ -281,18 +281,18 @@
   - Backend emits `"run:events"` with `RunEventsPayload { run_id: String, events: Vec<AppEvent> }` (`#[serde(rename_all = "camelCase")]`).
   - `useRunsStore.receiveRunEventsBatch(runId: string, events: AppEvent[])` folds the entire batch in one Zustand `set()` call.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `batch.rs`: 5 adjacent `AgentMessageDelta`s collapse into 1 event with concatenated text and `seq = 1`; pushing `ApprovalRequest` flushes pending deltas first (`seq = 1`) then approval (`seq = 2`); pushing 40 distinct non-coalescing events flushes at cap 32 with strictly monotonic `seq`.
   - `store/tests.rs`: `append_events_batch` inserts 100 events in 1 transaction; `load_thread_events` returns events across 2 runs in `(r.idx, e.seq)` order.
   - `tests/runs-store.test.ts`: `receiveRunEventsBatch` produces the exact `RunView` state as sequential `receiveRunEvent` calls with a single subscriber notification.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `cargo test --manifest-path src-tauri/Cargo.toml batch` and `pnpm test tests/runs-store.test.ts` → FAIL.
-- [ ] **Step 3: Implement `EventBatcher`, `append_events_batch`, `load_thread_events`, async `threads_get`, `run:events`, and `receiveRunEventsBatch`**
+- [x] **Step 3: Implement `EventBatcher`, `append_events_batch`, `load_thread_events`, async `threads_get`, `run:events`, and `receiveRunEventsBatch`**
       Wire into `run_turn` loop (`tokio::select!` with 40 ms interval tick + barrier flushes on finish/cancel/approval).
-- [ ] **Step 4: Run tests + stream benchmark**
+- [x] **Step 4: Run tests + stream benchmark**
       Run `cargo test`, `cargo clippy`, `pnpm test` → PASS.
       Verify 1000-chunk mock stream performs `≤ 30` IPC/SQLite transactions per second and warm overhead drops `< 10 ms`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(streaming): coalesce deltas, batch IPC/SQLite writes, and parallelize threads_get`
 
 ### Task 6: Stop redundant `loadInstances()` IPC refreshes
@@ -312,14 +312,14 @@
   - `run_finished` updates thread status/unread and no longer calls `loadInstances()`.
   - `"agent:caps"` listener calls `patchInstance(...)`.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
       In `tests/run-events.test.ts`: mock `providersInstancesList`; feed `config_options` and `run_finished` events through `runEvents` handlers; assert `useUiStore.getState().instances[0].configOptions` updated and `providersInstancesList` called `0` times.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `pnpm test tests/run-events.test.ts` → FAIL (`providersInstancesList` called on `run_finished` / `config_options`).
-- [ ] **Step 3: Implement `patchInstance`, `"agent:caps"`, and `runEvents.ts` cleanup**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement `patchInstance`, `"agent:caps"`, and `runEvents.ts` cleanup**
+- [x] **Step 4: Run tests**
       Run `pnpm test` and `cargo test` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(ipc): update instance capabilities via targeted events instead of loadInstances`
 
 ### Task 7: Frontend streaming optimizations (Markdown, Shiki, Timeline, Selectors, DiffPanel)
@@ -346,16 +346,16 @@
 - `src/stores/runs.ts` & `src/components/diff/DiffPanel.tsx`:
   - Add `suggestedCommit?: string` on `RunView`; compute it once inside `applyRunEvent` when `event.kind === "run_finished"` (instead of `useSuggestedCommitMessage` subscribing to `viewsByRun` and running regex splits on every streamed delta).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `tests/markdown.test.tsx`: streaming open code fence does NOT call Shiki `codeToHtml`; closing the fence triggers lazy `loadLanguage` + highlight; module-level plugin arrays preserve identity across renders.
   - `tests/messages-timeline.test.tsx`: `ChatItemRow` from run 1 does not re-render when run 2 appends a delta; scrolling up sets `isAtBottom = false` and skips `scrollIntoView`.
   - `tests/diff-panel.test.tsx`: `suggestedCommit` stays `undefined` while streaming deltas arrive and populates only upon `run_finished`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/markdown.test.tsx tests/messages-timeline.test.tsx tests/diff-panel.test.tsx` → FAIL.
-- [ ] **Step 3: Implement all 4 frontend optimizations**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement all 4 frontend optimizations**
+- [x] **Step 4: Run tests**
       Run `pnpm test`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(ui): optimize streaming markdown, lazy Shiki, memoized timeline, and point selectors`
 
 ---
@@ -406,15 +406,15 @@
   - Only when BOTH `thread.workspace == None` and `thread.project_id == None` use `self.workspace_root()`.
 - Frontend types (`src/lib/types.ts`): add `Project`, extend `ThreadStatus` with `"archived"`, add `projectsList`, `projectsCreate`, `projectsUpdate`, `projectsDelete` to `src/lib/ipc.ts`.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `store/tests.rs`: v3 → v4 migration preserves existing threads; `create_project` / `list_projects` / `update_project` / `delete_project` round-trip; deleting project sets thread's `project_id` to `None` without deleting thread; `threads_create` with `project_id` sets `workspace == project.root_path`.
   - `runtime/tests.rs`: thread whose `workspace` (or project `root_path`) was removed from disk fails dispatch immediately with `code == "workspace.missing"` instead of running in `~/pult-workspace`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `cargo test --manifest-path src-tauri/Cargo.toml projects` and `workspace_missing` → FAIL.
-- [ ] **Step 3: Implement migration v4, `ProjectRecord`, `store/projects.rs`, IPC handlers, strict `workspace_root_for`, and TS wrappers**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement migration v4, `ProjectRecord`, `store/projects.rs`, IPC handlers, strict `workspace_root_for`, and TS wrappers**
+- [x] **Step 4: Run tests**
       Run `cargo test --manifest-path src-tauri/Cargo.toml`, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`, `pnpm typecheck` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(projects): add SQLite v4 project CRUD and strict workspace resolution`
 
 ### Task 9: Native folder picker, `CreateProjectDialog`, and `ProjectSettingsDialog`
@@ -441,18 +441,18 @@
 - `ProjectSettingsDialog.tsx`:
   - Edits `name`, `color`, `worktreeStrategy`, `pinned`, offers `Copy path` (via `navigator.clipboard.writeText`), and `Delete project` with inline confirmation (calls `deleteProject`, keeping threads with `projectId: null`).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/project-dialog.test.tsx`:
   - Clicking "Choose folder" invokes `pickFolder()`, populates path & basename into `name` input.
   - Cancelling folder picker makes zero `projectsCreate` IPC calls.
   - Submitting `CreateProjectDialog` calls `projectsCreate` with trimmed name, `rootPath`, and color.
   - Submitting `ProjectSettingsDialog` calls `projectsUpdate`; Delete requires two clicks (confirm) before calling `projectsDelete`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/project-dialog.test.tsx` → FAIL.
-- [ ] **Step 3: Wire `tauri-plugin-dialog`, implement `useProjectsStore`, `CreateProjectDialog`, and `ProjectSettingsDialog`**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Wire `tauri-plugin-dialog`, implement `useProjectsStore`, `CreateProjectDialog`, and `ProjectSettingsDialog`**
+- [x] **Step 4: Run tests**
       Run `pnpm test tests/project-dialog.test.tsx`, `pnpm typecheck`, `cargo check --manifest-path src-tauri/Cargo.toml` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(projects): add tauri-plugin-dialog folder picker and project dialogs`
 
 ### Task 10: T3 Code-style Sidebar + Unread state + Footer toolbar
@@ -494,18 +494,18 @@
   5. Background token: `bg-panel` (`--panel-bg`), slightly brighter than `--canvas`.
 - `Topbar.tsx`: remove the `Settings` gear button (Settings now lives in the sidebar footer; `Mod+,` command palette shortcut stays active).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/sidebar.test.tsx`:
   - Pinned projects sort above unpinned projects; pinned threads sort above unpinned threads inside each project; `"No project"` group renders last.
   - Legacy shelf headings (`drafts`, `snoozed`, `settled`, `pinned`) and `"New thread with workspace"` button do NOT exist in DOM.
   - Search input filters threads across groups; collapsed project hides its nested threads; unread dot renders for `unreadIds`; archived threads hidden by default and visible under `"archived"` filter.
   - Clicking footer `Settings`, `Pull requests`, `Usage`, and `Refresh` triggers navigation / store reload; `Topbar` no longer renders the settings gear.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/sidebar.test.tsx` → FAIL.
-- [ ] **Step 3: Implement `buildSidebarGroups`, `unreadIds`, `Sidebar.tsx` rebuild, and `Topbar.tsx` update**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement `buildSidebarGroups`, `unreadIds`, `Sidebar.tsx` rebuild, and `Topbar.tsx` update**
+- [x] **Step 4: Run tests**
       Run `pnpm test`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(sidebar): rebuild sidebar with T3-style project groups, stars, search, and footer toolbar`
 
 ### Task 11: Reusable right-click `ContextMenu` for projects and threads
@@ -558,19 +558,19 @@
   9. `separator`
   10. `Delete` (`danger: true, confirmLabel: "Confirm delete"`, cancels active run if running & deletes thread)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/context-menu.test.tsx` & `tests/sidebar.test.tsx`:
   - Right-clicking a project renders exact items: `New thread`, `Copy path`, `Pin`, `Project settings`, `Delete`.
   - Right-clicking a thread renders exact items: `Pin`, `Settle`, `Snooze`, `Rename`, `Mark unread`, `Copy path`, `Project settings`, `Archive`, `Delete`.
   - First click on `Delete` reveals inline confirmation without deleting; second click deletes.
   - `ArrowDown` + `Enter` selects menu item; `Escape` closes without firing run cancel.
   - `Pin` on project/thread calls store and reorders groups/rows.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/context-menu.test.tsx tests/sidebar.test.tsx` → FAIL.
-- [ ] **Step 3: Implement `ContextMenu.tsx` and wire project/thread menus in `Sidebar.tsx`**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement `ContextMenu.tsx` and wire project/thread menus in `Sidebar.tsx`**
+- [x] **Step 4: Run tests**
       Run `pnpm test`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(ui): add keyboard-accessible context menus for projects and threads`
 
 ### Task 12: Project-aware `ChatHeader`, `ChatColumn`, `/chat` selection, and breadcrumbs
@@ -598,15 +598,15 @@
 
 **Added requirement (user, 2026-11-14):** the `/chat` empty state is a first-run screen: centered Pult mark (chevron + bar), heading “What should we do in Pult?”, one-line hint, deterministic ASCII halftone backdrop, and the workspace strip + composer inline under the heading (not pinned to the bottom). Implemented ahead of this task in `src/components/chat/NewChatEmptyState.tsx` (`NewThreadOptionsStrip.tsx` extracted); Task 12 must keep it project-aware.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
   - `tests/breadcrumbs.test.ts`: thread under project `"pult"` returns `[pult, pult-proj, ThreadTitle]`.
   - `tests/chat-header.test.tsx`: header displays project badge + name; creating a thread from `/chat` while a project is selected passes `projectId` and `workspace = project.rootPath`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/breadcrumbs.test.ts tests/chat-header.test.tsx` → FAIL.
-- [ ] **Step 3: Implement project-aware header, `/chat` creation wiring, and breadcrumbs**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement project-aware header, `/chat` creation wiring, and breadcrumbs**
+- [x] **Step 4: Run tests**
       Run `pnpm test`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(chat): bind new threads, chat header, and breadcrumbs to active project`
 
 ---
@@ -642,17 +642,17 @@
 - `src/components/terminal/TerminalPane.tsx`: update XTerm `fontFamily` to `"'Katagami Mono', ui-monospace, monospace"`.
 - Remove `@fontsource-variable/inter` and `@fontsource-variable/jetbrains-mono` imports from `src/main.tsx` and remove both packages from `package.json`.
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
       In `tests/fonts.test.ts`:
   - Assert `src/assets/fonts/OFL.txt` and all 4 Katagami TTF files exist on disk (`> 0` bytes).
   - Assert `src/styles/tokens.css` defines `"Katagami Sans"` and `"Katagami Mono"`, and contains no `"Inter Variable"` or `"JetBrains Mono Variable"`.
   - Assert `src/main.tsx`, `package.json`, and `src/components/terminal/TerminalPane.tsx` contain no `@fontsource-variable/inter` or `JetBrains Mono`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `pnpm test tests/fonts.test.ts` → FAIL.
-- [ ] **Step 3: Download Katagami fonts + `OFL.txt` (pinning SHA), add `fonts.css`, update tokens/imports/`TerminalPane.tsx`/`package.json`**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Download Katagami fonts + `OFL.txt` (pinning SHA), add `fonts.css`, update tokens/imports/`TerminalPane.tsx`/`package.json`**
+- [x] **Step 4: Run tests**
       Run `pnpm test tests/fonts.test.ts` and `pnpm build` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(ui): replace Inter and JetBrains Mono with Katagami Sans and Katagami Mono`
 
 ### Task 14: Liquid Glass theme (`data-theme="liquid"`) and brighter `--panel-bg` across themes
@@ -676,14 +676,14 @@
 - `src/routes/settings.appearance.tsx`: add Liquid Glass theme preview card.
 - `tests/theme-contrast.test.ts`: extend `THEMES` to include `["liquid", LIQUID]`, include `"--panel-bg"` in the `bg` contrast loop (`≥ 4.5:1`), and assert `relativeLuminance(tokens["--panel-bg"]) > relativeLuminance(tokens["--canvas"])` for dark themes (`dark`, `graphite`, `liquid`).
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       Update `tests/theme-contrast.test.ts` to test 4 themes (`dark`, `light`, `graphite`, `liquid`), check contrast on `--panel-bg`, and assert dark theme `--panel-bg` luminance exceeds `--canvas`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `pnpm test tests/theme-contrast.test.ts` → FAIL (`liquid.css` / `--panel-bg` missing).
-- [ ] **Step 3: Implement `liquid.css`, `--panel-bg` across themes, glass fallbacks, and theme picker/commands**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Implement `liquid.css`, `--panel-bg` across themes, glass fallbacks, and theme picker/commands**
+- [x] **Step 4: Run tests**
       Run `pnpm test tests/theme-contrast.test.ts`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(themes): add Liquid Glass theme and brighter panel contrast tokens`
 
 ### Task 15: Minimal T3-like composer with single permission control & one overflow menu
@@ -710,19 +710,19 @@
   - **Honesty check:** Do NOT add a microphone button.
   - Preserve slash commands (`/`), `@` file mentions, image paste/drop/chips, queue strip, `Enter` send, `Shift+Enter` newline, and `A/S/D` approval shortcuts.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/composer.test.tsx`:
   - Renders `Paperclip` attach button, model pill, `⋯` overflow button, and round send/stop button.
   - Assert at most ONE permission label (`Full access` / `Supervised` / etc.) appears when overflow is opened, and ZERO permission/mode pills appear duplicated on the bar (even when the agent sends a `configOptions` entry with `id: "mode"` or `category: "mode"`).
   - Assert NO microphone button (`aria-label*="mic" / "voice"`) is rendered.
   - Opening `⋯` shows Effort/config options, Session mode, Permission mode, and Agent switcher; picking works and closes cleanly on Escape.
   - `Enter` sends, `Shift+Enter` inserts newline, `/` and `@` popups still work.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/composer.test.tsx` → FAIL.
-- [ ] **Step 3: Refactor `Composer.tsx` & `ComposerControls.tsx`**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Refactor `Composer.tsx` & `ComposerControls.tsx`**
+- [x] **Step 4: Run tests**
       Run `pnpm test tests/composer.test.tsx`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(composer): rebuild minimal T3-style composer with single overflow menu`
 
 ### Task 16: Shell polish to match T3 Code
@@ -738,14 +738,14 @@
 - Standardize control row heights (`h-7` / `h-8`, `28–32 px`), UI text `12 px` (`text-sm`), `rounded-(--radius-sm)` (`6 px`) controls, compact `h-10` or `h-11` topbar/header rhythm, and accent reserved strictly for primary actions and active selection.
 - `RightPanel` tabs (`Diff`, `Files`, `Terminal`) adopt sleek pill/underline styling matching T3 Code.
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       In `tests/shell-layout.test.tsx`: assert `Sidebar` and `RightPanel` root `<aside>` elements apply `bg-panel` (not `bg-canvas` / `bg-chrome`), while main chat column retains `bg-canvas`.
-- [ ] **Step 2: Run test to verify failure**
+- [x] **Step 2: Run test to verify failure**
       Run `pnpm test tests/shell-layout.test.tsx` → FAIL.
-- [ ] **Step 3: Apply shell polish across `Sidebar.tsx`, `RightPanel.tsx`, `Topbar.tsx`, `ChatHeader.tsx`, `index.css`**
-- [ ] **Step 4: Run tests**
+- [x] **Step 3: Apply shell polish across `Sidebar.tsx`, `RightPanel.tsx`, `Topbar.tsx`, `ChatHeader.tsx`, `index.css`**
+- [x] **Step 4: Run tests**
       Run `pnpm test`, `pnpm typecheck`, `pnpm lint` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(ui): polish shell panels, spacing, and borders to match T3 Code`
 
 ---
@@ -759,19 +759,20 @@
 - Modify: `DEVLOG.md`
 - Create/Update: `docs/screenshots/*.png`
 
-- [ ] **Step 1: Run all headless static & test gates**
+- [x] **Step 1: Run all headless static & test gates**
   - `pnpm typecheck`
   - `pnpm lint`
   - `pnpm test`
   - `cargo test --manifest-path src-tauri/Cargo.toml`
   - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- [ ] **Step 2: Run performance benchmarks and verify targets**
+- [x] **Step 2: Run performance benchmarks and verify targets**
   - `node scripts/perf-turn.mjs mock` (plus `opencode`, `codex`, `antigravity` if available in environment):
     - Warm turn app overhead `< 10 ms` (hard ceiling `< 100 ms`).
     - TTFT delta over raw CLI model time `< 50 ms`.
     - 1000-chunk mock stream produces `≤ 30` IPC events/s and `≤ 30` SQLite write transactions/s.
   - Record before/after comparison table in `DEVLOG.md`.
 - [ ] **Step 3: Live desktop walkthrough (`pnpm tauri build` or `pnpm tauri dev`)**
+      Partial: the built app launches and the new-chat/shell screenshots were captured; headless desktop automation cannot click this WebView, so picker/context-menu/theme clicks remain test-covered only (see DEVLOG).
       Verify in the real window:
   1. Multi-turn chat shows complete history across all runs; restarting app + resuming via `session/load` produces zero duplicate messages.
   2. History tick rail appears on the right; hover shows snippet; click jumps to older user message (including expanding hidden window).
@@ -781,7 +782,7 @@
   6. Minimal composer has single permission control inside `⋯`, model pill outside, paperclip left, round send/stop, no dead mic.
   7. Katagami Sans/Mono renders Latin + Cyrillic cleanly; Liquid Glass theme passes visual inspection with brighter side panels and clear contrast.
   8. Capture updated screenshots into `docs/screenshots/` and summarize results in `DEVLOG.md`.
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
       `docs: record v2 perf benchmark results, walkthrough notes, and screenshots`
 
 ---

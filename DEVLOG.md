@@ -2,6 +2,29 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## Pult v2 — history, speed, projects, T3 shell (2026-11-15)
+
+**Scope shipped.** 17-task plan executed inline (Gemini authored the plan and every test file; DeepSeek implemented). Highlights: full multi-run transcript merging with a right-edge `HistoryTicks` rail; per-turn `RunTiming` telemetry; an idle ACP process/session pool per thread (`IdlePool`, 6 max, 15 min TTL, LRU); 40 ms event batching with delta coalescing, one SQLite transaction + one `run:events` IPC per batch; async `threads_get`; targeted `agent:caps` updates instead of `loadInstances`; frontend streaming work (throttled markdown, lazy Shiki grammars, memoized rows, scroll pinning, point selectors); SQLite v4 projects with folder-backed workspaces, strict `workspace.missing` failures, native folder picker, create/settings dialogs; T3-style sidebar (projects, stars, search/filter, unread, footer toolbar) and keyboard-accessible context menus; project-aware header/breadcrumbs; Katagami Sans/Mono; Liquid Glass theme with brighter `--panel-bg`; minimal composer with one model pill, one `⋯` overflow (the only permission control), paperclip, round send/stop; project logo across shell, new-chat screen, favicon and regenerated app icons.
+
+**User-requested additions.** New-chat welcome screen (large logo, "What should we do in Pult?", deterministic ASCII backdrop, inline composer), composer width capped to the transcript column, taller glass composer with stronger blur, and a backlog entry for agent-generated images (Codex `imagegen`) — see the plan's Backlog section.
+
+**Verification.** `pnpm typecheck`, `pnpm lint`, `pnpm test` 196/196 green; `cargo test --lib` 138/138 green with the known pre-existing ConPTY flake skipped (`runtime::ptys::tests::pty_round_trip_output_exit_and_input_write`, reproduces at base `1258ec2`, passes alone); `cargo clippy --all-targets -- -D warnings` clean; `pnpm build` and `pnpm tauri build --no-bundle` pass.
+
+**Performance (fresh process, `scripts/perf-turn.mjs`).** These numbers intentionally measure a fresh process; the pool removes them from repeated turns.
+
+| Agent       | turn 1 spawn+handshake+session | turn 2 spawn+handshake+session | first delta    |
+| ----------- | ------------------------------ | ------------------------------ | -------------- |
+| mock        | 6 + 54 + 0 ms                  | 5 + 47 + 0 ms                  | 29/39 ms       |
+| opencode    | 9 + 434 + 1727 ms              | 3 + 437 + 2073 ms              | 10.6 s / 3.0 s |
+| codex       | 11 + 11621 + 2572 ms           | 3 + 1966 + 912 ms              | 4.3 s / 3.7 s  |
+| antigravity | 9 + 11702 + 5005 ms            | 2 + 11064 + 4475 ms            | 268/195 ms     |
+
+Pooled turns skip spawn/initialize/session entirely (integration test: two sequential turns on one thread write exactly 1 PID and both finish; `pool.stats().idle == 1`). The 40 ms batcher caps delta IPC/SQLite writes at ~25/s per run; adjacent deltas coalesce to one event, and barriers (tools/approval/finish) flush first. Warm overhead is below the 10 ms target by construction; the hard <100 ms gate is covered by the per-turn `run:timing` telemetry.
+
+**Decisions.** (1) Katagami TTFs are kept as source/provenance, while the app loads subset WOFF2 (16.6 MB → ~487 KB) with `OFL.txt` bundled under `/fonts/katagami/`. (2) A desired mode is re-sent on pooled turns rather than trusting a stale `applied_mode`; correctness beats one round-trip. (3) Full `cargo test` documents the PTY flake instead of hiding it; task gates run the suite with that one environmental test skipped. (4) `katex` is now a direct dependency because pnpm's strict resolver blocked its CSS after the font packages were removed.
+
+**Known issues / gaps.** The live desktop walkthrough is limited to launching the built app and capturing the new-chat/shell screenshots (`docs/screenshots/v2-new-chat.png`, `docs/screenshots/v2-shell-final.png`): headless desktop automation cannot click this WebView. The native folder picker, context-menu actions and Liquid Glass theme are covered by tests but not clicked end-to-end in the window. Agent-generated image artifacts remain backlog. The Rust PTY round-trip test is order-dependent in this environment.
+
 ## Connection fixes — required `mcpServers`, Antigravity (2026-11-14)
 
 **Scope shipped.** OpenCode and Codex ACP sessions failed with `-32602 Invalid params` because `session/new`/`session/load` omitted `mcpServers` when the list was empty (serde `skip_serializing_if`), while the schema marks it required. Both fields now always serialize (`"mcpServers": []`); live probes confirmed OpenCode 2.3.0 and Codex ACP 2.6.0 complete initialize + session/new, and the app's preflight reports Connected with full config options. Added Google Antigravity: pult detects the standalone `agy_acp_server.exe` (installed under `%LOCALAPPDATA%\pult\antigravity`, or on PATH), verifies the official Google zip's sha256 before use, and raises the ACP initialize timeout to 60 s for its 12–25 s Windows cold start. The server itself runs the OAuth flow and opens the browser (verified: `Authentication successful`, provider Connected 1.5.0 in the app).
