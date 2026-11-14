@@ -1,6 +1,29 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { threadsInShelf, useThreadsStore } from "../src/stores/threads";
-import type { ShelfName, Thread } from "../src/stores/threads";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as IpcModule from "../src/lib/ipc";
+
+const { settingsGet, settingsSet, threadsList } = vi.hoisted(() => ({
+  settingsGet: vi.fn(async (): Promise<unknown> => null),
+  settingsSet: vi.fn(async () => undefined),
+  threadsList: vi.fn(async () => []),
+}));
+
+vi.mock("../src/lib/ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof IpcModule>();
+  return {
+    ...actual,
+    settingsGet,
+    settingsSet,
+    threadsList,
+    onThreadUpdate: vi.fn(async () => () => {}),
+  };
+});
+
+vi.mock("../src/lib/tauri", () => ({
+  isTauri: () => true,
+}));
+
+import { useThreadsStore } from "../src/stores/threads";
+import type { Thread } from "../src/stores/threads";
 
 const t = (id: string, status: Thread["status"], pinned = false, updatedAt = 0): Thread => ({
   id,
@@ -10,31 +33,6 @@ const t = (id: string, status: Thread["status"], pinned = false, updatedAt = 0):
   pinned,
   createdAt: 0,
   updatedAt,
-});
-
-describe("threadsInShelf", () => {
-  it("routes threads into shelves by status", () => {
-    const threads = [t("a", "draft"), t("b", "working"), t("c", "waiting"), t("d", "settled")];
-    expect(threadsInShelf(threads, "drafts").map((x) => x.id)).toEqual(["a"]);
-    expect(threadsInShelf(threads, "working").map((x) => x.id)).toEqual(["b", "c"]);
-    expect(threadsInShelf(threads, "settled").map((x) => x.id)).toEqual(["d"]);
-    expect(threadsInShelf(threads, "pinned")).toEqual([]);
-  });
-
-  it("pinned threads leave their status shelf and appear only under pinned", () => {
-    const threads = [t("a", "draft", true)];
-    expect(threadsInShelf(threads, "drafts")).toEqual([]);
-    expect(threadsInShelf(threads, "pinned").map((x) => x.id)).toEqual(["a"]);
-  });
-
-  it("keeps snoozed and waiting threads out of the other shelves", () => {
-    const threads = [t("s", "snoozed"), t("w", "waiting"), t("g", "working")];
-    const shelfIds = (shelf: ShelfName) => threadsInShelf(threads, shelf).map((x) => x.id);
-    expect(shelfIds("snoozed")).toEqual(["s"]);
-    expect(shelfIds("working")).toEqual(["w", "g"]);
-    expect(shelfIds("drafts")).toEqual([]);
-    expect(shelfIds("settled")).toEqual([]);
-  });
 });
 
 describe("threads store", () => {
@@ -52,17 +50,74 @@ describe("threads store", () => {
     expect(threads[0].status).toBe("working");
   });
 
-  it("routes working/waiting threads into the working shelf after upsert", () => {
-    useThreadsStore.getState().upsertThread(t("w", "working"));
-    useThreadsStore.getState().upsertThread(t("q", "waiting"));
-    const threads = useThreadsStore.getState().threads;
-    expect(threadsInShelf(threads, "working").map((x) => x.id)).toEqual(["q", "w"]);
-    expect(threadsInShelf(threads, "drafts")).toEqual([]);
-  });
-
   it("removeThread drops the thread from the store", () => {
     useThreadsStore.getState().upsertThread(t("a", "draft"));
     useThreadsStore.getState().removeThread("a");
     expect(useThreadsStore.getState().threads).toEqual([]);
+  });
+});
+
+describe("unread threads", () => {
+  beforeEach(() => {
+    settingsGet.mockReset().mockResolvedValue(null);
+    settingsSet.mockReset().mockResolvedValue(undefined);
+    threadsList.mockReset().mockResolvedValue([]);
+    useThreadsStore.setState({
+      threads: [],
+      activeThreadId: null,
+      loaded: false,
+      unreadIds: [],
+    } as never);
+  });
+
+  it("markUnread toggles ids and persists via settingsSet('unread_threads', ...)", () => {
+    const store = useThreadsStore.getState() as unknown as {
+      unreadIds: string[];
+      markUnread: (id: string, unread: boolean) => void;
+    };
+
+    store.markUnread("t1", true);
+    expect((useThreadsStore.getState() as unknown as { unreadIds: string[] }).unreadIds).toEqual([
+      "t1",
+    ]);
+    expect(settingsSet).toHaveBeenCalledWith("unread_threads", ["t1"]);
+
+    store.markUnread("t2", true);
+    expect((useThreadsStore.getState() as unknown as { unreadIds: string[] }).unreadIds).toEqual([
+      "t1",
+      "t2",
+    ]);
+    expect(settingsSet).toHaveBeenLastCalledWith("unread_threads", ["t1", "t2"]);
+
+    store.markUnread("t1", false);
+    expect((useThreadsStore.getState() as unknown as { unreadIds: string[] }).unreadIds).toEqual([
+      "t2",
+    ]);
+    expect(settingsSet).toHaveBeenLastCalledWith("unread_threads", ["t2"]);
+  });
+
+  it("opening a thread clears its unread id", () => {
+    useThreadsStore.setState({ unreadIds: ["t1", "t2"] } as never);
+
+    useThreadsStore.getState().setActiveThread("t1");
+
+    expect((useThreadsStore.getState() as unknown as { unreadIds: string[] }).unreadIds).toEqual([
+      "t2",
+    ]);
+    expect(settingsSet).toHaveBeenCalledWith("unread_threads", ["t2"]);
+  });
+
+  it("hydration loads persisted unread ids from settingsGet", async () => {
+    settingsGet.mockImplementation(async (key?: unknown) =>
+      key === "unread_threads" ? ["t2", "t3"] : null,
+    );
+
+    await useThreadsStore.getState().loadThreads();
+
+    expect(settingsGet).toHaveBeenCalledWith("unread_threads");
+    expect((useThreadsStore.getState() as unknown as { unreadIds: string[] }).unreadIds).toEqual([
+      "t2",
+      "t3",
+    ]);
   });
 });

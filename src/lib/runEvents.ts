@@ -13,6 +13,7 @@ import { scheduleGitRefresh } from "../stores/git";
 import { useRunsStore } from "../stores/runs";
 import type { ElicitationSurface } from "../stores/runs";
 import { useTerminalsStore } from "../stores/terminals";
+import { useThreadsStore } from "../stores/threads";
 import { useUiStore } from "../stores/ui";
 import type { AppEvent } from "./types";
 
@@ -34,6 +35,12 @@ function afterRunEvents(runId: string, events: AppEvent[]): void {
     }
     if (event.kind === "file_changed" || event.kind === "run_finished") {
       refreshGit = true;
+    }
+    if (event.kind === "run_finished") {
+      const threadId = useRunsStore.getState().runThreadId(runId);
+      if (threadId && useThreadsStore.getState().activeThreadId !== threadId) {
+        useThreadsStore.getState().markUnread(threadId, true);
+      }
     }
   }
   // Diff panel freshness: every write re-projects the git diff (debounced).

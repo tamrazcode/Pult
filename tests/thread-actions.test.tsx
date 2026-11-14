@@ -29,7 +29,6 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 import { ChatHeader } from "../src/components/chat/ChatHeader";
-import { shelfDropTarget } from "../src/components/layout/Sidebar";
 import { useRunsStore } from "../src/stores/runs";
 import { useThreadsStore } from "../src/stores/threads";
 
@@ -122,10 +121,5 @@ describe("thread actions", () => {
     await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th"));
     expect(navigate).not.toHaveBeenCalled();
     expect(useThreadsStore.getState().threads).toHaveLength(1);
-  });
-
-  it("does not offer the working shelf as a drag target", () => {
-    expect(shelfDropTarget("working")).toBeNull();
-    expect(shelfDropTarget("snoozed")).toEqual({ status: "snoozed", pinned: false });
   });
 });

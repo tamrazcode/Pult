@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter, useRouterState } from "@tanstack/react-router";
-import { Copy, Minus, PanelLeft, PanelRight, Settings, Square, X } from "lucide-react";
+import { Copy, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
 import { resolveBreadcrumbs } from "../../lib/breadcrumbs";
 import { PultLogo } from "../ui/PultLogo";
 import { useThreadsStore } from "../../stores/threads";
@@ -67,14 +67,6 @@ export function Topbar() {
 
       {version && <span className="tnum text-xs text-text-tertiary">v{version}</span>}
 
-      <button
-        onClick={() => void router.navigate({ to: "/settings/appearance" })}
-        title="Settings (Ctrl+,)"
-        aria-label="Settings"
-        className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition-colors duration-150 hover:bg-hover hover:text-text-secondary"
-      >
-        <Settings size={15} />
-      </button>
       <TopbarToggle active={sidebarOpen} onClick={toggleSidebar} label="Toggle sidebar">
         <PanelLeft size={15} />
       </TopbarToggle>
