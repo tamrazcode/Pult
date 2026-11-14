@@ -25,7 +25,7 @@ function WelcomePage() {
       <div className="w-full max-w-xl space-y-5">
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-(--radius-lg) bg-accent text-accent-fg">
-            <PultLogo className="h-7 w-7" />
+            <PultLogo className="h-8 w-8" />
           </div>
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold text-text-primary">Welcome to pult</h1>

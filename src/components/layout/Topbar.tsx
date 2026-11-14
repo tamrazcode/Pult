@@ -39,7 +39,7 @@ export function Topbar() {
       data-tauri-drag-region
       className="flex h-12 shrink-0 select-none items-center gap-3 border-b border-border-subtle bg-chrome pr-0 pl-4"
     >
-      <PultLogo className="h-4 w-4 shrink-0 text-text-primary" />
+      <PultLogo className="h-5 w-5 shrink-0 text-text-primary" />
       {/* breadcrumbs "pult / where you are" — route-aware, never static */}
       <nav
         aria-label="Breadcrumbs"

@@ -32,7 +32,7 @@ export function NewChatEmptyState() {
       </pre>
       <div className="relative z-10 w-full -translate-y-3 py-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-6 text-center">
-          <PultLogo className="h-12 w-12 text-text-primary" />
+          <PultLogo className="h-20 w-20 text-text-primary" />
           <h1 className="mt-5 text-2xl font-medium tracking-tight text-text-primary">
             What should we do in Pult?
           </h1>
