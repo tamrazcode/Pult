@@ -44,7 +44,7 @@ export function HistoryTicks({
             onMouseLeave={() => setPreviewKey((key) => (key === tick.key ? null : key))}
             onFocus={() => setPreviewKey(tick.key)}
             onBlur={() => setPreviewKey((key) => (key === tick.key ? null : key))}
-            className={`h-0.5 rounded-full transition-all ${
+            className={`h-0.5 shrink-0 rounded-full transition-all ${
               activeKey === tick.key
                 ? "w-4 bg-accent"
                 : "w-2.5 bg-text-tertiary/60 hover:w-4 hover:bg-accent"
