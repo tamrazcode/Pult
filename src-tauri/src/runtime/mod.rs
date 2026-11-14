@@ -427,9 +427,13 @@ impl AgentRuntime {
             }
         }
         crate::config::save_instances(&crate::pult_home(), &specs)?;
-        for spec in &specs {
-            // A saved command/env means any warm process is stale.
-            self.pool.invalidate_instance(&spec.id);
+        // Warm processes are stale for every removed or saved instance.
+        let old_ids: Vec<String> = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.instances.iter().map(|spec| spec.id.clone()).collect()
+        };
+        for id in old_ids.iter().chain(specs.iter().map(|spec| &spec.id)) {
+            self.pool.invalidate_instance(id);
         }
         self.inner
             .lock()
@@ -1182,7 +1186,6 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mut client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>;
     let session_id: String;
     let mut applied_config: DesiredConfigMap;
-    let mut applied_mode: Option<String>;
     let mut replayed_metadata = Vec::new();
 
     if let Some(entry) = pooled {
@@ -1193,7 +1196,6 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             client_requests_rx: pooled_requests,
             session_id: pooled_session,
             applied_config: pooled_config,
-            applied_mode: pooled_mode,
             ..
         } = entry;
         // Anything buffered after the previous prompt completed is stale.
@@ -1203,7 +1205,6 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         client_requests_rx = pooled_requests;
         session_id = pooled_session;
         applied_config = pooled_config;
-        applied_mode = pooled_mode;
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
             guard.runs.insert(
@@ -1237,7 +1238,6 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         events_rx = spawned_events;
         client_requests_rx = spawned_requests;
         applied_config = DesiredConfigMap::new();
-        applied_mode = None;
         timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
         emit_process("spawned", None);
 
@@ -1297,14 +1297,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     }
 
     // A mode picked before this run existed is applied before the prompt; a
-    // pooled session skips the round-trip when it already has that mode.
+    // rejecting agent must not kill the send. Modes are re-sent every turn:
+    // live mode changes are not observable here, and one round-trip is cheap.
     if let Some(mode_id) = mode.as_deref() {
-        if applied_mode.as_deref() != Some(mode_id) {
-            match conn.set_mode(&session_id, mode_id).await {
-                Ok(_) => applied_mode = Some(mode_id.to_string()),
-                Err(err) => tracing::warn!(target: "pult::runtime",
-                    mode = %mode_id, error = %err, "desired mode was not applied"),
-            }
+        if let Err(err) = conn.set_mode(&session_id, mode_id).await {
+            tracing::warn!(target: "pult::runtime",
+                mode = %mode_id, error = %err, "desired mode was not applied");
         }
     }
 
@@ -1326,20 +1324,20 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
     // first because agents narrow dependent options (thought level) when the
     // model changes.
-    let mut picks: Vec<(String, ConfigOptionValue)> = config
-        .into_iter()
-        .filter(|(id, value)| applied_config.get(id) != Some(value))
-        .collect();
+    let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
     picks.sort_by_key(|(id, _)| config_apply_order(id));
     let config_started = std::time::Instant::now();
     for (config_id, value) in picks {
-        let applied_value = value.clone();
+        // Compare at apply time: an earlier pick may have narrowed dependents.
+        if applied_config.get(&config_id) == Some(&value) {
+            continue;
+        }
         match conn
             .set_config_option(&session_id, &config_id, value)
             .await
         {
             Ok(result) => {
-                applied_config.insert(config_id.clone(), applied_value);
+                sync_applied_config(&mut applied_config, &result.config_options);
                 runtime.update_cached_config_options(&instance_id, result.config_options.clone());
                 let event = Event::new(
                     run_id.clone(),
@@ -1438,13 +1436,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             }
                         }
                         AnswerPayload::ConfigOption { config_id, value } => {
-                            let applied_value = value.clone();
                             match conn
                                 .set_config_option(&session_id, &config_id, value)
                                 .await
                             {
                                 Ok(result) => {
-                                    applied_config.insert(config_id.clone(), applied_value);
+                                    sync_applied_config(&mut applied_config, &result.config_options);
                                     runtime.update_cached_config_options(
                                         &instance_id,
                                         result.config_options.clone(),
@@ -1502,6 +1499,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         break;
                     }
                     runtime.emit_run_event(&run_id, &event);
+                    if let EventKind::ConfigOptions { options } = &event.kind {
+                        sync_applied_config(&mut applied_config, options);
+                    }
                     runtime.apply_session_metadata(&thread_id, &instance_id, &event);
                 }
             }
@@ -1630,10 +1630,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 root: root.clone(),
                 spawn_sig,
                 applied_config,
-                applied_mode,
+                // Re-applied next turn: live mode changes are not tracked here.
+                applied_mode: None,
                 last_used: std::time::Instant::now(),
             },
         );
+        // Close the delete/park race: deletion may have committed between the
+        // existence check above and the insert.
+        if runtime.store.get_thread(&thread_id).is_err() {
+            runtime.pool.invalidate_thread(&thread_id);
+        }
     } else {
         conn.kill();
     }
@@ -2113,6 +2119,24 @@ fn config_apply_order(id: &str) -> u8 {
         "model" => 0,
         "thought_level" | "reasoning_effort" => 1,
         _ => 2,
+    }
+}
+
+/// Mirrors the agent's effective option values into the parked-session
+/// bookkeeping, so a pooled turn only re-sends values that really differ.
+/// Crucially, applying `model` may narrow/reset dependent options; syncing
+/// here makes the next pick in the same loop see the new current value.
+fn sync_applied_config(applied: &mut DesiredConfigMap, options: &[SessionConfigOption]) {
+    for option in options {
+        let value = match &option.kind {
+            crate::protocol::types::SessionConfigOptionKind::Select { current_value, .. } => {
+                ConfigOptionValue::String(current_value.clone())
+            }
+            crate::protocol::types::SessionConfigOptionKind::Boolean { current_value } => {
+                ConfigOptionValue::Bool(*current_value)
+            }
+        };
+        applied.insert(option.id.clone(), value);
     }
 }
 

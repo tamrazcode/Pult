@@ -1446,3 +1446,109 @@ async fn set_instances_invalidates_pooled_entries_for_instance() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+#[tokio::test]
+async fn pooled_turn_reapplies_dependent_config_after_model_change() {
+    use crate::protocol::types::ConfigOptionValue;
+
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-pool-reapply-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    let spawn_log = sandbox.join("spawns.log");
+    let spawn_log_str = spawn_log.to_string_lossy().into_owned();
+
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[(
+        "MOCK_SPAWN_LOG",
+        spawn_log_str.as_str(),
+    )])]);
+    let mut thread = thread_record("th-pool-reapply");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+
+    runtime
+        .set_config_option(
+            &thread.id,
+            "model",
+            ConfigOptionValue::String("mock-fast".into()),
+        )
+        .await
+        .expect("set model mock-fast");
+    runtime
+        .set_config_option(
+            &thread.id,
+            "thought_level",
+            ConfigOptionValue::String("high".into()),
+        )
+        .await
+        .expect("set thought_level high");
+
+    let first = runtime
+        .send(&thread, "first turn", &[], "mock")
+        .expect("send 1");
+    let run1 = first.run.expect("run 1");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| {
+                runs.iter()
+                    .any(|r| r.id == run1.id && r.status != "running")
+            })
+            .unwrap_or(false)
+    })
+    .await;
+    assert_eq!(runtime.pool.stats().idle, 1);
+
+    runtime
+        .set_config_option(
+            &thread.id,
+            "model",
+            ConfigOptionValue::String("mock-v1".into()),
+        )
+        .await
+        .expect("set model mock-v1");
+
+    let second = runtime
+        .send(&thread, "second turn", &[], "mock")
+        .expect("send 2");
+    let run2 = second.run.expect("run 2");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let pids = read_pid_lines(&spawn_log);
+    assert_eq!(
+        pids.len(),
+        1,
+        "second turn must reuse the pooled process; got {pids:?}"
+    );
+
+    let run2_kinds = kinds_of(&runtime, &run2.id);
+    assert!(
+        run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::Notice { message, .. } if message.contains("thought_level"))),
+        "run 2 must re-attempt thought_level after model change to mock-v1 and surface its rejection notice; got {run2_kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}

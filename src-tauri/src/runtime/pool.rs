@@ -68,7 +68,14 @@ impl IdlePool {
         root: &Path,
         spawn_sig: &SpawnSig,
     ) -> Option<IdleConn> {
+        // Reap any entry past its TTL even when no new turn parks one.
+        self.evict_expired();
         let entry = self.lock().remove(thread_id)?;
+        if Instant::now().duration_since(entry.last_used) > IDLE_TTL {
+            entry.conn.kill();
+            self.expired.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
         let matches =
             entry.instance_id == instance_id && entry.root == root && &entry.spawn_sig == spawn_sig;
         if !matches || entry.conn.is_dead() {
@@ -431,5 +438,39 @@ mod tests {
         assert!(!taken.conn.is_dead());
         assert_eq!(pool.stats().idle, 0);
         assert!(pool.take_matching("th-live", "mock", &root, &sig).is_none());
+    }
+
+    #[tokio::test]
+    async fn take_matching_evicts_expired_entry() {
+        let _env = env_lock();
+        let pool = IdlePool::new();
+        let root = std::env::temp_dir().join("pult-pool-take-expired");
+        let sig = mock_sig();
+        let expired_at = Instant::now()
+            .checked_sub(IDLE_TTL + Duration::from_secs(5))
+            .unwrap();
+
+        // Park fresh first so parking the expired entry does not sweep it away
+        // before take_matching is exercised.
+        let fresh_entry = spawn_idle_conn("th-fresh", "mock", &root, &sig, Instant::now());
+        pool.park("th-fresh".to_string(), fresh_entry);
+
+        let expired_entry = spawn_idle_conn("th-expired", "mock", &root, &sig, expired_at);
+        let expired_conn = Arc::clone(&expired_entry.conn);
+        pool.park("th-expired".to_string(), expired_entry);
+
+        assert!(
+            pool.take_matching("th-expired", "mock", &root, &sig)
+                .is_none(),
+            "take_matching must evict and return None for an entry older than IDLE_TTL"
+        );
+        let stats = pool.stats();
+        assert_eq!(stats.expired, 1);
+        assert_eq!(stats.idle, 1);
+        wait_dead(&expired_conn).await;
+
+        let fresh = pool.take_matching("th-fresh", "mock", &root, &sig);
+        assert!(fresh.is_some(), "fresh entry must still be returned");
+        assert!(!fresh.unwrap().conn.is_dead());
     }
 }
