@@ -1552,3 +1552,42 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+#[test]
+fn caps_change_event_is_emitted_only_on_actual_change() {
+    use crate::protocol::types::{AgentCapabilities, PromptCapabilities, SessionMode};
+
+    let (runtime, sink) = mock_runtime();
+    let caps = AgentCapabilities {
+        load_session: true,
+        prompt_capabilities: PromptCapabilities {
+            image: true,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    runtime.cache_capabilities("mock", &caps, vec![], vec![]);
+    runtime.cache_capabilities("mock", &caps, vec![], vec![]);
+
+    let caps_events: Vec<_> = sink_events(&sink)
+        .into_iter()
+        .filter(|(ev, _)| ev == "agent:caps")
+        .collect();
+    assert_eq!(caps_events.len(), 1);
+
+    let modes = vec![SessionMode {
+        id: "architect".to_string(),
+        name: "Architect".to_string(),
+        description: None,
+        meta: None,
+    }];
+    runtime.cache_capabilities("mock", &caps, modes, vec![]);
+
+    let caps_events: Vec<_> = sink_events(&sink)
+        .into_iter()
+        .filter(|(ev, _)| ev == "agent:caps")
+        .collect();
+    assert_eq!(caps_events.len(), 2);
+    assert_eq!(caps_events[1].1["instanceId"].as_str(), Some("mock"));
+}

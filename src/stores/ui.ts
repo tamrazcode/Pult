@@ -28,6 +28,7 @@ export interface GlobalError {
 const PROCESS_KIND_TO_STATUS: Record<string, InstanceInfo["status"]> = {
   starting: "starting",
   spawned: "running",
+  running: "running",
   exited: "stopped",
   crashed: "crashed",
   needs_auth: "needs_auth",

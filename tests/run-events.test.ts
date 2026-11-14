@@ -178,6 +178,38 @@ describe("runEvents subscriptions", () => {
     expect(ipcMocks.providersInstancesList).toHaveBeenCalledTimes(0);
   });
 
+  it("patches instance configOptions in memory on batched config_options without calling providersInstancesList", async () => {
+    const { useUiStore } = await setup();
+    const nextOptions: SessionConfigOption[] = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        currentValue: "claude-sonnet-4",
+        options: [{ value: "claude-sonnet-4", name: "Claude Sonnet 4" }],
+      },
+    ];
+
+    expect(ipcMocks.handlers.onRunEvents).toBeTypeOf("function");
+    ipcMocks.handlers.onRunEvents!({
+      runId: "run-1",
+      events: [
+        {
+          id: "evt-1",
+          runId: "run-1",
+          seq: 1,
+          ts: 1001,
+          kind: "config_options",
+          payload: { options: nextOptions },
+        },
+      ],
+    });
+    await flushMicrotasks();
+
+    expect(useUiStore.getState().instances[0].configOptions).toEqual(nextOptions);
+    expect(ipcMocks.providersInstancesList).toHaveBeenCalledTimes(0);
+  });
+
   it("updates run record status on run_finished without calling providersInstancesList", async () => {
     const { useRunsStore } = await setup();
 

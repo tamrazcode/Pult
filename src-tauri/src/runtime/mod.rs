@@ -1710,6 +1710,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     }
     if crashed_mid_run {
         emit_process("crashed", failure.clone());
+    } else {
+        // Idle now (pooled or killed): clear the "running" dot without a
+        // providers_instances_list round-trip.
+        emit_process("exited", None);
     }
     runtime.finalize_run(&run_id, &thread_id, status, &final_reason, failure)?;
     timing.total_ms = turn_started.elapsed().as_millis() as u64;
