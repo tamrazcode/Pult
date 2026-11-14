@@ -1,0 +1,34 @@
+﻿/* Katagami (SIL OFL 1.1) — pinned commit 829d4c48378b1e1db0524ca2d2604ac0a6645751
+ * Source: https://github.com/Kevin-Liu-01/Katagami
+ * License: src/assets/fonts/OFL.txt (also bundled at /fonts/katagami/OFL.txt) */
+@font-face {
+  font-family: "Katagami Sans";
+  src: url("../assets/fonts/KatagamiSans[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Katagami Sans";
+  src: url("../assets/fonts/KatagamiSans-Italic[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Katagami Mono";
+  src: url("../assets/fonts/KatagamiMono[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Katagami Mono";
+  src: url("../assets/fonts/KatagamiMono-Italic[wght].woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}

@@ -8,8 +8,6 @@ import { useGitStore } from "./stores/git";
 import { useRunsStore } from "./stores/runs";
 import { useSettingsStore } from "./stores/settings";
 import { useThreadsStore } from "./stores/threads";
-import "@fontsource-variable/inter";
-import "@fontsource-variable/jetbrains-mono";
 import "./styles/index.css";
 
 // Global backend event fan-in (run events, run:started, queue updates).

@@ -38,6 +38,6 @@
   --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
 
   /* fonts (bundled via @fontsource-variable, see main.tsx) */
-  --font-family-ui: "Inter Variable", system-ui, -apple-system, sans-serif;
-  --font-family-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-family-ui: "Katagami Sans", system-ui, -apple-system, sans-serif;
+  --font-family-mono: "Katagami Mono", ui-monospace, monospace;
 }

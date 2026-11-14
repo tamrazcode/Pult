@@ -27,7 +27,7 @@ export function TerminalPane({ terminalId }: { terminalId: string }) {
     if (!host) return;
 
     const term = new XTerm({
-      fontFamily: "'JetBrains Mono Variable', monospace",
+      fontFamily: "Katagami Mono, ui-monospace, monospace",
       fontSize: 12,
       cursorBlink: true,
       scrollback: 5000,
@@ -43,6 +43,19 @@ export function TerminalPane({ terminalId }: { terminalId: string }) {
     term.loadAddon(fit);
     term.open(host);
     fit.fit();
+    // font-display: swap means the first measure can use a fallback face;
+    // re-fit once Katagami Mono is actually available.
+    const refit = () => {
+      try {
+        fit.fit();
+      } catch {
+        // terminal was disposed while the font loaded
+      }
+    };
+    void document.fonts
+      ?.load("12px Katagami Mono")
+      .then(refit)
+      .catch(() => {});
 
     // Replay chunks that arrived before the pane attached, then subscribe.
     for (const chunk of useTerminalsStore.getState().consumeBackfill(terminalId)) {
