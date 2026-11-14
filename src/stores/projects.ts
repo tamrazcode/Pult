@@ -19,6 +19,13 @@ export function projectColorFor(name: string): string {
   return PROJECT_COLORS[hash % PROJECT_COLORS.length];
 }
 
+/** Mirrors the backend order: starred first, then creation time. */
+function sortProjects(projects: Project[]): Project[] {
+  return [...projects].sort(
+    (a, b) => Number(b.pinned) - Number(a.pinned) || a.createdAt - b.createdAt,
+  );
+}
+
 interface ProjectsState {
   projects: Project[];
   selectedProjectId: string | null;
@@ -51,21 +58,26 @@ export const useProjectsStore = create<ProjectsState>((set, get) => ({
 
   loadProjects: async () => {
     const projects = await projectsList();
-    set({ projects, loaded: true });
+    set({ projects: sortProjects(projects), loaded: true });
   },
 
   selectProject: (selectedProjectId) => set({ selectedProjectId }),
 
   createProject: async (name, rootPath, color, worktreeStrategy) => {
     const project = await projectsCreate(name, rootPath, color, worktreeStrategy);
-    set((s) => ({ projects: [...s.projects, project], selectedProjectId: project.id }));
+    set((s) => ({
+      projects: sortProjects([...s.projects, project]),
+      selectedProjectId: project.id,
+    }));
     return project;
   },
 
   updateProject: async (id, patch) => {
     const project = await projectsUpdate(id, patch);
     set((s) => ({
-      projects: s.projects.map((candidate) => (candidate.id === id ? project : candidate)),
+      projects: sortProjects(
+        s.projects.map((candidate) => (candidate.id === id ? project : candidate)),
+      ),
     }));
     return project;
   },

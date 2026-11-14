@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { FolderOpen } from "lucide-react";
 import { ipcErrorMessage, pickFolder } from "../../lib/ipc";
@@ -19,6 +19,8 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
   const [strategy, setStrategy] = useState<"root" | "worktree">("root");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -28,20 +30,40 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
     setStrategy("root");
     setError(null);
     setBusy(false);
-  }, [open]);
+    setPicking(false);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const frame = requestAnimationFrame(() => nameRef.current?.focus());
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      cancelAnimationFrame(frame);
+    };
+  }, [open, onClose]);
 
   if (!open) return null;
 
   const chooseFolder = async () => {
-    const picked = await pickFolder("Choose project folder");
-    if (!picked) return;
-    const nextName = basename(picked);
-    setRootPath(picked);
-    setName(nextName);
-    setColor(projectColorFor(nextName));
+    if (busy || picking) return;
+    setPicking(true);
+    setError(null);
+    try {
+      const picked = await pickFolder("Choose project folder");
+      if (!picked) return;
+      const nextName = basename(picked);
+      setRootPath(picked);
+      setName(nextName);
+      setColor(projectColorFor(nextName));
+    } catch (err) {
+      setError(ipcErrorMessage(err));
+    } finally {
+      setPicking(false);
+    }
   };
 
   const submit = async () => {
+    if (busy) return;
     const trimmed = name.trim();
     if (!rootPath || !trimmed) return;
     setBusy(true);
@@ -58,10 +80,14 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6">
-      <div
+      <form
         role="dialog"
         aria-modal="true"
         aria-label="New project"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void submit();
+        }}
         className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-5 shadow-2xl"
       >
         <h2 className="text-lg font-semibold text-text-primary">New project</h2>
@@ -75,7 +101,13 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
               Folder
             </span>
             <div className="mt-1.5 flex items-center gap-2">
-              <Button variant="secondary" size="sm" onClick={() => void chooseFolder()}>
+              <Button
+                variant="secondary"
+                size="sm"
+                type="button"
+                onClick={() => void chooseFolder()}
+                disabled={busy || picking}
+              >
                 <FolderOpen size={14} />
                 Choose folder
               </Button>
@@ -90,6 +122,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
               Name
             </span>
             <input
+              ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Project name"
@@ -101,7 +134,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
               Color
             </span>
-            <div className="mt-1.5 flex flex-wrap gap-2">
+            <div role="group" aria-label="Project color" className="mt-1.5 flex flex-wrap gap-2">
               {PROJECT_COLORS.map((swatch) => (
                 <button
                   key={swatch}
@@ -152,19 +185,19 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+          <Button variant="ghost" size="sm" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
           <Button
             variant="primary"
             size="sm"
-            onClick={() => void submit()}
+            type="submit"
             disabled={busy || !rootPath || !name.trim()}
           >
             Create
           </Button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }

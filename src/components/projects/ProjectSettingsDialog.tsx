@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import { ipcErrorMessage } from "../../lib/ipc";
 import { PROJECT_COLORS, useProjectsStore } from "../../stores/projects";
@@ -22,21 +22,36 @@ export function ProjectSettingsDialog({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (!open || !project) return;
-    setName(project.name);
-    setColor(project.color ?? PROJECT_COLORS[0]);
-    setStrategy(project.worktreeStrategy);
-    setPinned(project.pinned);
+    if (!open) return;
+    // Read fresh values once per project open: store updates while editing
+    // must not clobber unsaved inputs.
+    const current = useProjectsStore.getState().projects.find((p) => p.id === projectId);
+    if (!current) return;
+    setName(current.name);
+    setColor(current.color ?? PROJECT_COLORS[0]);
+    setStrategy(current.worktreeStrategy);
+    setPinned(current.pinned);
     setConfirmDelete(false);
     setError(null);
     setBusy(false);
-  }, [open, project]);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    const frame = requestAnimationFrame(() => nameRef.current?.focus());
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      cancelAnimationFrame(frame);
+    };
+  }, [open, projectId, onClose]);
 
   if (!open || !project) return null;
 
   const save = async () => {
+    if (busy) return;
     const trimmed = name.trim();
     if (!trimmed) return;
     setBusy(true);
@@ -53,6 +68,7 @@ export function ProjectSettingsDialog({
   };
 
   const remove = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -66,10 +82,14 @@ export function ProjectSettingsDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6">
-      <div
+      <form
         role="dialog"
         aria-modal="true"
         aria-label="Project settings"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void save();
+        }}
         className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-5 shadow-2xl"
       >
         <h2 className="text-lg font-semibold text-text-primary">Project settings</h2>
@@ -80,6 +100,7 @@ export function ProjectSettingsDialog({
               Name
             </span>
             <input
+              ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="mt-1.5 h-9 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-3 text-sm text-text-primary focus:border-border-strong focus:outline-none"
@@ -90,7 +111,7 @@ export function ProjectSettingsDialog({
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
               Color
             </span>
-            <div className="mt-1.5 flex flex-wrap gap-2">
+            <div role="group" aria-label="Project color" className="mt-1.5 flex flex-wrap gap-2">
               {PROJECT_COLORS.map((swatch) => (
                 <button
                   key={swatch}
@@ -147,6 +168,7 @@ export function ProjectSettingsDialog({
             <Button
               variant="secondary"
               size="sm"
+              type="button"
               onClick={() => void navigator.clipboard.writeText(project.rootPath)}
             >
               <Copy size={13} />
@@ -169,7 +191,13 @@ export function ProjectSettingsDialog({
                 <span className="text-sm text-danger">
                   Delete this project? Threads stay, their folder link clears.
                 </span>
-                <Button variant="danger" size="sm" onClick={() => void remove()} disabled={busy}>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  type="button"
+                  onClick={() => void remove()}
+                  disabled={busy}
+                >
                   Confirm delete
                 </Button>
               </div>
@@ -181,6 +209,7 @@ export function ProjectSettingsDialog({
                 <Button
                   variant="danger_outline"
                   size="sm"
+                  type="button"
                   onClick={() => setConfirmDelete(true)}
                   disabled={busy}
                 >
@@ -192,14 +221,14 @@ export function ProjectSettingsDialog({
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+          <Button variant="ghost" size="sm" type="button" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button variant="primary" size="sm" onClick={() => void save()} disabled={busy}>
+          <Button variant="primary" size="sm" type="submit" disabled={busy || !name.trim()}>
             Save
           </Button>
         </div>
-      </div>
+      </form>
     </div>
   );
 }
