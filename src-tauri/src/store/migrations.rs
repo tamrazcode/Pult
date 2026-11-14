@@ -11,7 +11,7 @@ use super::sql;
 type MigrationFn = fn(&Connection) -> Result<(), PultError>;
 
 /// Ordered list: entry `i` upgrades the schema from version `i` to `i + 1`.
-const MIGRATIONS: &[MigrationFn] = &[migration_1, migration_2, migration_3];
+const MIGRATIONS: &[MigrationFn] = &[migration_1, migration_2, migration_3, migration_4];
 
 /// Applies every migration newer than the stored `user_version`.
 pub(super) fn run(conn: &mut Connection) -> Result<(), PultError> {
@@ -138,4 +138,14 @@ fn migration_3(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 3: thread workspaces", e))
+}
+
+/// Version 4 (v2): starred projects for the T3-style sidebar.
+fn migration_4(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE projects ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0;
+        "#,
+    )
+    .map_err(|e| sql("migration 4: projects.pinned", e))
 }

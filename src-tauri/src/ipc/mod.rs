@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::events::Event;
 use crate::runtime::{AgentRuntime, InstanceInfo, SendOutcome};
-use crate::store::records::{ImageInput, QueueItem, RunRecord, ThreadRecord};
+use crate::store::records::{ImageInput, ProjectRecord, QueueItem, RunRecord, ThreadRecord};
 use crate::PultError;
 
 /// `threads.get` payload: thread + its runs + full event transcript + the
@@ -32,6 +32,7 @@ pub struct ThreadDetail {
 
 /// Monotonic counter so thread ids never collide within the same millisecond.
 static THREAD_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static PROJECT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Creates a thread. `workspace` pins the session cwd (must exist); with
 /// `worktree` the thread instead works in a fresh `git worktree` of the
@@ -44,18 +45,63 @@ pub async fn threads_create(
     workspace: Option<String>,
     worktree: bool,
 ) -> Result<ThreadRecord, PultError> {
+    create_thread_with_runtime(
+        runtime.inner(),
+        project_id,
+        title,
+        workspace,
+        Some(worktree),
+    )
+    .await
+}
+
+/// Pure thread creation used by the IPC command and tests: resolves a
+/// project's folder/worktree strategy, then persists the thread record.
+pub(crate) async fn create_thread_with_runtime(
+    runtime: &Arc<AgentRuntime>,
+    project_id: Option<String>,
+    title: String,
+    workspace: Option<String>,
+    worktree: Option<bool>,
+) -> Result<ThreadRecord, PultError> {
+    let project = match &project_id {
+        Some(pid) => Some(runtime.store().get_project(pid).map_err(|_| {
+            PultError::with_code("workspace.missing", format!("Project {pid} not found"))
+        })?),
+        None => None,
+    };
     let seq = THREAD_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let id = format!("th-{}-{seq}", crate::events::now_millis());
     let mut workspace_value = match workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         Some(ws) => {
             let path = std::path::PathBuf::from(ws);
             let canonical = path.canonicalize().map_err(|e| {
-                PultError::internal(format!("workspace {} not found: {e}", path.display()))
+                PultError::with_code(
+                    "workspace.missing",
+                    format!("Folder not found: {} ({e})", path.display()),
+                )
             })?;
             Some(canonical.to_string_lossy().into_owned())
         }
         None => None,
     };
+    if workspace_value.is_none() {
+        if let Some(project) = &project {
+            let root = std::path::PathBuf::from(&project.root_path);
+            if !root.is_dir() {
+                return Err(PultError::with_code(
+                    "workspace.missing",
+                    format!("Project or thread folder not found: {}", project.root_path),
+                ));
+            }
+            workspace_value = Some(root.to_string_lossy().into_owned());
+        }
+    }
+    let worktree = worktree.unwrap_or_else(|| {
+        project
+            .as_ref()
+            .is_some_and(|p| p.worktree_strategy == "worktree")
+    });
     let mut main_repo: Option<String> = None;
     let mut worktree_name: Option<String> = None;
     if worktree {
@@ -90,6 +136,94 @@ pub async fn threads_create(
     runtime.store().create_thread(&record)?;
     runtime.emit_thread_updated(&record.id);
     Ok(record)
+}
+
+#[tauri::command]
+pub fn projects_list(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<Vec<ProjectRecord>, PultError> {
+    runtime.store().list_projects()
+}
+
+#[tauri::command]
+pub fn projects_create(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    name: String,
+    root_path: String,
+    color: Option<String>,
+    worktree_strategy: Option<String>,
+) -> Result<ProjectRecord, PultError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(PultError::internal("project name must not be empty"));
+    }
+    let path = std::path::PathBuf::from(root_path.trim());
+    if !path.is_dir() {
+        return Err(PultError::with_code(
+            "workspace.missing",
+            format!("Folder not found: {}", path.display()),
+        ));
+    }
+    let canonical = path.canonicalize().map_err(|e| {
+        PultError::with_code(
+            "workspace.missing",
+            format!("Folder not found: {} ({e})", path.display()),
+        )
+    })?;
+    let strategy = worktree_strategy.unwrap_or_else(|| "root".to_string());
+    if strategy != "root" && strategy != "worktree" {
+        return Err(PultError::internal(
+            "worktree strategy must be root or worktree",
+        ));
+    }
+    let seq = PROJECT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let project = ProjectRecord {
+        id: format!("proj-{}-{seq}", crate::events::now_millis()),
+        name: name.to_string(),
+        root_path: canonical.to_string_lossy().into_owned(),
+        color,
+        worktree_strategy: strategy,
+        pinned: false,
+        created_at: crate::events::now_millis(),
+    };
+    runtime.store().create_project(&project)?;
+    runtime.emit("projects:update", &project);
+    Ok(project)
+}
+
+#[tauri::command]
+pub fn projects_update(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+    name: Option<String>,
+    color: Option<String>,
+    worktree_strategy: Option<String>,
+    pinned: Option<bool>,
+) -> Result<ProjectRecord, PultError> {
+    let project = runtime.store().update_project(
+        &id,
+        name.as_deref(),
+        color.as_deref(),
+        worktree_strategy.as_deref(),
+        pinned,
+    )?;
+    runtime.emit("projects:update", &project);
+    Ok(project)
+}
+
+#[tauri::command]
+pub fn projects_delete(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<(), PultError> {
+    let project = runtime.store().get_project(&id)?;
+    runtime.store().delete_project(&id)?;
+    runtime
+        .pool
+        .invalidate_root(std::path::Path::new(&project.root_path));
+    runtime.emit("projects:update", &serde_json::json!({ "deletedId": id }));
+    runtime.emit("threads:update", &serde_json::json!({}));
+    Ok(())
 }
 
 #[tauri::command]

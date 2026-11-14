@@ -757,6 +757,9 @@ impl AgentRuntime {
         instance_id: &str,
     ) -> Result<RunRecord, crate::PultError> {
         let spawn_config = self.spawn_config_for(instance_id)?;
+        // Resolve the folder before creating the run so a missing workspace is
+        // an immediate typed error, not a failed run record.
+        let root = self.workspace_root_for(thread)?;
 
         let active = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
@@ -815,7 +818,6 @@ impl AgentRuntime {
         self.store.append_event(&user_event)?;
         self.emit_run_event(&run.id, &user_event);
 
-        let root = self.workspace_root_for(thread)?;
         let (answers_tx, answers_rx) = mpsc::unbounded_channel::<(String, AnswerPayload)>();
 
         {
@@ -1051,7 +1053,7 @@ impl AgentRuntime {
     }
 
     /// Single fan-out point: serialize + hand to the sink.
-    fn emit(&self, event: &str, payload: &impl Serialize) {
+    pub(crate) fn emit(&self, event: &str, payload: &impl Serialize) {
         let value = serde_json::to_value(payload).unwrap_or(serde_json::Value::Null);
         let _ = self.sink.emit(event, value);
     }
@@ -1077,15 +1079,34 @@ impl AgentRuntime {
     }
 
     /// Session cwd for a thread: its explicit workspace (worktree threads
-    /// pin theirs at creation), else the global root (§4.4).
-fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
+    /// pin theirs at creation), else its project's folder, else the global
+    /// root. A missing folder is an explicit error, never a silent fallback.
+    fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
         if let Some(ws) = thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             let path = PathBuf::from(ws);
-            if path.is_dir() {
-                return Ok(clean_verbatim(path));
+            if !path.is_dir() {
+                return Err(crate::PultError::with_code(
+                    "workspace.missing",
+                    format!("Project or thread folder not found: {ws}"),
+                ));
             }
-            tracing::warn!(target: "pult::runtime",
-                workspace = %ws, "thread workspace missing on disk; falling back to global root");
+            return Ok(clean_verbatim(path));
+        }
+        if let Some(project_id) = &thread.project_id {
+            let project = self.store.get_project(project_id).map_err(|_| {
+                crate::PultError::with_code(
+                    "workspace.missing",
+                    format!("Project or thread folder not found: project {project_id}"),
+                )
+            })?;
+            let path = PathBuf::from(&project.root_path);
+            if !path.is_dir() {
+                return Err(crate::PultError::with_code(
+                    "workspace.missing",
+                    format!("Project or thread folder not found: {}", project.root_path),
+                ));
+            }
+            return Ok(clean_verbatim(path));
         }
         let root = self.workspace_root()?;
         Ok(clean_verbatim(root))

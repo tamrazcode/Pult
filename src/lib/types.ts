@@ -5,8 +5,19 @@
  * "payload", kind tags are snake_case, payload fields camelCase.
  */
 
-export type ThreadStatus = "draft" | "working" | "waiting" | "snoozed" | "settled";
+export type ThreadStatus = "draft" | "working" | "waiting" | "snoozed" | "settled" | "archived";
 export type RunStatus = "queued" | "running" | "finished" | "cancelled" | "failed";
+
+/** Folder-backed project; threads inside it run in `rootPath`. */
+export interface Project {
+  id: string;
+  name: string;
+  rootPath: string;
+  color: string | null;
+  worktreeStrategy: "root" | "worktree";
+  pinned: boolean;
+  createdAt: number;
+}
 
 export interface Thread {
   id: string;

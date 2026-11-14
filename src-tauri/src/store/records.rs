@@ -2,6 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
+/// A folder-backed project: threads created inside it run in `root_path`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectRecord {
+    pub id: String,
+    pub name: String,
+    pub root_path: String,
+    pub color: Option<String>,
+    pub worktree_strategy: String,
+    pub pinned: bool,
+    pub created_at: i64,
+}
+
 /// A conversation thread.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -486,7 +486,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 3, "migrations applied through v3");
+    assert_eq!(version, 4, "migrations applied through v4");
     drop(first);
 
     let second = Store::open(&path).unwrap();

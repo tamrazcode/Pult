@@ -786,6 +786,21 @@
 
 ---
 
+## Backlog — agent-generated images in pult (user request, 2026-11-14)
+
+Goal: when an agent (first target: Codex using its `imagegen` skill) generates an image, pult shows the image inline in the thread instead of an empty tool-output JSON.
+
+Approach:
+1. Extend the ACP projection: when a tool output or agent message contains an image content block, emit a dedicated `image_artifact { path?, data?, mimeType, toolCallId? }` event instead of burying it in raw JSON.
+2. Codex fallback: detect local image paths in tool output/raw JSON (`.png/.jpg/.jpeg/.webp/.gif`) that resolve inside the thread workspace or pult home; read via a size-capped Tauri command (e.g. 20 MB) and render inline.
+3. UI: `ToolRow` or a new `ImageArtifact` timeline item renders a thumbnail with click-to-open/full-size, copy path, and graceful fallback when the file is gone.
+4. Security: resolve canonical paths only, reject paths outside the workspace/pult home, cap bytes and dimensions, never fetch remote URLs automatically.
+5. Tests: projection fixture with an image content block; Codex-style tool JSON with a temp image path; rejection of an outside-workspace path; missing file fallback.
+
+Out of scope until a real agent emits images: annotation/editing, galleries across threads, remote URL rendering.
+
+---
+
 ## Out of scope
 
 - Speech-to-text / voice input (and therefore any microphone button in the composer).

@@ -8,6 +8,7 @@
 
 mod events;
 mod migrations;
+mod projects;
 mod queue;
 pub mod records;
 mod runs;

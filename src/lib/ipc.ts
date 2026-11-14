@@ -14,6 +14,7 @@ import type {
   InstanceSpec,
   IpcError,
   PrOutcome,
+  Project,
   PtyExitPayload,
   PtyInfo,
   PtyOutputPayload,
@@ -100,6 +101,42 @@ export function threadsCreate(
 
 export function threadsList(): Promise<Thread[]> {
   return invokeWithFallback<Thread[]>("threads_list", []);
+}
+
+// ---- projects ----
+
+export function projectsList(): Promise<Project[]> {
+  return invokeWithFallback<Project[]>("projects_list", []);
+}
+
+export function projectsCreate(
+  name: string,
+  rootPath: string,
+  color?: string | null,
+  worktreeStrategy?: "root" | "worktree",
+): Promise<Project> {
+  return invokeRequired<Project>("projects_create", {
+    name,
+    rootPath,
+    color,
+    worktreeStrategy,
+  });
+}
+
+export function projectsUpdate(
+  id: string,
+  patch: {
+    name?: string;
+    color?: string | null;
+    worktreeStrategy?: "root" | "worktree";
+    pinned?: boolean;
+  },
+): Promise<Project> {
+  return invokeRequired<Project>("projects_update", { id, ...patch });
+}
+
+export function projectsDelete(id: string): Promise<void> {
+  return invokeRequired<void>("projects_delete", { id });
 }
 
 export function threadsGet(threadId: string): Promise<ThreadDetail> {
