@@ -21,8 +21,9 @@ use crate::runtime::permissions::PermissionMode;
 use crate::runtime::terminals::TerminalRegistry;
 use crate::protocol::jsonrpc::{RequestId, RpcError, ERR_RESOURCE_NOT_FOUND};
 use crate::protocol::types::{
-    AgentCapabilities, CreateElicitationParams, CreateTerminalParams, ElicitationAction,
-    ReadTextFileParams, ReadTextFileResult, RequestPermissionParams, WriteTextFileParams,
+    AgentCapabilities, ConfigOptionValue, CreateElicitationParams, CreateTerminalParams,
+    ElicitationAction, ReadTextFileParams, ReadTextFileResult, RequestPermissionParams,
+    SessionConfigOption, WriteTextFileParams,
 };
 use crate::store::records::{ImageInput, QueueItem, RunRecord, ThreadRecord};
 use crate::store::Store;
@@ -60,6 +61,9 @@ impl<R: tauri::Runtime> EventSink for tauri::AppHandle<R> {
     }
 }
 
+/// Per-thread session config picks, keyed by config option id.
+pub type DesiredConfigMap = HashMap<String, ConfigOptionValue>;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceInfo {
@@ -78,6 +82,8 @@ pub struct InstanceInfo {
     pub load_session: bool,
     /// Session modes the agent advertised (M6 picker; empty until known).
     pub modes: Vec<crate::protocol::types::SessionMode>,
+    /// Session config options (model, thought level, toggles) from the cache.
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 /// Capabilities observed during a run's handshake, cached per instance so the
@@ -88,6 +94,8 @@ struct CachedCaps {
     load_session: bool,
     /// Session modes the agent advertised at the last handshake (M6 picker).
     modes: Vec<crate::protocol::types::SessionMode>,
+    /// Session config options from the last handshake or update.
+    config_options: Vec<SessionConfigOption>,
 }
 
 /// Result of the queue-aware send: either a fresh run or a queue slot.
@@ -280,6 +288,7 @@ impl AgentRuntime {
                     prompt_image: false,
                     load_session: false,
                     modes: Vec::new(),
+                    config_options: Vec::new(),
                 });
                 InstanceInfo {
                     id: spec.id.clone(),
@@ -297,6 +306,7 @@ impl AgentRuntime {
                     prompt_image: caps.prompt_image,
                     load_session: caps.load_session,
                     modes: caps.modes,
+                    config_options: caps.config_options,
                 }
             })
             .collect()
@@ -427,6 +437,103 @@ impl AgentRuntime {
             .and_then(|value| value.as_str().map(str::to_string))
     }
 
+    /// Session config picks for this thread (model, thought level, toggles).
+    pub fn desired_config(&self, thread_id: &str) -> DesiredConfigMap {
+        self.store
+            .get_setting(&format!("thread_config:{thread_id}"))
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default()
+    }
+
+    fn save_desired_config(
+        &self,
+        thread_id: &str,
+        config: &DesiredConfigMap,
+    ) -> Result<(), crate::PultError> {
+        let value = serde_json::to_value(config)
+            .map_err(|e| crate::PultError::store(format!("config encode: {e}")))?;
+        self.store
+            .set_setting(&format!("thread_config:{thread_id}"), &value)
+    }
+
+    /// Merges a draft's picks into a thread (first send from `/chat`).
+    pub fn merge_desired_config(
+        &self,
+        thread_id: &str,
+        patch: &DesiredConfigMap,
+    ) -> Result<(), crate::PultError> {
+        let mut config = self.desired_config(thread_id);
+        config.extend(patch.clone());
+        self.save_desired_config(thread_id, &config)
+    }
+
+    /// Applies a config option now (live run) and remembers it for the next
+    /// run. A rejecting agent is warned about, never treated as a failure.
+    pub async fn set_config_option(
+        &self,
+        thread_id: &str,
+        config_id: &str,
+        value: ConfigOptionValue,
+    ) -> Result<(), crate::PultError> {
+        let mut config = self.desired_config(thread_id);
+        config.insert(config_id.to_string(), value.clone());
+        self.save_desired_config(thread_id, &config)?;
+
+        let Some(run_id) = self.active_run_for(thread_id) else {
+            return Ok(());
+        };
+        let (conn, session_id, instance_id) = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            match inner.runs.get(&run_id) {
+                Some(state) => (
+                    Arc::clone(&state.conn),
+                    state.session_id.clone(),
+                    state.instance_id.clone(),
+                ),
+                None => return Ok(()),
+            }
+        };
+        match conn
+            .set_config_option(&session_id, config_id, value)
+            .await
+        {
+            Ok(result) => {
+                self.update_cached_config_options(&instance_id, result.config_options.clone());
+                if let Ok(seq) = self.store.next_seq(&run_id) {
+                    let event = Event::new(
+                        run_id.clone(),
+                        seq,
+                        EventKind::ConfigOptions {
+                            options: result.config_options,
+                        },
+                    );
+                    let _ = self.store.append_event(&event);
+                    self.emit_run_event(&run_id, &event);
+                }
+                Ok(())
+            }
+            Err(err) => {
+                tracing::warn!(target: "pult::runtime",
+                    config = %config_id, error = %err, "config option was not applied");
+                if let Ok(seq) = self.store.next_seq(&run_id) {
+                    let event = Event::new(
+                        run_id.clone(),
+                        seq,
+                        EventKind::Notice {
+                            level: "warning".to_string(),
+                            message: format!("The agent rejected {config_id}: {err}"),
+                        },
+                    );
+                    let _ = self.store.append_event(&event);
+                    self.emit_run_event(&run_id, &event);
+                }
+                Ok(())
+            }
+        }
+    }
+
     /// Queue-aware send (§6.1 composer semantics): if the thread is working,
     /// the message is stored and auto-dispatches when the active run ends;
     /// otherwise it starts a run immediately.
@@ -497,17 +604,22 @@ impl AgentRuntime {
         instance_id: &str,
         caps: &AgentCapabilities,
         modes: Vec<crate::protocol::types::SessionMode>,
+        config_options: Vec<SessionConfigOption>,
     ) {
         let mut inner = self.inner.lock().expect("runtime lock poisoned");
-        let previous_modes = inner
-            .capabilities
-            .get(instance_id)
-            .map(|c| c.modes.clone())
-            .unwrap_or_default();
+        let previous = inner.capabilities.get(instance_id).cloned();
         let modes = if modes.is_empty() {
-            previous_modes
+            previous.as_ref().map(|c| c.modes.clone()).unwrap_or_default()
         } else {
             modes
+        };
+        let config_options = if config_options.is_empty() {
+            previous
+                .as_ref()
+                .map(|c| c.config_options.clone())
+                .unwrap_or_default()
+        } else {
+            config_options
         };
         inner.capabilities.insert(
             instance_id.to_string(),
@@ -515,8 +627,18 @@ impl AgentRuntime {
                 prompt_image: caps.prompt_capabilities.image,
                 load_session: caps.load_session,
                 modes,
+                config_options,
             },
         );
+    }
+
+    /// Replaces the cached config options from a `set_config_option` reply or
+    /// a live `config_option_update`.
+    fn update_cached_config_options(&self, instance_id: &str, config_options: Vec<SessionConfigOption>) {
+        let mut inner = self.inner.lock().expect("runtime lock poisoned");
+        if let Some(caps) = inner.capabilities.get_mut(instance_id) {
+            caps.config_options = config_options;
+        }
     }
 
     /// Start a run (§4.2): registers the run, persists the user message, and
@@ -541,15 +663,19 @@ impl AgentRuntime {
             ));
         }
 
+        let desired = self.desired_config(&thread.id);
+        let model = desired_string(&desired, "model");
+        let effort = desired_string(&desired, "thought_level")
+            .or_else(|| desired_string(&desired, "reasoning_effort"));
         let run = RunRecord {
             id: format!("run-{}-{}", now_millis(), thread.id),
             thread_id: thread.id.clone(),
             idx: self.store.run_count(&thread.id)? as i64,
             status: "running".to_string(),
             instance_id: instance_id.to_string(),
-            model: None,
+            model,
             mode: self.desired_mode(&thread.id),
-            effort: None,
+            effort,
             started_at: now_millis(),
             stopped_at: None,
             stop_reason: None,
@@ -601,6 +727,7 @@ impl AgentRuntime {
         let text = text.to_string();
         let prompt_images = images.to_vec();
         let mode = run.mode.clone();
+        let config = self.desired_config(&thread.id);
         tokio::spawn(async move {
             let outcome = run_turn(RunTask {
                 runtime: this,
@@ -612,6 +739,7 @@ impl AgentRuntime {
                 text,
                 images: prompt_images,
                 mode,
+                config,
                 answers_rx,
             })
             .await;
@@ -903,6 +1031,8 @@ struct RunTask {
     images: Vec<ImageInput>,
     /// Mode picked before the run started; applied right after the session.
     mode: Option<String>,
+    /// Config options picked for this thread; applied before the prompt.
+    config: DesiredConfigMap,
     answers_rx: mpsc::UnboundedReceiver<(String, AnswerPayload)>,
 }
 
@@ -919,6 +1049,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         text,
         images,
         mode,
+        config,
         mut answers_rx,
     } = task;
     let emit_process = |kind: &str, detail: Option<String>| {
@@ -994,6 +1125,45 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         Arc::clone(&inner.terminals)
     };
     let mut next_seq = runtime.store.next_seq(&run_id)?;
+
+    // Apply the thread's config picks to this fresh session, then tell the
+    // timeline about the effective option set. A rejecting agent never kills
+    // the prompt (§5.4: stale picks must degrade, not fail).
+    for (config_id, value) in config {
+        match conn
+            .set_config_option(&session_id, &config_id, value)
+            .await
+        {
+            Ok(result) => {
+                runtime.update_cached_config_options(&instance_id, result.config_options.clone());
+                let event = Event::new(
+                    run_id.clone(),
+                    next_seq,
+                    EventKind::ConfigOptions {
+                        options: result.config_options,
+                    },
+                );
+                next_seq += 1;
+                let _ = runtime.store.append_event(&event);
+                runtime.emit_run_event(&run_id, &event);
+            }
+            Err(err) => {
+                tracing::warn!(target: "pult::runtime",
+                    config = %config_id, error = %err, "desired config was not applied");
+                let event = Event::new(
+                    run_id.clone(),
+                    next_seq,
+                    EventKind::Notice {
+                        level: "warning".to_string(),
+                        message: format!("The agent rejected {config_id}: {err}"),
+                    },
+                );
+                next_seq += 1;
+                let _ = runtime.store.append_event(&event);
+                runtime.emit_run_event(&run_id, &event);
+            }
+        }
+    }
     let mut pending_permissions: HashMap<String, PendingPermission> = HashMap::new();
     let mut pending_elicitations: HashMap<String, PendingElicitation> = HashMap::new();
     let mut failure: Option<String> = None;
@@ -1073,6 +1243,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         break;
                     }
                     runtime.emit_run_event(&run_id, &event);
+                    if let EventKind::ConfigOptions { options } = &event.kind {
+                        runtime.update_cached_config_options(&instance_id, options.clone());
+                    }
                     // Agent-chosen session titles rename the thread live
                     // (session_info_update, §M2 auto-rename).
                     if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
@@ -1292,6 +1465,8 @@ pub struct PreflightReport {
     pub auth_required: bool,
     /// Detail when the probe failed (shown under "Needs sign-in").
     pub auth_hint: Option<String>,
+    /// Session config options observed on the probe session (pickers warm).
+    pub config_options: Vec<SessionConfigOption>,
 }
 
 impl AgentRuntime {
@@ -1328,12 +1503,17 @@ impl AgentRuntime {
         // advertise SUPPORTED methods, not a missing login (T3 semantics).
         // The probe runs in a temp cwd and sends no prompt — free and safe.
         let probe_cwd = std::env::temp_dir().to_string_lossy().into_owned();
-        let (auth_required, auth_hint) = match conn.new_session(&probe_cwd).await {
-            Ok(_) => (false, None),
-            Err(err) => (true, Some(err.to_string())),
+        let (auth_required, auth_hint, config_options) = match conn.new_session(&probe_cwd).await {
+            Ok(session) => (false, None, session.config_options),
+            Err(err) => (true, Some(err.to_string()), Vec::new()),
         };
         // Capabilities cached here feed the composer gating immediately.
-        self.cache_capabilities(instance_id, &init.agent_capabilities, Vec::new());
+        self.cache_capabilities(
+            instance_id,
+            &init.agent_capabilities,
+            Vec::new(),
+            config_options.clone(),
+        );
         conn.kill();
         Ok(PreflightReport {
             instance_id: instance_id.to_string(),
@@ -1347,6 +1527,7 @@ impl AgentRuntime {
             prompt_image: init.agent_capabilities.prompt_capabilities.image,
             auth_required,
             auth_hint,
+            config_options,
         })
     }
 }
@@ -1377,6 +1558,7 @@ async fn resolve_session(
                         instance_id,
                         &init.agent_capabilities,
                         loaded.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                        loaded.config_options.clone(),
                     );
                     remote
                 }
@@ -1392,6 +1574,7 @@ async fn resolve_session(
                         instance_id,
                         &init.agent_capabilities,
                         fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                        fresh.config_options.clone(),
                     );
                     fresh.session_id
                 }
@@ -1409,6 +1592,7 @@ async fn resolve_session(
                 instance_id,
                 &init.agent_capabilities,
                 fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                fresh.config_options.clone(),
             );
             fresh.session_id
         }
@@ -1419,6 +1603,14 @@ async fn resolve_session(
 /// M6: the mode picker works from the advertised mode list.
 fn collect_modes(state: &crate::protocol::types::SessionModeState) -> Vec<crate::protocol::types::SessionMode> {
     state.available_modes.clone()
+}
+
+/// String value of a desired config option (booleans never become model/effort).
+fn desired_string(config: &DesiredConfigMap, id: &str) -> Option<String> {
+    match config.get(id) {
+        Some(ConfigOptionValue::String(value)) => Some(value.clone()),
+        _ => None,
+    }
 }
 
 /// Permission policy + surfacing (§5.5): the mode may auto-resolve before

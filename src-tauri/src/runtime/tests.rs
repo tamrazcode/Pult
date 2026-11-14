@@ -676,3 +676,134 @@ async fn deleting_a_thread_mid_run_releases_runtime_state() {
     wait_for(Duration::from_secs(8), || runtime.active_run_for("th-delete").is_none()).await;
     pump.abort();
 }
+
+/// §5.4: preflight caches session config options alongside modes, so pickers
+/// are usable before the first prompt.
+#[tokio::test]
+async fn preflight_caches_modes_and_config_options() {
+    let report = {
+        let _env = env_lock();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        let (runtime, _sink) = mock_runtime();
+        let report = runtime.preflight("mock").await.expect("preflight");
+        let info = runtime
+            .instances()
+            .into_iter()
+            .find(|i| i.id == "mock")
+            .expect("mock instance");
+        assert_eq!(info.config_options.len(), 3);
+        report
+    };
+    assert_eq!(report.config_options.len(), 3);
+}
+
+/// A pick made while idle is remembered and applied to the next run; the run
+/// record names the actual model/effort.
+#[tokio::test]
+async fn set_config_option_before_run_persists_and_applies_on_next_mock_run() {
+    use crate::protocol::types::ConfigOptionValue;
+    let (runtime, sink, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-m10-config");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-config");
+        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .set_config_option("th-config", "model", ConfigOptionValue::String("mock-pro".into()))
+            .await
+            .expect("idle model pick");
+        runtime
+            .set_config_option(
+                "th-config",
+                "thought_level",
+                ConfigOptionValue::String("high".into()),
+            )
+            .await
+            .expect("idle thought pick");
+        assert_eq!(
+            runtime.desired_config("th-config").len(),
+            2,
+            "both picks must persist"
+        );
+        let run = runtime.dispatch(&thread, "configured", &[], "mock").expect("dispatch");
+        assert_eq!(run.model.as_deref(), Some("mock-pro"));
+        assert_eq!(run.effort.as_deref(), Some("high"));
+        (runtime, sink, run.id)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-config")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let kinds = kinds_of(&runtime, &run_id);
+    let applied = kinds.iter().any(|k| match k {
+        EventKind::ConfigOptions { options } => {
+            let model = options.iter().find(|o| o.id == "model");
+            let thought = options.iter().find(|o| o.id == "thought_level");
+            let model_ok = model.is_some_and(|o| matches!(
+                &o.kind,
+                crate::protocol::types::SessionConfigOptionKind::Select { current_value, .. }
+                    if current_value == "mock-pro"
+            ));
+            let thought_ok = thought.is_some_and(|o| matches!(
+                &o.kind,
+                crate::protocol::types::SessionConfigOptionKind::Select { current_value, .. }
+                    if current_value == "high"
+            ));
+            model_ok && thought_ok
+        }
+        _ => false,
+    });
+    assert!(applied, "applied picks must be echoed as config options; got {kinds:?}");
+}
+
+/// A stale/unknown pick must be ignored: the prompt still runs to end_turn.
+#[tokio::test]
+async fn invalid_desired_config_does_not_fail_prompt() {
+    use crate::protocol::types::ConfigOptionValue;
+    let (runtime, sink, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-m10-config-bad");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-bad-config");
+        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .set_config_option(
+                "th-bad-config",
+                "model",
+                ConfigOptionValue::String("nonexistent".into()),
+            )
+            .await
+            .expect("persist stale pick");
+        let run = runtime.dispatch(&thread, "still works", &[], "mock").expect("dispatch");
+        (runtime, sink, run.id)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-bad-config")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs("th-bad-config").unwrap();
+    let run = runs.iter().find(|r| r.id == run_id).expect("run");
+    assert_eq!(run.status, "finished", "a bad pick must not fail the turn");
+}

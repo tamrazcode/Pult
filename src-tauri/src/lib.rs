@@ -156,6 +156,7 @@ pub fn run() {
             ipc::workspace_files,
             ipc::open_external_url,
             ipc::runs_set_mode,
+            ipc::runs_set_config_option,
             ipc::diagnostics_frames,
             ipc::settings_get,
             ipc::settings_set,

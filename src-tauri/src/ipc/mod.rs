@@ -26,6 +26,8 @@ pub struct ThreadDetail {
     pub active_run_id: Option<String>,
     /// Session mode the user picked for the next run (persisted setting).
     pub desired_mode: Option<String>,
+    /// Session config picks for the next run (model, thought level, toggles).
+    pub desired_config: crate::runtime::DesiredConfigMap,
 }
 
 /// Monotonic counter so thread ids never collide within the same millisecond.
@@ -107,6 +109,7 @@ pub fn threads_get(
     // reads never looks like a zombie from a previous session.
     let active_run_id = runtime.active_run_for(&thread_id);
     let desired_mode = runtime.desired_mode(&thread_id);
+    let desired_config = runtime.desired_config(&thread_id);
     let runs = runtime.store().list_runs(&thread_id)?;
     let mut events = Vec::new();
     for run in &runs {
@@ -120,6 +123,7 @@ pub fn threads_get(
         queue,
         active_run_id,
         desired_mode,
+        desired_config,
     })
 }
 
@@ -187,12 +191,30 @@ pub async fn runs_dispatch(
     images: Vec<ImageInput>,
     instance_id: String,
     mode: Option<String>,
+    config_options: Option<crate::runtime::DesiredConfigMap>,
 ) -> Result<SendOutcome, PultError> {
     let thread = runtime.store().get_thread(&thread_id)?;
     if let Some(mode) = mode.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
         runtime.set_mode(&thread_id, mode)?;
     }
+    if let Some(config) = config_options.as_ref().filter(|c| !c.is_empty()) {
+        runtime.merge_desired_config(&thread_id, config)?;
+    }
     runtime.send(&thread, &text, &images, &instance_id)
+}
+
+/// Switches one session config option (model, thought level, toggle). Applies
+/// to the live run and is remembered for the next one.
+#[tauri::command]
+pub async fn runs_set_config_option(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    config_id: String,
+    value: crate::protocol::types::ConfigOptionValue,
+) -> Result<(), PultError> {
+    runtime
+        .set_config_option(&thread_id, &config_id, value)
+        .await
 }
 
 /// Removes one message from the thread's queue (composer row ✕).
