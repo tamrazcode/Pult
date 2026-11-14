@@ -6,6 +6,7 @@ import { Copy, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
 import { resolveBreadcrumbs } from "../../lib/breadcrumbs";
 import { PultLogo } from "../ui/PultLogo";
 import { useThreadsStore } from "../../stores/threads";
+import { useProjectsStore } from "../../stores/projects";
 import { useUiStore } from "../../stores/ui";
 import { appVersion } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
@@ -18,6 +19,8 @@ export function Topbar() {
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const setAppVersion = useUiStore((s) => s.setAppVersion);
   const threads = useThreadsStore((s) => s.threads);
+  const projects = useProjectsStore((s) => s.projects);
+  const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const router = useRouter();
 
@@ -46,9 +49,13 @@ export function Topbar() {
         data-tauri-drag-region
         className="flex items-center gap-1.5 text-sm"
       >
-        {resolveBreadcrumbs(pathname, threads).map((crumb, i) => (
+        {resolveBreadcrumbs(pathname, threads, projects, selectedProjectId).map((crumb, i) => (
           <span key={`${crumb.label}-${i}`} className="flex items-center gap-1.5">
-            {i > 0 && <span className="text-text-tertiary">/</span>}
+            {i > 0 && (
+              <span aria-hidden className="text-text-tertiary">
+                /
+              </span>
+            )}
             {crumb.to ? (
               <button
                 onClick={() => void router.navigate({ to: crumb.to })}
@@ -57,7 +64,9 @@ export function Topbar() {
                 {crumb.label}
               </button>
             ) : (
-              <span className="text-text-secondary">{crumb.label}</span>
+              <span aria-current="page" className="text-text-secondary">
+                {crumb.label}
+              </span>
             )}
           </span>
         ))}

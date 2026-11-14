@@ -1,4 +1,4 @@
-import type { Thread } from "./types";
+import type { Project, Thread } from "./types";
 
 const SETTINGS_TITLES: Record<string, string> = {
   appearance: "Appearance",
@@ -14,13 +14,27 @@ export interface Crumb {
   to?: string;
 }
 
-/** Route-aware breadcrumbs: `pult / <what you are looking at>`. */
-export function resolveBreadcrumbs(pathname: string, threads: Thread[]): Crumb[] {
+/** Route-aware breadcrumbs: `pult / <project?> / <what you look at>`. */
+export function resolveBreadcrumbs(
+  pathname: string,
+  threads: Thread[],
+  projects: Project[] = [],
+  selectedProjectId: string | null = null,
+): Crumb[] {
   const root: Crumb = { label: "pult", to: "/chat" };
+  const projectCrumb = (id: string | null | undefined): Crumb | null => {
+    if (!id) return null;
+    const project = projects.find((candidate) => candidate.id === id);
+    return project ? { label: project.name, to: "/chat" } : null;
+  };
   if (pathname.startsWith("/thread/")) {
     const id = pathname.slice("/thread/".length);
     const thread = threads.find((t) => t.id === id);
-    return [root, { label: thread?.title || "Thread" }];
+    return [
+      root,
+      ...(projectCrumb(thread?.projectId) ? [projectCrumb(thread?.projectId)!] : []),
+      { label: thread?.title || "Thread" },
+    ];
   }
   if (pathname.startsWith("/settings")) {
     const section = pathname.split("/")[2] ?? "";
@@ -33,5 +47,6 @@ export function resolveBreadcrumbs(pathname: string, threads: Thread[]): Crumb[]
   if (pathname.startsWith("/pull-requests")) return [root, { label: "Pull requests" }];
   if (pathname.startsWith("/usage")) return [root, { label: "Usage" }];
   if (pathname.startsWith("/welcome")) return [root, { label: "Setup" }];
-  return [root, { label: "New thread" }];
+  const selected = projectCrumb(selectedProjectId);
+  return [root, ...(selected ? [selected] : []), { label: "New thread" }];
 }

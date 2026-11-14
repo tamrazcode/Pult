@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { CheckCheck, GitBranch, Moon, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 import { runsCancel } from "../../lib/ipc";
+import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 
@@ -21,6 +22,11 @@ export function ChatHeader({
   const router = useRouter();
   const thread = useThreadsStore((s) =>
     threadId ? s.threads.find((t) => t.id === threadId) : undefined,
+  );
+  const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
+  const projectId = thread?.projectId ?? (!threadId ? selectedProjectId : null);
+  const project = useProjectsStore((s) =>
+    projectId ? s.projects.find((candidate) => candidate.id === projectId) : undefined,
   );
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(title);
@@ -104,6 +110,21 @@ export function ChatHeader({
         />
       ) : (
         <>
+          {project && (
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span
+                aria-hidden
+                className="flex h-5 w-5 items-center justify-center rounded-(--radius-sm) text-[10px] font-semibold text-white"
+                style={{ backgroundColor: project.color ?? "#346bf1" }}
+              >
+                {project.name.slice(0, 2).toUpperCase()}
+              </span>
+              <span className="text-sm text-text-secondary">{project.name}</span>
+              <span aria-hidden className="text-text-tertiary">
+                /
+              </span>
+            </span>
+          )}
           <h1 className="min-w-0 truncate text-lg font-medium text-text-primary">{heading}</h1>
           {threadId && (
             <button

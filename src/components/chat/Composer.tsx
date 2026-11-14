@@ -15,6 +15,7 @@ import {
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import { useGitStore } from "../../stores/git";
+import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
@@ -281,10 +282,23 @@ export function Composer({ threadId }: { threadId?: string }) {
           const pendingMode = modeForSend(desired);
           const pendingConfig = configForSend(useRunsStore.getState().desiredConfigByThread);
           const { workspace, worktree } = useUiStore.getState().newThreadOptions;
-          const thread = await useThreadsStore.getState().createThread(null, text.slice(0, 40), {
-            workspace: workspace.trim() || undefined,
-            worktree,
-          });
+          const selectedProjectId = useProjectsStore.getState().selectedProjectId;
+          const project = useProjectsStore
+            .getState()
+            .projects.find((candidate) => candidate.id === selectedProjectId);
+          const explicitWorkspace = workspace.trim();
+          const targetWorkspace = explicitWorkspace || project?.rootPath || undefined;
+          // An explicit folder is the user's override; otherwise the project's
+          // worktree strategy decides.
+          const targetWorktree = explicitWorkspace
+            ? worktree
+            : worktree || project?.worktreeStrategy === "worktree";
+          const thread = await useThreadsStore
+            .getState()
+            .createThread(project?.id ?? null, text.slice(0, 40), {
+              workspace: targetWorkspace,
+              worktree: targetWorktree,
+            });
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
           // The pending picks now belong to this thread; never to the next one.
@@ -710,6 +724,11 @@ function ComposerStatusLine({
   const newThreadWorkspace = useUiStore((s) =>
     threadId ? null : s.newThreadOptions.workspace || null,
   );
+  const projectRoot = useProjectsStore((s) =>
+    threadId
+      ? null
+      : (s.projects.find((project) => project.id === s.selectedProjectId)?.rootPath ?? null),
+  );
   const branch = useGitStore((s) =>
     threadId ? (s.byThread[threadId]?.status?.branch ?? null) : null,
   );
@@ -721,7 +740,7 @@ function ComposerStatusLine({
   if (awaitingDecision) {
     return <span className="truncate text-xs text-warning">Decision needed — see above</span>;
   }
-  const raw = threadWorkspace ?? newThreadWorkspace;
+  const raw = threadWorkspace ?? newThreadWorkspace ?? projectRoot;
   if (!raw) {
     return <span className="truncate text-xs text-text-tertiary">No workspace selected</span>;
   }
