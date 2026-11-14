@@ -373,6 +373,51 @@ export function activeRunForThread(runs: Run[] | undefined): Run | undefined {
   return active ?? runs[runs.length - 1];
 }
 
+export interface TimelineRunEntry {
+  run: Run;
+  view: RunView;
+  items: Array<{ key: string; item: ChatItem; showCaret: boolean }>;
+}
+
+/** React key: run-scoped so tool/compaction ids never collide across runs. */
+function timelineKey(runId: string, item: ChatItem, index: number): string {
+  const suffix =
+    item.type === "tool"
+      ? `tool-${item.toolCallId}`
+      : item.type === "compaction"
+        ? `comp-${item.compactionId}`
+        : `i-${index}`;
+  return `${runId}:${suffix}`;
+}
+
+/** Every run of a thread, index order, merged into one transcript. */
+export function threadTimelineItems(
+  runs: Run[] | undefined,
+  views: Record<string, RunView>,
+): Array<{ key: string; runId: string; item: ChatItem; showCaret: boolean }> {
+  if (!runs || runs.length === 0) return [];
+  const sorted = [...runs].sort((a, b) => a.idx - b.idx);
+  const entries: TimelineRunEntry[] = sorted.map((run) => {
+    const view = views[run.id] ?? emptyRunView(false);
+    return {
+      run,
+      view,
+      items: view.items.map((item, index) => ({
+        key: timelineKey(run.id, item, index),
+        item,
+        showCaret: false,
+      })),
+    };
+  });
+  const rows = entries.flatMap(({ run, items }) =>
+    items.map(({ key, item, showCaret }) => ({ key, runId: run.id, item, showCaret })),
+  );
+  const active = activeRunForThread(sorted);
+  const last = rows[rows.length - 1];
+  if (last && active && views[active.id]?.streaming) last.showCaret = true;
+  return rows;
+}
+
 /** Human line for the usage banner: "12.3k / 200k tokens · $0.01". */
 export function usageLine(usage: UsageDetail | undefined): string | null {
   if (!usage || typeof usage.used !== "number") return null;

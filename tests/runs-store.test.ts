@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { activeRunForThread, useRunsStore } from "../src/stores/runs";
+import { activeRunForThread, threadTimelineItems, useRunsStore } from "../src/stores/runs";
 import type { AppEvent, Run } from "../src/lib/types";
 
 const run = (id: string, threadId: string, status: Run["status"], idx = 0): Run => ({
@@ -251,5 +251,85 @@ describe("runs store", () => {
     const view = useRunsStore.getState().viewsByRun["r1"];
     expect(view.stopReason).toBe("cancelled");
     expect(view.streaming).toBe(false);
+  });
+
+  it("merges every run of a thread into one ordered timeline", () => {
+    useRunsStore.setState({
+      runsByThread: {
+        th: [run("r2", "th", "running", 1), run("r1", "th", "finished", 0)],
+      },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "first", images: [] },
+            { type: "assistant", text: "answer", streaming: false },
+          ],
+          streaming: false,
+        },
+        r2: {
+          items: [
+            { type: "user", text: "second", images: [] },
+            { type: "assistant", text: "stream", streaming: true },
+          ],
+          streaming: true,
+        },
+      },
+    });
+    const { runsByThread, viewsByRun } = useRunsStore.getState();
+    const items = threadTimelineItems(runsByThread["th"], viewsByRun);
+    expect(
+      items.map(({ item }) =>
+        item.type === "user" || item.type === "assistant" ? item.text : item.type,
+      ),
+    ).toEqual(["first", "answer", "second", "stream"]);
+    expect(items.map(({ runId }) => runId)).toEqual(["r1", "r1", "r2", "r2"]);
+    expect(items.map(({ showCaret }) => showCaret)).toEqual([false, false, false, true]);
+    expect(items.map(({ key }) => key)).toEqual(["r1:i-0", "r1:i-1", "r2:i-0", "r2:i-1"]);
+    expect(new Set(items.map(({ key }) => key)).size).toBe(4);
+  });
+
+  it("scopes tool/compaction keys per run and hides caret when inactive", () => {
+    const items = threadTimelineItems(
+      [run("r1", "th", "finished", 0), run("r2", "th", "finished", 1)],
+      {
+        r1: {
+          items: [
+            {
+              type: "tool",
+              toolCallId: "t-1",
+              title: "Read",
+              kind: "read",
+              status: "completed",
+              locations: [],
+            },
+            { type: "compaction", compactionId: "c-1", status: "completed", summary: "s1" },
+          ],
+          streaming: false,
+        },
+        r2: {
+          items: [
+            {
+              type: "tool",
+              toolCallId: "t-1",
+              title: "Read",
+              kind: "read",
+              status: "completed",
+              locations: [],
+            },
+            { type: "compaction", compactionId: "c-1", status: "completed", summary: "s2" },
+          ],
+          streaming: false,
+        },
+      },
+    );
+    expect(items.map(({ key }) => key)).toEqual([
+      "r1:tool-t-1",
+      "r1:comp-c-1",
+      "r2:tool-t-1",
+      "r2:comp-c-1",
+    ]);
+    expect(new Set(items.map(({ key }) => key)).size).toBe(4);
+    expect(items.every(({ showCaret }) => !showCaret)).toBe(true);
+    expect(threadTimelineItems(undefined, {})).toEqual([]);
   });
 });

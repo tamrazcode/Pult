@@ -769,6 +769,13 @@ function handleLoadSession(id, params) {
     sessionUpdate: "agent_message_chunk",
     content: { type: "text", text: "(replayed) earlier agent reply" },
   });
+  // Metadata replay must survive the runtime's replay drain.
+  notifySessionUpdate(sessionId, {
+    sessionUpdate: "available_commands_update",
+    availableCommands: [
+      { name: "replayed-command", description: "Replayed from the prior session" },
+    ],
+  });
   // $defs/LoadSessionResponse carries modes/configOptions only (no sessionId -
   // the client already knows the id it asked to load).
   sendResult(id, { modes: MODES, configOptions: configOptionsFor(sessionConfig(sessionId)) });

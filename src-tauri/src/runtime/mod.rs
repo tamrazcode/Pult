@@ -1181,6 +1181,23 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     timing.handshake_ms = resolved.handshake_ms;
     timing.session_ms = resolved.session_ms;
     let session_id = resolved.session_id;
+    // A resumed session re-announces the prior transcript while `session/load`
+    // is in flight. Persisting that replay would duplicate history in this run:
+    // drop transcript items, keep session metadata.
+    let mut replayed_metadata = Vec::new();
+    if resolved.resumed {
+        while let Ok(kind) = events_rx.try_recv() {
+            if matches!(
+                kind,
+                EventKind::CommandsUpdate { .. }
+                    | EventKind::ConfigOptions { .. }
+                    | EventKind::ModeChange { .. }
+                    | EventKind::SessionInfo { .. }
+            ) {
+                replayed_metadata.push(kind);
+            }
+        }
+    }
     {
         let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
         if let Some(state) = guard.runs.get_mut(&run_id) {
@@ -1203,6 +1220,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         Arc::clone(&inner.terminals)
     };
     let mut next_seq = runtime.store.next_seq(&run_id)?;
+    for kind in replayed_metadata {
+        let event = Event::new(run_id.clone(), next_seq, kind);
+        next_seq += 1;
+        let _ = runtime.store.append_event(&event);
+        runtime.emit_run_event(&run_id, &event);
+    }
 
     // Apply the thread's config picks to this fresh session, then tell the
     // timeline about the effective option set. A rejecting agent never kills
@@ -1872,8 +1895,6 @@ impl AgentRuntime {
 
 pub(crate) struct ResolvedSession {
     pub session_id: String,
-    /// Used by the replay-drain step in the next task.
-    #[allow(dead_code)]
     pub resumed: bool,
     pub handshake_ms: u64,
     pub session_ms: u64,

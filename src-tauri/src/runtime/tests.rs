@@ -237,7 +237,7 @@ async fn queued_message_auto_dispatches_after_run_finished() {
 }
 
 #[tokio::test]
-async fn second_run_resumes_previous_session() {
+async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
     struct Setup {
         runtime: Arc<AgentRuntime>,
         sink: Arc<TestSink>,
@@ -303,9 +303,19 @@ async fn second_run_resumes_previous_session() {
     .await;
     let run2_kinds = kinds_of(&runtime, &run2.id);
     assert!(
-        run2_kinds.iter().any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
+        !run2_kinds.iter().any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
             if delta.contains("(replayed) earlier agent reply"))),
-        "session/load replay must appear in run 2; got {run2_kinds:?}"
+        "session/load replay must not duplicate the prior transcript; got {run2_kinds:?}"
+    );
+    assert!(
+        !run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. }
+            if text.contains("(replayed) earlier user message"))),
+        "replayed user message must be dropped; got {run2_kinds:?}"
+    );
+    assert!(
+        run2_kinds.iter().any(|k| matches!(k, EventKind::CommandsUpdate { commands }
+            if commands.iter().any(|c| c.name == "replayed-command"))),
+        "replayed session metadata (commands) must survive the drain; got {run2_kinds:?}"
     );
     assert!(
         run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second prompt")),

@@ -21,7 +21,12 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ipcErrorMessage, runsDispatch } from "../../lib/ipc";
-import { activeRunForThread, usageLine, useRunsStore } from "../../stores/runs";
+import {
+  activeRunForThread,
+  threadTimelineItems,
+  usageLine,
+  useRunsStore,
+} from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 import type {
   ApprovalRequest,
@@ -81,17 +86,21 @@ const TRANSCRIPT_WINDOW = 300;
 
 export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
+  const views = useRunsStore((s) => s.viewsByRun);
   const activeRun = activeRunForThread(runs);
   const runId = activeRun?.id;
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
+  const entries = threadTimelineItems(runs, views);
   const bottomRef = useRef<HTMLDivElement>(null);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
 
+  // Reset the window when switching threads, not when a new run starts: the
+  // merged transcript of the same thread must keep its expanded window.
   useEffect(() => {
     setWindowSize(TRANSCRIPT_WINDOW);
-  }, [runId]);
+  }, [threadId]);
 
   // Follow the stream: any new/patched view scrolls the sentinel into view.
   useEffect(() => {
@@ -101,19 +110,18 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   if (!threadId || !view) return <EmptyState />;
 
   const hasContent =
-    view.items.length > 0 ||
+    entries.length > 0 ||
     (view.plan?.length ?? 0) > 0 ||
     view.pendingApproval !== undefined ||
     view.error !== undefined;
 
   if (!hasContent && !view.streaming) return <EmptyState />;
 
-  const last = view.items.length - 1;
   const crashed = view.error !== undefined || view.stopReason === "failed";
   // Recovery (§8 M7): a protocol/agent failure offers to re-send the turn.
   const retryText = [...view.items].reverse().find((item) => item.type === "user")?.text;
-  const hiddenCount = Math.max(view.items.length - windowSize, 0);
-  const windowedItems = view.items.slice(hiddenCount);
+  const hiddenCount = Math.max(entries.length - windowSize, 0);
+  const windowedEntries = entries.slice(hiddenCount);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -126,21 +134,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             Earlier messages ({hiddenCount} hidden)
           </button>
         )}
-        {windowedItems.map((item, i) => (
-          <ChatItemRow
-            key={
-              item.type === "tool"
-                ? `tool-${item.toolCallId}`
-                : item.type === "compaction"
-                  ? `compaction-${item.compactionId}`
-                  : `item-${i}`
-            }
-            item={item}
-            showCaret={view.streaming && i === last}
-          />
+        {windowedEntries.map(({ key, item, showCaret }) => (
+          <ChatItemRow key={key} item={item} showCaret={showCaret} />
         ))}
 
-        {view.items.length === 0 && view.streaming && (
+        {entries.length === 0 && view.streaming && (
           <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
             <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
             Working…
