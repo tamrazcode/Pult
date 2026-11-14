@@ -16,5 +16,12 @@ export async function loadThread(
   useThreadsStore.getState().upsertThread(detail.thread);
   useRunsStore
     .getState()
-    .hydrateThread(threadId, detail.runs, detail.events, detail.queue, detail.activeRunId);
+    .hydrateThread(
+      threadId,
+      detail.runs,
+      detail.events,
+      detail.queue,
+      detail.activeRunId,
+      detail.desiredMode,
+    );
 }

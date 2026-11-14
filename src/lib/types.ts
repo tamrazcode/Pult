@@ -134,6 +134,8 @@ export interface ThreadDetail {
   queue: QueueItem[];
   /** The thread's live run; a DB-running run without this id is a zombie. */
   activeRunId?: string | null;
+  /** Session mode picked for the next run (persisted per thread). */
+  desiredMode?: string | null;
 }
 
 export interface PlanEntry {

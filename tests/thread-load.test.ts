@@ -45,6 +45,7 @@ describe("loadThread", () => {
       events: [],
       queue: [],
       activeRunId: "r1",
+      desiredMode: "architect",
     };
     threadsGet.mockResolvedValue(detail);
 
@@ -52,5 +53,6 @@ describe("loadThread", () => {
 
     expect(useRunsStore.getState().runsByThread["th"][0].status).toBe("running");
     expect(useRunsStore.getState().viewsByRun["r1"].streaming).toBe(true);
+    expect(useRunsStore.getState().desiredModeByThread["th"]).toBe("architect");
   });
 });

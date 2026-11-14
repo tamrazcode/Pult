@@ -384,11 +384,17 @@ impl AgentRuntime {
         )))
     }
 
-    /// Switches the active run's session mode (§5.4 session/set_mode).
+    /// Switches the session mode (§5.4 session/set_mode). The choice is
+    /// remembered even when no run is live (connection-per-run): the next
+    /// dispatch applies it before its first prompt.
     pub fn set_mode(&self, thread_id: &str, mode_id: &str) -> Result<(), crate::PultError> {
-        let run_id = self
-            .active_run_for(thread_id)
-            .ok_or_else(|| crate::PultError::internal("no active run for this thread"))?;
+        self.store.set_setting(
+            &format!("thread_mode:{thread_id}"),
+            &serde_json::Value::String(mode_id.to_string()),
+        )?;
+        let Some(run_id) = self.active_run_for(thread_id) else {
+            return Ok(());
+        };
         let (conn, session_id) = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
             match inner.runs.get(&run_id) {
@@ -410,6 +416,15 @@ impl AgentRuntime {
             }
         });
         Ok(())
+    }
+
+    /// The mode the user picked for this thread, applied to the next run.
+    pub fn desired_mode(&self, thread_id: &str) -> Option<String> {
+        self.store
+            .get_setting(&format!("thread_mode:{thread_id}"))
+            .ok()
+            .flatten()
+            .and_then(|value| value.as_str().map(str::to_string))
     }
 
     /// Queue-aware send (§6.1 composer semantics): if the thread is working,
@@ -533,7 +548,7 @@ impl AgentRuntime {
             status: "running".to_string(),
             instance_id: instance_id.to_string(),
             model: None,
-            mode: None,
+            mode: self.desired_mode(&thread.id),
             effort: None,
             started_at: now_millis(),
             stopped_at: None,
@@ -572,6 +587,7 @@ impl AgentRuntime {
         let instance_id = instance_id.to_string();
         let text = text.to_string();
         let prompt_images = images.to_vec();
+        let mode = run.mode.clone();
         tokio::spawn(async move {
             let outcome = run_turn(RunTask {
                 runtime: this,
@@ -582,6 +598,7 @@ impl AgentRuntime {
                 root,
                 text,
                 images: prompt_images,
+                mode,
                 answers_rx,
             })
             .await;
@@ -871,6 +888,8 @@ struct RunTask {
     root: PathBuf,
     text: String,
     images: Vec<ImageInput>,
+    /// Mode picked before the run started; applied right after the session.
+    mode: Option<String>,
     answers_rx: mpsc::UnboundedReceiver<(String, AnswerPayload)>,
 }
 
@@ -886,6 +905,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         root,
         text,
         images,
+        mode,
         mut answers_rx,
     } = task;
     let emit_process = |kind: &str, detail: Option<String>| {
@@ -946,6 +966,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         }
     }
     emit_process("running", None);
+
+    // A mode picked before this run existed is applied to the fresh session
+    // before the prompt; a rejecting agent must not kill the send.
+    if let Some(mode_id) = mode.as_deref() {
+        if let Err(err) = conn.set_mode(&session_id, mode_id).await {
+            tracing::warn!(target: "pult::runtime",
+                mode = %mode_id, error = %err, "desired mode was not applied");
+        }
+    }
 
     let terminals: Arc<TerminalRegistry> = {
         let inner = runtime.inner.lock().expect("runtime lock poisoned");

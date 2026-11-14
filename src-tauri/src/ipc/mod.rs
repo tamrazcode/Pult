@@ -24,6 +24,8 @@ pub struct ThreadDetail {
     /// this id is a zombie (the app restarted mid-run); the UI renders it as
     /// interrupted.
     pub active_run_id: Option<String>,
+    /// Session mode the user picked for the next run (persisted setting).
+    pub desired_mode: Option<String>,
 }
 
 /// Monotonic counter so thread ids never collide within the same millisecond.
@@ -104,6 +106,7 @@ pub fn threads_get(
     // Read the live-run id before the runs so a run finishing between the two
     // reads never looks like a zombie from a previous session.
     let active_run_id = runtime.active_run_for(&thread_id);
+    let desired_mode = runtime.desired_mode(&thread_id);
     let runs = runtime.store().list_runs(&thread_id)?;
     let mut events = Vec::new();
     for run in &runs {
@@ -116,6 +119,7 @@ pub fn threads_get(
         events,
         queue,
         active_run_id,
+        desired_mode,
     })
 }
 
@@ -182,8 +186,12 @@ pub async fn runs_dispatch(
     text: String,
     images: Vec<ImageInput>,
     instance_id: String,
+    mode: Option<String>,
 ) -> Result<SendOutcome, PultError> {
     let thread = runtime.store().get_thread(&thread_id)?;
+    if let Some(mode) = mode.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        runtime.set_mode(&thread_id, mode)?;
+    }
     runtime.send(&thread, &text, &images, &instance_id)
 }
 

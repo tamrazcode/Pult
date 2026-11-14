@@ -398,6 +398,10 @@ interface RunsState {
   filesByThread: Record<string, FileChange[]>;
   /** Currently surfaced elicitation, or null (ElicitationModal). */
   activeElicitation: ElicitationSurface | null;
+  /** Mode picked per thread, applied when its next run starts ("" = /chat). */
+  desiredModeByThread: Record<string, string>;
+  /** Remembers the picker's choice before a run exists. */
+  setDesiredMode: (threadId: string, modeId: string) => void;
   /** Upserts a run (from runs_dispatch / threads_get) and seeds its view. */
   registerRun: (run: Run) => void;
   /** Rebuilds all views of a thread from the threads_get transcript. */
@@ -407,6 +411,7 @@ interface RunsState {
     events: AppEvent[],
     queue: QueueItem[],
     activeRunId?: string | null,
+    desiredMode?: string | null,
   ) => void;
   /** Applies a "run:event" payload; seeds a view for unknown runs. */
   receiveRunEvent: (runId: string, event: AppEvent) => void;
@@ -424,6 +429,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   filesByThread: {},
   queueByThread: {},
   activeElicitation: null,
+  desiredModeByThread: {},
 
   runThreadId: (runId) => {
     for (const [threadId, runs] of Object.entries(get().runsByThread)) {
@@ -446,7 +452,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       return { runsByThread: { ...s.runsByThread, [run.threadId]: nextRuns }, viewsByRun };
     }),
 
-  hydrateThread: (threadId, runs, events, queue, activeRunId) =>
+  hydrateThread: (threadId, runs, events, queue, activeRunId, desiredMode) =>
     set((s) => {
       // Merge, don't replace: a threads_get snapshot taken before a local
       // runs_dispatch resolved may lack the run that is already streaming.
@@ -522,6 +528,10 @@ export const useRunsStore = create<RunsState>((set, get) => ({
             : s.commandsByThread,
         filesByThread: { ...s.filesByThread, [threadId]: files },
         queueByThread: { ...s.queueByThread, [threadId]: queue },
+        desiredModeByThread:
+          desiredMode && desiredMode !== s.desiredModeByThread[threadId]
+            ? { ...s.desiredModeByThread, [threadId]: desiredMode }
+            : s.desiredModeByThread,
       };
     }),
 
@@ -576,6 +586,10 @@ export const useRunsStore = create<RunsState>((set, get) => ({
     set((s) => ({ queueByThread: { ...s.queueByThread, [threadId]: items } })),
   setElicitation: (surface) => set({ activeElicitation: surface }),
   clearElicitation: () => set({ activeElicitation: null }),
+  setDesiredMode: (threadId, modeId) =>
+    set((s) => ({
+      desiredModeByThread: { ...s.desiredModeByThread, [threadId]: modeId },
+    })),
 }));
 
 function threadIdForRun(

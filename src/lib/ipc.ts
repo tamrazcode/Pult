@@ -141,8 +141,15 @@ export function runsDispatch(
   text: string,
   instanceId: string,
   images: ImageInput[] = [],
+  mode?: string | null,
 ): Promise<SendOutcome> {
-  return invokeRequired<SendOutcome>("runs_dispatch", { threadId, text, images, instanceId });
+  return invokeRequired<SendOutcome>("runs_dispatch", {
+    threadId,
+    text,
+    images,
+    instanceId,
+    mode: mode ?? null,
+  });
 }
 
 export function runsCancel(runId: string): Promise<void> {

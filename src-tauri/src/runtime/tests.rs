@@ -608,3 +608,47 @@ fn sandbox_rejects_parent_directory_escapes() {
     let (reply, _) = write_file_sandboxed(&root, &params);
     assert!(reply.is_err(), "rooted ../ must be rejected");
 }
+
+/// A mode picked while idle is remembered and applied before the next run's
+/// prompt (connection-per-run means there was no live session to switch).
+#[tokio::test]
+async fn set_mode_before_run_persists_and_applies_on_next_mock_run() {
+    let (runtime, sink, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-m9-mode");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-mode");
+        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .set_mode("th-mode", "architect")
+            .expect("idle mode pick must be accepted");
+        assert_eq!(runtime.desired_mode("th-mode").as_deref(), Some("architect"));
+
+        let run = runtime.dispatch(&thread, "plan it", &[], "mock").expect("dispatch");
+        assert_eq!(run.mode.as_deref(), Some("architect"));
+        (runtime, sink, run.id)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-mode")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let kinds = kinds_of(&runtime, &run_id);
+    assert!(
+        kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::ModeChange { mode_id } if mode_id == "architect")),
+        "the agent's echo of the applied mode must be recorded; got {kinds:?}"
+    );
+}

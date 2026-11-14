@@ -159,8 +159,19 @@ export function Composer({ threadId }: { threadId?: string }) {
       if (!selectedInstanceId) {
         throw new Error("No agent instance selected — pick one in the header");
       }
-      const outcome = await runsDispatch(targetThreadId, text, selectedInstanceId, images);
+      // A mode picked on /chat or between turns travels with the send; the
+      // backend persists it and applies it to this run's session.
+      const desired = useRunsStore.getState().desiredModeByThread;
+      const mode = desired[targetThreadId] ?? desired[""] ?? null;
+      const outcome = await runsDispatch(
+        targetThreadId,
+        text,
+        selectedInstanceId,
+        images,
+        mode,
+      );
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
+      if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
       // A queued outcome is confirmed by the "queue:update" event.
     },
     [selectedInstanceId],

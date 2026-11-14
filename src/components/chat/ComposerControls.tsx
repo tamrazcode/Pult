@@ -146,14 +146,21 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
   const modes = instances.find((i) => i.id === selectedInstanceId)?.modes ?? [];
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const views = useRunsStore((s) => s.viewsByRun);
+  const desiredModeId = useRunsStore((s) =>
+    threadId ? s.desiredModeByThread[threadId] : s.desiredModeByThread[""],
+  );
   const activeRun = activeRunForThread(runs);
-  const currentModeId = activeRun ? views[activeRun.id]?.modeId : undefined;
+  const liveModeId = activeRun ? views[activeRun.id]?.modeId : undefined;
+  const currentModeId = liveModeId ?? desiredModeId;
   if (modes.length === 0) return null;
 
   const current: SessionMode | undefined = modes.find((m) => m.id === currentModeId) ?? modes[0];
 
   const pick = (mode: SessionMode) => {
     setOpen(false);
+    // Remember the pick even with no live run: connection-per-run means the
+    // agent only exists during a turn.
+    useRunsStore.getState().setDesiredMode(threadId ?? "", mode.id);
     if (threadId && isTauri()) {
       runsSetMode(threadId, mode.id).catch((err) => console.error("runs_set_mode failed", err));
     }
