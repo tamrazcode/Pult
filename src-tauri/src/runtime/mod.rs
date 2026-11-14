@@ -16,7 +16,9 @@ use tokio::sync::mpsc;
 use crate::drivers::acp::{
     elicitation_reply, fs_error, permission_reply, AcpConn, ClientReply, ClientRequest, SpawnConfig,
 };
-use crate::events::{now_millis, Event, EventKind, PermissionOption as AppPermissionOption};
+use crate::events::{
+    now_millis, Event, EventKind, PermissionOption as AppPermissionOption, RunTiming,
+};
 use crate::runtime::permissions::PermissionMode;
 use crate::runtime::terminals::TerminalRegistry;
 use crate::protocol::jsonrpc::{RequestId, RpcError, ERR_RESOURCE_NOT_FOUND};
@@ -35,11 +37,17 @@ use crate::store::Store;
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
     fn notify(&self, title: &str, body: &str);
+    /// In-memory turn telemetry (not persisted).
+    fn emit_run_timing(&self, _timing: &crate::events::RunTiming) {}
 }
 
 impl<R: tauri::Runtime> EventSink for tauri::AppHandle<R> {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
         tauri::Emitter::emit(self, event, payload).map_err(|e| e.to_string())
+    }
+
+    fn emit_run_timing(&self, timing: &crate::events::RunTiming) {
+        let _ = tauri::Emitter::emit(self, "run:timing", timing);
     }
 
     fn notify(&self, title: &str, body: &str) {
@@ -1103,6 +1111,20 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         config,
         mut answers_rx,
     } = task;
+    let turn_started = std::time::Instant::now();
+    let mut timing = RunTiming {
+        run_id: run_id.clone(),
+        thread_id: thread_id.clone(),
+        instance_id: instance_id.clone(),
+        pooled: false,
+        spawn_ms: 0,
+        handshake_ms: 0,
+        session_ms: 0,
+        config_ms: 0,
+        prompt_ms: 0,
+        first_delta_ms: None,
+        total_ms: 0,
+    };
     let emit_process = |kind: &str, detail: Option<String>| {
         runtime.emit(
             "agent:process",
@@ -1117,6 +1139,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     emit_process("starting", None);
     // The receivers come back separately: the run loop owns them exclusively,
     // while the connection itself is shared through an Arc.
+    let spawn_started = std::time::Instant::now();
     let conn_raw_parts = match AcpConn::spawn(&spawn_config) {
         Ok(parts) => parts,
         Err(err) => {
@@ -1132,6 +1155,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         mut client_requests_rx,
     } = streams;
     let conn = Arc::new(conn_raw);
+    timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
     emit_process("spawned", None);
 
     {
@@ -1146,14 +1170,17 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         );
     }
 
-    let session_id = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await {
-        Ok(session_id) => session_id,
+    let resolved = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await {
+        Ok(resolved) => resolved,
         Err(err) => {
             conn.kill();
             runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(err.to_string()))?;
             return Ok(());
         }
     };
+    timing.handshake_ms = resolved.handshake_ms;
+    timing.session_ms = resolved.session_ms;
+    let session_id = resolved.session_id;
     {
         let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
         if let Some(state) = guard.runs.get_mut(&run_id) {
@@ -1184,6 +1211,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // model changes.
     let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
     picks.sort_by_key(|(id, _)| config_apply_order(id));
+    let config_started = std::time::Instant::now();
     for (config_id, value) in picks {
         match conn
             .set_config_option(&session_id, &config_id, value)
@@ -1219,6 +1247,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             }
         }
     }
+    timing.config_ms = config_started.elapsed().as_millis() as u64;
     let mut pending_permissions: HashMap<String, PendingPermission> = HashMap::new();
     let mut pending_elicitations: HashMap<String, PendingElicitation> = HashMap::new();
     let mut failure: Option<String> = None;
@@ -1233,6 +1262,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             mime_type: image.mime_type.clone(),
         });
     }
+    let prompt_started = std::time::Instant::now();
     let prompt_fut = conn.prompt(&session_id, content);
     tokio::pin!(prompt_fut);
 
@@ -1331,6 +1361,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             }
             kind = events_rx.recv() => {
                 if let Some(kind) = kind {
+                    if timing.first_delta_ms.is_none()
+                        && matches!(
+                            &kind,
+                            EventKind::AgentMessageDelta { .. } | EventKind::AgentThoughtDelta { .. }
+                        )
+                    {
+                        timing.first_delta_ms =
+                            Some(prompt_started.elapsed().as_millis() as u64);
+                    }
                     let event = Event::new(run_id.clone(), next_seq, kind);
                     next_seq += 1;
                     if let Err(err) = runtime.store.append_event(&event) {
@@ -1429,6 +1468,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 }
             }
             result = &mut prompt_fut => {
+                timing.prompt_ms = prompt_started.elapsed().as_millis() as u64;
                 match result {
                     Ok(prompt) => {
                         stop_reason = Some(
@@ -1462,6 +1502,8 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         emit_process("crashed", failure.clone());
     }
     runtime.finalize_run(&run_id, &thread_id, status, &final_reason, failure)?;
+    timing.total_ms = turn_started.elapsed().as_millis() as u64;
+    runtime.sink.emit_run_timing(&timing);
     Ok(())
 }
 
@@ -1828,17 +1870,30 @@ impl AgentRuntime {
     }
 }
 
+pub(crate) struct ResolvedSession {
+    pub session_id: String,
+    /// Used by the replay-drain step in the next task.
+    #[allow(dead_code)]
+    pub resumed: bool,
+    pub handshake_ms: u64,
+    pub session_ms: u64,
+}
+
 async fn resolve_session(
     conn: &AcpConn,
     runtime: &AgentRuntime,
     thread_id: &str,
     instance_id: &str,
     root: &Path,
-) -> Result<String, crate::PultError> {
+) -> Result<ResolvedSession, crate::PultError> {
+    let t_handshake = std::time::Instant::now();
     let init = conn
         .initialize()
         .await
         .map_err(|e| crate::PultError::internal(e.to_string()))?;
+    let handshake_ms = t_handshake.elapsed().as_millis() as u64;
+    let t_session = std::time::Instant::now();
+    let mut resumed = false;
     tracing::info!(target: "pult::runtime",
         agent = %init.agent_info.as_ref().map(|i| i.name.clone()).unwrap_or_default(),
         load_session = init.agent_capabilities.load_session,
@@ -1848,6 +1903,7 @@ async fn resolve_session(
         Ok(Some(remote)) if init.agent_capabilities.load_session => {
             match conn.load_session(&remote, &cwd).await {
                 Ok(loaded) => {
+                    resumed = true;
                     tracing::info!(target: "pult::runtime",
                         session = %remote, "resumed session via session/load");
                     runtime.cache_auth_state(instance_id, init.auth_methods.clone(), false, None);
@@ -1892,7 +1948,12 @@ async fn resolve_session(
             fresh.session_id
         }
     };
-    Ok(session)
+    Ok(ResolvedSession {
+        session_id: session,
+        resumed,
+        handshake_ms,
+        session_ms: t_session.elapsed().as_millis() as u64,
+    })
 }
 
 /// M6: the mode picker works from the advertised mode list.

@@ -130,6 +130,23 @@ pub enum EventKind {
     },
 }
 
+/// Per-turn latency telemetry (in-memory only; emitted as `run:timing`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunTiming {
+    pub run_id: String,
+    pub thread_id: String,
+    pub instance_id: String,
+    pub pooled: bool,
+    pub spawn_ms: u64,
+    pub handshake_ms: u64,
+    pub session_ms: u64,
+    pub config_ms: u64,
+    pub prompt_ms: u64,
+    pub first_delta_ms: Option<u64>,
+    pub total_ms: u64,
+}
+
 /// One persisted event: app ids are primary; seq is per-run and append-only.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]

@@ -28,12 +28,19 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 /// In-memory event sink: records emissions so tests can answer the
 /// permission requests the runtime surfaces (the real UI answers those).
 #[derive(Default)]
-struct TestSink(Mutex<Vec<(String, serde_json::Value)>>);
+struct TestSink(
+    Mutex<Vec<(String, serde_json::Value)>>,
+    Mutex<Vec<crate::events::RunTiming>>,
+);
 
 impl EventSink for TestSink {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
         self.0.lock().expect("sink lock").push((event.to_string(), payload));
         Ok(())
+    }
+
+    fn emit_run_timing(&self, timing: &crate::events::RunTiming) {
+        self.1.lock().expect("timing lock").push(timing.clone());
     }
 
     fn notify(&self, title: &str, body: &str) {
@@ -45,6 +52,10 @@ impl EventSink for TestSink {
 }
 
 impl TestSink {
+    fn timings(&self) -> Vec<crate::events::RunTiming> {
+        self.1.lock().expect("timing lock").clone()
+    }
+
     /// Drains every recorded permission request as
     /// (run_id, request_id, first offered option_id).
     fn take_permissions(&self) -> Vec<(String, String, String)> {
@@ -1000,4 +1011,36 @@ async fn authenticate_failure_errors_and_terminal_methods_are_rejected() {
             .await
             .is_err());
     }
+}
+
+#[tokio::test]
+async fn mock_run_emits_timing_with_first_delta() {
+    let (runtime, sink, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-v2-timing");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-timing");
+        runtime.store().create_thread(&thread).expect("thread");
+        let run = runtime.dispatch(&thread, "time it", &[], "mock").expect("dispatch");
+        (runtime, sink, run.id)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-timing")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+    let timings = sink.timings();
+    assert_eq!(timings.len(), 1, "one timing per finished turn");
+    assert_eq!(timings[0].run_id, run_id);
+    assert!(!timings[0].pooled);
+    assert!(timings[0].handshake_ms > 0, "handshake is measured");
+    assert!(timings[0].first_delta_ms.is_some(), "first delta is measured");
 }
