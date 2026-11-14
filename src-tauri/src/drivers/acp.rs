@@ -21,17 +21,18 @@ use crate::protocol::codec::NdjsonCodec;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 use crate::protocol::jsonrpc::{
-    parse_incoming, Incoming, InvalidMessage, Outgoing, RequestId, RpcError, ERR_INTERNAL,
-    ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_RESOURCE_NOT_FOUND,
+    parse_incoming, Incoming, InvalidMessage, Outgoing, RequestId, RpcError, ERR_AUTH_REQUIRED,
+    ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_RESOURCE_NOT_FOUND,
 };
 use crate::protocol::types::{
-    CancelParams, ClientCapabilities, ConfigOptionValue, ContentBlock, CreateElicitationParams,
-    CreateTerminalParams, ElicitationAction, ElicitationResult, Implementation, InitializeParams,
-    InitializeResult, LoadSessionParams, LoadSessionResult, NewSessionParams, NewSessionResult,
-    PromptParams, PromptResult, ReadTextFileParams, RequestPermissionOutcome,
-    RequestPermissionOutcomeKind, RequestPermissionParams, SessionNotification, SessionUpdate,
-    SetConfigOptionParams, SetConfigOptionResult, SetModeParams, TerminalRefParams, ToolCallStatus,
-    ToolCallUpdateData, ToolKind, WriteTextFileParams,
+    AuthenticateParams, AuthenticateResult, CancelParams, ClientCapabilities, ConfigOptionValue,
+    ContentBlock, CreateElicitationParams, CreateTerminalParams, ElicitationAction,
+    ElicitationResult, Implementation, InitializeParams, InitializeResult, LoadSessionParams,
+    LoadSessionResult, NewSessionParams, NewSessionResult, PromptParams, PromptResult,
+    ReadTextFileParams, RequestPermissionOutcome, RequestPermissionOutcomeKind,
+    RequestPermissionParams, SessionNotification, SessionUpdate, SetConfigOptionParams,
+    SetConfigOptionResult, SetModeParams, TerminalRefParams, ToolCallStatus, ToolCallUpdateData,
+    ToolKind, WriteTextFileParams,
 };
 use crate::protocol::LATEST_PROTOCOL_VERSION;
 
@@ -110,6 +111,13 @@ pub enum DriverError {
     Rpc(#[from] RpcError),
     #[error("driver already shut down")]
     Closed,
+}
+
+impl DriverError {
+    /// Only the agent's auth-required error means "sign in", not any RPC error.
+    pub fn is_auth_required(&self) -> bool {
+        matches!(self, DriverError::Rpc(err) if err.code == ERR_AUTH_REQUIRED)
+    }
 }
 
 type PendingMap = Arc<Mutex<HashMap<RequestId, oneshot::Sender<ClientReply>>>>;
@@ -398,6 +406,22 @@ impl AcpConn {
     }
 
     /// §5.3 session/new.
+    /// `authenticate` (agent-managed methods only; terminal methods are run by
+    /// the caller as a separate process and never sent here).
+    pub async fn authenticate(&self, method_id: &str) -> Result<AuthenticateResult, DriverError> {
+        let value = self
+            .request(
+                "authenticate",
+                serde_json::to_value(AuthenticateParams {
+                    method_id: method_id.to_string(),
+                })?,
+                std::time::Duration::from_secs(120),
+            )
+            .await?;
+        let parsed: Option<AuthenticateResult> = serde_json::from_value(value)?;
+        Ok(parsed.unwrap_or_default())
+    }
+
     pub async fn new_session(&self, cwd: &str) -> Result<NewSessionResult, DriverError> {
         let params = NewSessionParams {
             cwd: cwd.to_string(),
@@ -1035,5 +1059,25 @@ mod tests {
         let v = serde_json::to_value(&params).unwrap();
         assert_eq!(v["prompt"][1]["type"], "image");
         assert_eq!(v["prompt"][1]["mimeType"], "image/png");
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use crate::protocol::jsonrpc::{RpcError, ERR_AUTH_REQUIRED};
+
+    #[test]
+    fn is_auth_required_matches_only_minus_32000() {
+        assert!(DriverError::Rpc(RpcError::new(ERR_AUTH_REQUIRED, "auth required")).is_auth_required());
+        assert!(!DriverError::Rpc(RpcError::new(-32602, "invalid params")).is_auth_required());
+        assert!(!DriverError::HungUp {
+            method: "session/new".into()
+        }
+        .is_auth_required());
+        assert!(!DriverError::Timeout {
+            method: "session/new".into()
+        }
+        .is_auth_required());
     }
 }

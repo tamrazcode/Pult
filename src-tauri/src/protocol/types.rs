@@ -531,8 +531,66 @@ pub struct AuthMethod {
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Terminal-auth argv appended to the configured agent invocation.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_string_vec",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub args: Vec<String>,
+    /// Terminal-auth env overrides on top of the instance env.
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_string_map",
+        skip_serializing_if = "std::collections::BTreeMap::is_empty"
+    )]
+    pub env: std::collections::BTreeMap<String, String>,
     #[serde(flatten)]
     pub extra: Value,
+}
+
+impl AuthMethod {
+    /// Terminal methods must run the CLI themselves and never go over RPC.
+    pub fn is_terminal(&self) -> bool {
+        self.kind.as_deref() == Some("terminal")
+    }
+
+    /// No `type` (schema default) or explicit `agent` means `authenticate`.
+    pub fn is_agent(&self) -> bool {
+        matches!(self.kind.as_deref(), None | Some("agent"))
+    }
+}
+
+/// `authenticate` response (`$defs/AuthenticateResponse`; only `_meta`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AuthenticateResult {
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+fn deserialize_null_string_vec<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<String>>::deserialize(deserializer)?.unwrap_or_default())
+}
+
+fn deserialize_null_string_map<'de, D>(
+    deserializer: D,
+) -> Result<std::collections::BTreeMap<String, String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<std::collections::BTreeMap<String, String>>::deserialize(deserializer)?
+        .unwrap_or_default())
+}
+
+fn deserialize_null_auth_methods<'de, D>(deserializer: D) -> Result<Vec<AuthMethod>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<Vec<AuthMethod>>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// `initialize` response (`$defs/InitializeResponse`).
@@ -542,7 +600,11 @@ pub struct InitializeResult {
     pub protocol_version: ProtocolVersion,
     #[serde(default)]
     pub agent_capabilities: AgentCapabilities,
-    #[serde(default)]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_null_auth_methods",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub auth_methods: Vec<AuthMethod>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_info: Option<Implementation>,
@@ -1225,6 +1287,52 @@ mod tests {
             caps["session"]["configOptions"]["boolean"].is_object(),
             "{caps}"
         );
+    }
+
+    #[test]
+    fn auth_method_parses_agent_terminal_and_null_fields() {
+        let agent: AuthMethod = serde_json::from_value(json!({"id":"a","name":"Agent"})).unwrap();
+        assert!(agent.is_agent());
+        assert!(!agent.is_terminal());
+        assert!(agent.args.is_empty());
+
+        let explicit: AuthMethod =
+            serde_json::from_value(json!({"type":"agent","id":"b","name":"Agent B"})).unwrap();
+        assert!(explicit.is_agent());
+
+        let terminal: AuthMethod = serde_json::from_value(json!({
+            "type":"terminal","id":"t","name":"Terminal",
+            "args":["--login"],"env":{"MOCK_LOGIN":"1"}
+        }))
+        .unwrap();
+        assert!(terminal.is_terminal());
+        assert!(!terminal.is_agent());
+        assert_eq!(terminal.args, vec!["--login".to_string()]);
+        assert_eq!(terminal.env.get("MOCK_LOGIN").map(String::as_str), Some("1"));
+
+        let nulls: AuthMethod = serde_json::from_value(json!({
+            "id":"n","name":"Null","args":null,"env":null,"description":null
+        }))
+        .unwrap();
+        assert!(nulls.args.is_empty());
+        assert!(nulls.env.is_empty());
+
+        let init: InitializeResult =
+            serde_json::from_value(json!({"protocolVersion": 1, "authMethods": null})).unwrap();
+        assert!(init.auth_methods.is_empty());
+    }
+
+    #[test]
+    fn authenticate_params_and_result_wire_shape() {
+        let params = serde_json::to_value(AuthenticateParams {
+            method_id: "mock-token".into(),
+        })
+        .unwrap();
+        assert_eq!(params, json!({"methodId": "mock-token"}));
+
+        let _: AuthenticateResult = serde_json::from_value(json!({})).unwrap();
+        let null: Option<AuthenticateResult> = serde_json::from_value(json!(null)).unwrap();
+        assert!(null.is_none());
     }
 
     #[test]
