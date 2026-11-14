@@ -1,27 +1,51 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as IpcModule from "../src/lib/ipc";
-import type { Project, Thread } from "../src/lib/types";
+import type { Project, Run, Thread } from "../src/lib/types";
 
 const {
   navigate,
   historyBack,
   historyForward,
   threadsList,
+  threadsRename,
+  threadsSetPinned,
+  threadsSetStatus,
+  threadsDelete,
   projectsList,
+  projectsUpdate,
+  projectsDelete,
   providersInstancesList,
   settingsGet,
   settingsSet,
+  runsCancel,
+  workspaceFiles,
 } = vi.hoisted(() => ({
   navigate: vi.fn(),
   historyBack: vi.fn(),
   historyForward: vi.fn(),
   threadsList: vi.fn(async (): Promise<Thread[]> => []),
+  threadsRename: vi.fn(async () => undefined),
+  threadsSetPinned: vi.fn(async () => undefined),
+  threadsSetStatus: vi.fn(async () => undefined),
+  threadsDelete: vi.fn(async () => undefined),
   projectsList: vi.fn(async (): Promise<Project[]> => []),
+  projectsUpdate: vi.fn(async (id: string, patch: Partial<Project>): Promise<Project> => ({
+    id,
+    name: patch.name ?? "Project",
+    rootPath: `C:\\work\\${id}`,
+    color: patch.color ?? "#346bf1",
+    worktreeStrategy: patch.worktreeStrategy ?? "root",
+    pinned: patch.pinned ?? false,
+    createdAt: 100,
+  })),
+  projectsDelete: vi.fn(async () => undefined),
   providersInstancesList: vi.fn(async () => []),
   settingsGet: vi.fn(async (): Promise<unknown> => null),
   settingsSet: vi.fn(async () => undefined),
+  runsCancel: vi.fn(async () => undefined),
+  workspaceFiles: vi.fn(async () => []),
 }));
 
 vi.mock("../src/lib/ipc", async (importOriginal) => {
@@ -29,10 +53,18 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
   return {
     ...actual,
     threadsList,
+    threadsRename,
+    threadsSetPinned,
+    threadsSetStatus,
+    threadsDelete,
     projectsList,
+    projectsUpdate,
+    projectsDelete,
     providersInstancesList,
     settingsGet,
     settingsSet,
+    runsCancel,
+    workspaceFiles,
     onThreadUpdate: vi.fn(async () => () => {}),
     onAgentProcess: vi.fn(async () => () => {}),
   };
@@ -51,9 +83,11 @@ vi.mock("@tanstack/react-router", () => ({
     select({ location: { pathname: "/chat" } }),
 }));
 
+import { Composer } from "../src/components/chat/Composer";
 import { Sidebar } from "../src/components/layout/Sidebar";
 import { Topbar } from "../src/components/layout/Topbar";
 import { useProjectsStore } from "../src/stores/projects";
+import { useRunsStore } from "../src/stores/runs";
 import { buildSidebarGroups, useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
 
@@ -214,15 +248,34 @@ describe("Sidebar", () => {
     makeThread("t3", "Standalone note", { projectId: null, status: "draft", updatedAt: 200 }),
   ];
 
+  let writeText: ReturnType<typeof vi.fn>;
+
   beforeEach(() => {
+    writeText = vi.fn(async () => undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
     navigate.mockReset().mockResolvedValue(undefined);
     historyBack.mockReset();
     historyForward.mockReset();
     projectsList.mockReset().mockResolvedValue([alpha, beta]);
+    projectsUpdate.mockReset().mockImplementation(async (id: string, patch: Partial<Project>) => ({
+      ...(id === alpha.id ? alpha : beta),
+      ...patch,
+    }));
+    projectsDelete.mockReset().mockResolvedValue(undefined);
     threadsList.mockReset().mockResolvedValue(seededThreads);
+    threadsRename.mockReset().mockResolvedValue(undefined);
+    threadsSetPinned.mockReset().mockResolvedValue(undefined);
+    threadsSetStatus.mockReset().mockResolvedValue(undefined);
+    threadsDelete.mockReset().mockResolvedValue(undefined);
     providersInstancesList.mockReset().mockResolvedValue([]);
     settingsGet.mockReset().mockResolvedValue(null);
     settingsSet.mockReset().mockResolvedValue(undefined);
+    runsCancel.mockReset().mockResolvedValue(undefined);
+    workspaceFiles.mockReset().mockResolvedValue([]);
 
     useProjectsStore.setState({
       projects: [alpha, beta],
@@ -239,7 +292,20 @@ describe("Sidebar", () => {
       instances: [],
       selectedInstanceId: null,
       collapsedProjects: [],
+      paletteOpen: false,
     });
+    useRunsStore.setState({
+      runsByThread: {},
+      viewsByRun: {},
+      appliedEvents: {},
+      commandsByThread: {},
+      queueByThread: {},
+      activeElicitation: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it("omits legacy shelf headings and 'New thread with workspace' button", () => {
@@ -339,6 +405,122 @@ describe("Sidebar", () => {
       expect(projectsList).toHaveBeenCalled();
       expect(threadsList).toHaveBeenCalled();
     });
+  });
+
+  it("opens project context menu with exact items and requires two-step Delete confirmation", async () => {
+    render(<Sidebar width={288} />);
+
+    const alphaRow = screen.getByText("Alpha").closest("[data-project-row]");
+    expect(alphaRow).not.toBeNull();
+    fireEvent.contextMenu(alphaRow!);
+
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((el) => el.textContent?.trim())).toEqual([
+      "New thread",
+      "Copy path",
+      "Pin",
+      "Project settings",
+      "Delete",
+    ]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+    expect(projectsDelete).not.toHaveBeenCalled();
+    const confirmItem = screen.getByRole("menuitem", { name: /confirm delete/i });
+    expect(confirmItem).toBeVisible();
+
+    fireEvent.click(confirmItem);
+    await waitFor(() => expect(projectsDelete).toHaveBeenCalledWith(alpha.id));
+  });
+
+  it("opens thread context menu with exact items and dispatches store and clipboard actions", async () => {
+    const pinSpy = vi.spyOn(useThreadsStore.getState(), "setThreadPinned");
+    const statusSpy = vi.spyOn(useThreadsStore.getState(), "setThreadStatus");
+    const unreadSpy = vi.spyOn(useThreadsStore.getState(), "markUnread");
+
+    render(<Sidebar width={288} />);
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    expect(screen.getByRole("separator")).toBeInTheDocument();
+    expect(screen.getAllByRole("menuitem").map((el) => el.textContent?.trim())).toEqual([
+      "Pin",
+      "Settle",
+      "Snooze",
+      "Rename",
+      "Mark unread",
+      "Copy path",
+      "Project settings",
+      "Archive",
+      "Delete",
+    ]);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pin" }));
+    expect(pinSpy).toHaveBeenCalledWith("t2", true);
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Settle" }));
+    expect(statusSpy).toHaveBeenCalledWith("t2", "settled");
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Snooze" }));
+    expect(statusSpy).toHaveBeenCalledWith("t2", "snoozed");
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(statusSpy).toHaveBeenCalledWith("t2", "archived");
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Mark unread" }));
+    expect(unreadSpy).toHaveBeenCalledWith("t2", true);
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Copy path" }));
+    expect(writeText).toHaveBeenCalledWith(beta.rootPath);
+  });
+
+  it("disables Project settings in thread context menu when projectId is null", () => {
+    render(<Sidebar width={288} />);
+
+    fireEvent.contextMenu(screen.getByText("Standalone note"));
+    expect(screen.getByRole("menuitem", { name: "Project settings" })).toBeDisabled();
+  });
+
+  it("closes context menu on Escape without calling runsCancel", () => {
+    const runningRun: Run = {
+      id: "r1",
+      threadId: "t2",
+      idx: 0,
+      status: "running",
+      instanceId: "mock",
+      startedAt: 0,
+    };
+    useRunsStore.getState().registerRun(runningRun);
+
+    render(
+      <>
+        <Sidebar width={288} />
+        <Composer threadId="t2" />
+      </>,
+    );
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    expect(screen.getByRole("menu")).toBeVisible();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(runsCancel).not.toHaveBeenCalled();
+  });
+
+  it("selects the next menu item with ArrowDown + Enter", () => {
+    const statusSpy = vi.spyOn(useThreadsStore.getState(), "setThreadStatus");
+
+    render(<Sidebar width={288} />);
+
+    fireEvent.contextMenu(screen.getByText("Refactor sidebar"));
+    const menu = screen.getByRole("menu");
+    fireEvent.keyDown(document.activeElement ?? menu, { key: "ArrowDown" });
+    fireEvent.keyDown(document.activeElement ?? menu, { key: "Enter" });
+
+    expect(statusSpy).toHaveBeenCalledWith("t2", "settled");
   });
 });
 

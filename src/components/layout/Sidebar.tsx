@@ -17,12 +17,16 @@ import {
 } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
+import { runsCancel } from "../../lib/ipc";
 import { useUiStore } from "../../stores/ui";
 import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
+import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import type { Project, Thread } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
+import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
+import { ProjectSettingsDialog } from "../projects/ProjectSettingsDialog";
 
 const FILTERS: Array<{ id: SidebarFilter; label: string }> = [
   { id: "all", label: "All threads" },
@@ -48,47 +52,68 @@ function ThreadRow({
   unread,
   onNavigate,
   onStar,
+  renaming,
+  onRename,
+  onContextMenu,
 }: {
   thread: Thread;
   active: boolean;
   unread: boolean;
   onNavigate: () => void;
   onStar: () => void;
+  renaming: boolean;
+  onRename: (title: string | null) => void;
+  onContextMenu: (event: React.MouseEvent) => void;
 }) {
   const working = thread.status === "working" || thread.status === "waiting";
   return (
     <div
+      onContextMenu={onContextMenu}
       className={`group flex items-center rounded-(--radius-sm) transition ${
         active ? "bg-active text-text-primary" : "text-text-secondary hover:bg-hover"
       }`}
     >
-      <a
-        href={`/thread/${thread.id}`}
-        onClick={(e) => {
-          e.preventDefault();
-          onNavigate();
-        }}
-        className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm"
-      >
-        {unread ? (
-          <span
-            data-unread="true"
-            aria-label="Unread"
-            className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-          />
-        ) : working ? (
-          <span
-            aria-label={thread.status}
-            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-              thread.status === "working" ? "bg-accent" : "bg-warning"
-            }`}
-          />
-        ) : null}
-        <span className="truncate">{thread.title || "Untitled"}</span>
-        <span className="tnum ml-auto shrink-0 text-[10px] text-text-tertiary">
-          {relativeTime(thread.updatedAt)}
-        </span>
-      </a>
+      {renaming ? (
+        <input
+          autoFocus
+          defaultValue={thread.title}
+          aria-label="Thread title"
+          onKeyDown={(event) => {
+            if (event.key === "Enter") onRename(event.currentTarget.value.trim());
+            if (event.key === "Escape") onRename(null);
+          }}
+          onBlur={(event) => onRename(event.currentTarget.value.trim())}
+          className="mx-1 my-0.5 h-6 min-w-0 flex-1 rounded-(--radius-sm) border border-border-strong bg-(--input) px-2 text-sm text-text-primary focus:outline-none"
+        />
+      ) : (
+        <a
+          href={`/thread/${thread.id}`}
+          onClick={(e) => {
+            e.preventDefault();
+            onNavigate();
+          }}
+          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm"
+        >
+          {unread ? (
+            <span
+              data-unread="true"
+              aria-label="Unread"
+              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+            />
+          ) : working ? (
+            <span
+              aria-label={thread.status}
+              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                thread.status === "working" ? "bg-accent" : "bg-warning"
+              }`}
+            />
+          ) : null}
+          <span className="truncate">{thread.title || "Untitled"}</span>
+          <span className="tnum ml-auto shrink-0 text-[10px] text-text-tertiary">
+            {relativeTime(thread.updatedAt)}
+          </span>
+        </a>
+      )}
       <button
         type="button"
         aria-label={thread.pinned ? "Unstar thread" : "Star thread"}
@@ -109,16 +134,22 @@ function ProjectRow({
   onToggle,
   onNewThread,
   onStar,
+  onContextMenu,
 }: {
   project: Project;
   collapsed: boolean;
   onToggle: () => void;
   onNewThread: () => void;
   onStar: () => void;
+  onContextMenu: (event: React.MouseEvent) => void;
 }) {
   const initials = project.name.slice(0, 2).toUpperCase();
   return (
-    <div data-project-row className="group flex items-center gap-1 px-1 py-1">
+    <div
+      data-project-row
+      onContextMenu={onContextMenu}
+      className="group flex items-center gap-1 px-1 py-1"
+    >
       <button
         type="button"
         onClick={onToggle}
@@ -174,6 +205,14 @@ export function Sidebar({ width }: { width: number }) {
   const [filter, setFilter] = useState<SidebarFilter>("all");
   const [filterOpen, setFilterOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    project?: Project;
+    thread?: Thread;
+  } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -219,6 +258,99 @@ export function Sidebar({ width }: { width: number }) {
     void useProjectsStore.getState().loadProjects();
     void useThreadsStore.getState().loadThreads();
     void useUiStore.getState().loadInstances();
+  };
+
+  const projectMenuItems = (project: Project): Array<ContextMenuItem | "separator"> => [
+    {
+      id: "new-thread",
+      label: "New thread",
+      icon: <SquarePen size={12} />,
+      onSelect: () => newThread(project),
+    },
+    {
+      id: "copy-path",
+      label: "Copy path",
+      onSelect: () => void navigator.clipboard.writeText(project.rootPath),
+    },
+    {
+      id: "pin",
+      label: project.pinned ? "Unpin" : "Pin",
+      onSelect: () => void useProjectsStore.getState().togglePin(project.id),
+    },
+    {
+      id: "settings",
+      label: "Project settings",
+      onSelect: () => setSettingsProjectId(project.id),
+    },
+    "separator",
+    {
+      id: "delete",
+      label: "Delete",
+      danger: true,
+      confirmLabel: "Confirm delete",
+      onSelect: () => void useProjectsStore.getState().deleteProject(project.id),
+    },
+  ];
+
+  const threadMenuItems = (thread: Thread): Array<ContextMenuItem | "separator"> => {
+    const project = projects.find((candidate) => candidate.id === thread.projectId);
+    const unread = unreadSet.has(thread.id);
+    return [
+      {
+        id: "pin",
+        label: thread.pinned ? "Unpin" : "Pin",
+        onSelect: () => void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned),
+      },
+      {
+        id: "settle",
+        label: "Settle",
+        onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "settled"),
+      },
+      {
+        id: "snooze",
+        label: "Snooze",
+        onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "snoozed"),
+      },
+      { id: "rename", label: "Rename", onSelect: () => setRenamingId(thread.id) },
+      {
+        id: "unread",
+        label: unread ? "Mark read" : "Mark unread",
+        onSelect: () => useThreadsStore.getState().markUnread(thread.id, !unread),
+      },
+      {
+        id: "copy-path",
+        label: "Copy path",
+        onSelect: () =>
+          void navigator.clipboard.writeText(thread.workspace ?? project?.rootPath ?? ""),
+      },
+      {
+        id: "settings",
+        label: "Project settings",
+        disabled: thread.projectId === null,
+        onSelect: () => setSettingsProjectId(thread.projectId),
+      },
+      {
+        id: "archive",
+        label: "Archive",
+        onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "archived"),
+      },
+      "separator",
+      {
+        id: "delete",
+        label: "Delete",
+        danger: true,
+        confirmLabel: "Confirm delete",
+        onSelect: () => {
+          const active = activeRunForThread(useRunsStore.getState().runsByThread[thread.id]);
+          void (async () => {
+            if (active && (active.status === "running" || active.status === "queued")) {
+              await runsCancel(active.id).catch(() => {});
+            }
+            await useThreadsStore.getState().deleteThread(thread.id);
+          })();
+        },
+      },
+    ];
   };
 
   return (
@@ -340,6 +472,10 @@ export function Sidebar({ width }: { width: number }) {
                   onToggle={() => useUiStore.getState().toggleProjectCollapsed(group.project!.id)}
                   onNewThread={() => newThread(group.project)}
                   onStar={() => void useProjectsStore.getState().togglePin(group.project!.id)}
+                  onContextMenu={(event) => {
+                    event.preventDefault();
+                    setMenu({ x: event.clientX, y: event.clientY, project: group.project! });
+                  }}
                 />
               ) : (
                 <div className="px-3 pb-1 pt-2 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
@@ -358,6 +494,15 @@ export function Sidebar({ width }: { width: number }) {
                       onStar={() =>
                         void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned)
                       }
+                      renaming={renamingId === thread.id}
+                      onRename={(title) => {
+                        setRenamingId(null);
+                        if (title) void useThreadsStore.getState().renameThread(thread.id, title);
+                      }}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        setMenu({ x: event.clientX, y: event.clientY, thread });
+                      }}
                     />
                   ))}
                 </div>
@@ -407,6 +552,19 @@ export function Sidebar({ width }: { width: number }) {
       </footer>
 
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
+      <ProjectSettingsDialog
+        open={settingsProjectId !== null}
+        projectId={settingsProjectId ?? ""}
+        onClose={() => setSettingsProjectId(null)}
+      />
+      {menu && (
+        <ContextMenu
+          x={menu.x}
+          y={menu.y}
+          items={menu.project ? projectMenuItems(menu.project) : threadMenuItems(menu.thread!)}
+          onClose={() => setMenu(null)}
+        />
+      )}
     </aside>
   );
 }
