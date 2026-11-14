@@ -92,6 +92,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const runId = activeRun?.id;
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
   const entries = threadTimelineItems(runs, views);
+  const hasView = view !== undefined;
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
@@ -132,7 +133,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [threadId]);
+  }, [threadId, hasView, entries.length]);
 
   if (!threadId || !view) return <EmptyState />;
 
@@ -196,7 +197,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         onScroll={trackActiveTick}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-32">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
           {hiddenCount > 0 && (
             <button
               onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}
@@ -242,6 +243,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             <FinishDivider stopReason={view.stopReason} usage={view.usage} />
           )}
 
+          {/* Space for the overlaid composer; must sit ABOVE the sentinel so
+              scrollIntoView(end) still lands at the true bottom. */}
+          <div className="h-32 shrink-0" aria-hidden />
           <div ref={bottomRef} />
         </div>
       </div>

@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { Copy, Minus, PanelLeft, PanelRight, Settings, Square, X } from "lucide-react";
 import { resolveBreadcrumbs } from "../../lib/breadcrumbs";
+import { PultLogo } from "../ui/PultLogo";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
 import { appVersion } from "../../lib/ipc";
@@ -38,6 +39,7 @@ export function Topbar() {
       data-tauri-drag-region
       className="flex h-12 shrink-0 select-none items-center gap-3 border-b border-border-subtle bg-chrome pr-0 pl-4"
     >
+      <PultLogo className="h-4 w-4 shrink-0 text-text-primary" />
       {/* breadcrumbs "pult / where you are" — route-aware, never static */}
       <nav
         aria-label="Breadcrumbs"

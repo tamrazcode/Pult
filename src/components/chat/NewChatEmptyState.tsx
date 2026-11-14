@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { Composer } from "./Composer";
 import { NewThreadOptionsStrip } from "./NewThreadOptionsStrip";
+import { PultLogo } from "../ui/PultLogo";
 
 /** Halftone-ish terrain of characters; deterministic so it never flickers. */
 function asciiBackdrop(): string {
@@ -18,22 +19,6 @@ function asciiBackdrop(): string {
   return rows.join("\n");
 }
 
-/** The app mark: chevron + bar, matching the desktop icon. */
-function PultMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 64 64" className={className} aria-hidden fill="none">
-      <path
-        d="M13 14 33 34 13 54"
-        stroke="currentColor"
-        strokeWidth="9"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M45 16v32" stroke="currentColor" strokeWidth="9" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /** First-run screen: logo, prompt, composer, and a quiet ASCII texture. */
 export function NewChatEmptyState() {
   const backdrop = useMemo(asciiBackdrop, []);
@@ -47,7 +32,7 @@ export function NewChatEmptyState() {
       </pre>
       <div className="relative z-10 w-full -translate-y-3 py-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-6 text-center">
-          <PultMark className="h-11 w-11 text-accent" />
+          <PultLogo className="h-12 w-12 text-text-primary" />
           <h1 className="mt-5 text-2xl font-medium tracking-tight text-text-primary">
             What should we do in Pult?
           </h1>

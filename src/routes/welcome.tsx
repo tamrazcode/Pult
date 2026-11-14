@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { ArrowRight, Bot } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { Button } from "../components/ui/button";
+import { PultLogo } from "../components/ui/PultLogo";
 import { ConnectRow, refreshDetected } from "../components/settings/AgentConnect";
 import { isTauri } from "../lib/tauri";
 import type { DetectedAgent } from "../lib/types";
@@ -24,7 +25,7 @@ function WelcomePage() {
       <div className="w-full max-w-xl space-y-5">
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="flex h-14 w-14 items-center justify-center rounded-(--radius-lg) bg-accent text-accent-fg">
-            <Bot size={26} />
+            <PultLogo className="h-7 w-7" />
           </div>
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold text-text-primary">Welcome to pult</h1>
