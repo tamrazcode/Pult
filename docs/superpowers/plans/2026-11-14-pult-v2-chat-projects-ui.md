@@ -596,6 +596,8 @@
 - `ChatHeader.tsx`: renders colored project badge + project name when thread (or `/chat` draft) belongs to a project, plus thread title and worktree badge.
 - `Composer.tsx` `/chat` dispatch path: passes `useProjectsStore.getState().selectedProjectId` (and `project.rootPath` as `workspace` + `project.worktreeStrategy === "worktree"`) into `threadsCreate(...)`, clearing or keeping project selection consistent so the newly created thread immediately inherits the project's folder and appears nested under that project in the sidebar.
 
+**Added requirement (user, 2026-11-14):** the `/chat` empty state is a first-run screen: centered Pult mark (chevron + bar), heading “What should we do in Pult?”, one-line hint, deterministic ASCII halftone backdrop, and the workspace strip + composer inline under the heading (not pinned to the bottom). Implemented ahead of this task in `src/components/chat/NewChatEmptyState.tsx` (`NewThreadOptionsStrip.tsx` extracted); Task 12 must keep it project-aware.
+
 - [ ] **Step 1: Write failing tests**
   - `tests/breadcrumbs.test.ts`: thread under project `"pult"` returns `[pult, pult-proj, ThreadTitle]`.
   - `tests/chat-header.test.tsx`: header displays project badge + name; creating a thread from `/chat` while a project is selected passes `projectId` and `workspace = project.rootPath`.
