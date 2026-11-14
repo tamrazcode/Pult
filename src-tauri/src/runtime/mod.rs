@@ -957,6 +957,24 @@ impl AgentRuntime {
         }
     }
 
+    /// Persistence/cache side effects of session-metadata events. Applied both
+    /// in the live turn loop and when a session/load replay is drained.
+    fn apply_session_metadata(&self, thread_id: &str, instance_id: &str, event: &Event) {
+        if let EventKind::ConfigOptions { options } = &event.kind {
+            self.update_cached_config_options(instance_id, options.clone());
+        }
+        // Agent-chosen session titles rename the thread live (session_info_update).
+        if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
+            if !title.trim().is_empty() {
+                if let Err(err) = self.store.rename_thread(thread_id, title) {
+                    tracing::warn!(target: "pult::runtime",
+                        error = %err, "session title rename failed");
+                }
+                self.emit_thread_updated(thread_id);
+            }
+        }
+    }
+
     fn emit_run_event(&self, run_id: &str, event: &Event) {
         self.emit(
             "run:event",
@@ -1225,6 +1243,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         next_seq += 1;
         let _ = runtime.store.append_event(&event);
         runtime.emit_run_event(&run_id, &event);
+        runtime.apply_session_metadata(&thread_id, &instance_id, &event);
     }
 
     // Apply the thread's config picks to this fresh session, then tell the
@@ -1401,20 +1420,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         break;
                     }
                     runtime.emit_run_event(&run_id, &event);
-                    if let EventKind::ConfigOptions { options } = &event.kind {
-                        runtime.update_cached_config_options(&instance_id, options.clone());
-                    }
-                    // Agent-chosen session titles rename the thread live
-                    // (session_info_update, §M2 auto-rename).
-                    if let EventKind::SessionInfo { title: Some(title) } = &event.kind {
-                        if !title.trim().is_empty() {
-                            if let Err(err) = runtime.store.rename_thread(&thread_id, title) {
-                                tracing::warn!(target: "pult::runtime",
-                                    error = %err, "session title rename failed");
-                            }
-                            runtime.emit_thread_updated(&thread_id);
-                        }
-                    }
+                    runtime.apply_session_metadata(&thread_id, &instance_id, &event);
                 }
             }
             request = client_requests_rx.recv() => {

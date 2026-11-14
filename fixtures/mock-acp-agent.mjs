@@ -776,6 +776,10 @@ function handleLoadSession(id, params) {
       { name: "replayed-command", description: "Replayed from the prior session" },
     ],
   });
+  notifySessionUpdate(sessionId, {
+    sessionUpdate: "session_info_update",
+    title: "(replayed) prior title",
+  });
   // $defs/LoadSessionResponse carries modes/configOptions only (no sessionId -
   // the client already knows the id it asked to load).
   sendResult(id, { modes: MODES, configOptions: configOptionsFor(sessionConfig(sessionId)) });

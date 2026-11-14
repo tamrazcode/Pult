@@ -332,4 +332,23 @@ describe("runs store", () => {
     expect(items.every(({ showCaret }) => !showCaret)).toBe(true);
     expect(threadTimelineItems(undefined, {})).toEqual([]);
   });
+
+  it("does not put a streaming caret on a previous run item when the active run has no items yet", () => {
+    const items = threadTimelineItems(
+      [run("r1", "th", "finished", 0), run("r2", "th", "running", 1)],
+      {
+        r1: {
+          items: [{ type: "assistant", text: "partial before crash", streaming: true }],
+          streaming: false,
+        },
+        r2: {
+          items: [],
+          streaming: true,
+        },
+      },
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0].runId).toBe("r1");
+    expect(items[0].showCaret).toBe(false);
+  });
 });

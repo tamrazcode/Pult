@@ -414,7 +414,9 @@ export function threadTimelineItems(
   );
   const active = activeRunForThread(sorted);
   const last = rows[rows.length - 1];
-  if (last && active && views[active.id]?.streaming) last.showCaret = true;
+  if (last && active && last.runId === active.id && views[active.id]?.streaming) {
+    last.showCaret = true;
+  }
   return rows;
 }
 

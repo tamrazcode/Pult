@@ -321,6 +321,20 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
         run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second prompt")),
         "run 2 must carry its own user message; got {run2_kinds:?}"
     );
+    let thread_updates: Vec<_> = sink
+        .0
+        .lock()
+        .expect("sink lock")
+        .iter()
+        .filter(|(event, _)| event == "thread:update")
+        .cloned()
+        .collect();
+    assert!(
+        thread_updates
+            .iter()
+            .any(|(_, payload)| payload["thread"]["title"].as_str() == Some("(replayed) prior title")),
+        "replayed session_info_update must apply persistence side effects and emit thread:update; got {thread_updates:?}"
+    );
     pump.abort();
 
     let _ = std::fs::remove_dir_all(&sandbox);
