@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { activeRunForThread, useRunsStore } from "../src/stores/runs";
-import type { Run } from "../src/lib/types";
+import type { AppEvent, Run } from "../src/lib/types";
 
 const run = (id: string, threadId: string, status: Run["status"], idx = 0): Run => ({
   id,
@@ -16,6 +16,7 @@ describe("runs store", () => {
     useRunsStore.setState({
       runsByThread: {},
       viewsByRun: {},
+      appliedEvents: {},
       commandsByThread: {},
       queueByThread: {},
     });
@@ -58,6 +59,23 @@ describe("runs store", () => {
     const failed = useRunsStore.getState().runsByThread["th"][0];
     expect(failed.status).toBe("failed");
     expect(failed.error).toMatch(/restarted/);
+  });
+
+  it("does not replay already-applied events on re-hydration", () => {
+    const event: AppEvent = {
+      id: "r1-0",
+      runId: "r1",
+      seq: 0,
+      ts: 0,
+      kind: "agent_message_delta",
+      payload: { delta: "hi" },
+    };
+    useRunsStore.getState().receiveRunEvent("r1", event);
+    useRunsStore.getState().registerRun(run("r1", "th", "running"));
+    useRunsStore
+      .getState()
+      .hydrateThread("th", [run("r1", "th", "running")], [event], [], "r1");
+    expect(useRunsStore.getState().viewsByRun["r1"].items).toHaveLength(1);
   });
 
   it("stores the backend queue per thread and replaces it on queue:update", () => {

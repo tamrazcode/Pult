@@ -20,7 +20,13 @@ const run = (id: string, threadId: string, status: Run["status"]): Run => ({
 
 describe("loadThread", () => {
   beforeEach(() => {
-    useRunsStore.setState({ runsByThread: {}, viewsByRun: {}, commandsByThread: {}, queueByThread: {} });
+    useRunsStore.setState({
+      runsByThread: {},
+      viewsByRun: {},
+      appliedEvents: {},
+      commandsByThread: {},
+      queueByThread: {},
+    });
     useThreadsStore.setState({ threads: [] });
   });
 

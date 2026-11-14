@@ -101,13 +101,15 @@ pub fn threads_get(
     thread_id: String,
 ) -> Result<ThreadDetail, PultError> {
     let thread = runtime.store().get_thread(&thread_id)?;
+    // Read the live-run id before the runs so a run finishing between the two
+    // reads never looks like a zombie from a previous session.
+    let active_run_id = runtime.active_run_for(&thread_id);
     let runs = runtime.store().list_runs(&thread_id)?;
     let mut events = Vec::new();
     for run in &runs {
         events.extend(runtime.store().load_events(&run.id)?);
     }
     let queue = runtime.store().list_queue(&thread_id)?;
-    let active_run_id = runtime.active_run_for(&thread_id);
     Ok(ThreadDetail {
         thread,
         runs,

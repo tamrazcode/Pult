@@ -100,6 +100,9 @@ function DiagnosticsSettings() {
       setLoaded(true);
       return;
     }
+    // Direct visits must still subscribe to "agent:process" (the composer's
+    // picker normally does this) so the ring fills while the page is open.
+    void useUiStore.getState().loadInstances();
     void providersInstancesList().then((list) => {
       setInstances(list);
       setLoaded(true);

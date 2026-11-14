@@ -386,6 +386,8 @@ export function usageLine(usage: UsageDetail | undefined): string | null {
 interface RunsState {
   runsByThread: Record<string, Run[]>;
   viewsByRun: Record<string, RunView>;
+  /** Event ids already folded into a run view, so re-hydration never replays. */
+  appliedEvents: Record<string, Set<string>>;
   /** Slash commands the agent advertised, per thread (composer menu). */
   commandsByThread: Record<string, CommandInfo[]>;
   setElicitation: (surface: ElicitationSurface | null) => void;
@@ -417,6 +419,7 @@ interface RunsState {
 export const useRunsStore = create<RunsState>((set, get) => ({
   runsByThread: {},
   viewsByRun: {},
+  appliedEvents: {},
   commandsByThread: {},
   filesByThread: {},
   queueByThread: {},
@@ -449,7 +452,15 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       // runs_dispatch resolved may lack the run that is already streaming.
       // Fetched records win (authoritative status); local extras survive.
       const byId = new Map((s.runsByThread[threadId] ?? []).map((r) => [r.id, r]));
-      for (const r of runs) byId.set(r.id, r);
+      for (const r of runs) {
+        const local = byId.get(r.id);
+        // A stale snapshot must not resurrect a run the live stream already
+        // finished (threads_get reads runs and the active id non-atomically).
+        const localDone =
+          local !== undefined && local.status !== "running" && local.status !== "queued";
+        const fetchedLive = r.status === "running" || r.status === "queued";
+        byId.set(r.id, localDone && fetchedLive ? local : r);
+      }
       // A run the DB calls active but the runtime no longer holds died with
       // the previous app session: mark it interrupted (crash diagnostics).
       const records = [...byId.values()].map((r) =>
@@ -464,11 +475,18 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       );
       const sorted = records.sort((a, b) => a.idx - b.idx);
       const viewsByRun = { ...s.viewsByRun };
+      const appliedEvents = { ...s.appliedEvents };
       for (const run of sorted) {
         const runEvents = events.filter((e) => e.runId === run.id).sort((a, b) => a.seq - b.seq);
         let view =
           viewsByRun[run.id] ?? emptyRunView(run.status === "running" || run.status === "queued");
-        for (const e of runEvents) view = applyRunEvent(view, e);
+        const applied = new Set(appliedEvents[run.id] ?? []);
+        for (const e of runEvents) {
+          if (applied.has(e.id)) continue;
+          view = applyRunEvent(view, e);
+          applied.add(e.id);
+        }
+        appliedEvents[run.id] = applied;
         if (run.status !== "running" && run.status !== "queued") {
           view = { ...view, streaming: false, pendingApproval: undefined };
           if (!view.stopReason && run.stopReason) view = { ...view, stopReason: run.stopReason };
@@ -497,6 +515,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       return {
         runsByThread: { ...s.runsByThread, [threadId]: sorted },
         viewsByRun,
+        appliedEvents,
         commandsByThread:
           commands !== undefined
             ? { ...s.commandsByThread, [threadId]: commands }
@@ -543,7 +562,14 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           error: event.payload.error ?? r.error,
         }));
       }
-      return { runsByThread, viewsByRun: { ...s.viewsByRun, [runId]: next } };
+      return {
+        runsByThread,
+        viewsByRun: { ...s.viewsByRun, [runId]: next },
+        appliedEvents: {
+          ...s.appliedEvents,
+          [runId]: new Set(s.appliedEvents[runId] ?? []).add(event.id),
+        },
+      };
     }),
 
   setQueue: (threadId, items) =>

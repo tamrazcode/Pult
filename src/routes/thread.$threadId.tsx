@@ -15,10 +15,14 @@ function ThreadRoute() {
   // runs, queue updates) fan in globally via lib/runEvents and the stores
   // keep every thread current, whichever route is mounted.
   useEffect(() => {
+    let cancelled = false;
     useThreadsStore.getState().setActiveThread(threadId);
     void useGitStore.getState().refresh(threadId);
-    void loadThread(threadId).catch((err) => console.error("threads_get failed", err));
+    void loadThread(threadId, () => cancelled).catch((err) =>
+      console.error("threads_get failed", err),
+    );
     return () => {
+      cancelled = true;
       useThreadsStore.getState().setActiveThread(null);
     };
   }, [threadId]);

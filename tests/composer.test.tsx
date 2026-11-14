@@ -38,6 +38,7 @@ describe("composer", () => {
     useRunsStore.setState({
       runsByThread: {},
       viewsByRun: {},
+      appliedEvents: {},
       commandsByThread: {},
       queueByThread: {},
       activeElicitation: null,
@@ -86,6 +87,27 @@ describe("composer", () => {
     const always = screen.getByRole("button", { name: /Always allow/ });
     fireEvent.click(always);
     expect(runsRespondPermission).toHaveBeenCalledWith("r1", "req", "o2");
+  });
+
+  it("does not cancel while a picker layer owns Escape", () => {
+    render(<Composer threadId="th" />);
+    const layer = document.createElement("div");
+    layer.setAttribute("data-escape-layer", "");
+    document.body.appendChild(layer);
+    try {
+      fireEvent.keyDown(window, { key: "Escape" });
+      expect(runsCancel).not.toHaveBeenCalled();
+    } finally {
+      layer.remove();
+    }
+  });
+
+  it("picks a slash command with the leading slash in the textarea", () => {
+    render(<Composer threadId="th" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "/com" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(textarea.value).toBe("/commit ");
   });
 
   it("keeps Esc priority rules explicit", () => {

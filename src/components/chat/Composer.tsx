@@ -98,7 +98,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     const all = [...BUILT_IN_COMMANDS, ...(commands ?? [])];
     return all.filter((c) => c.name.toLowerCase().startsWith(q));
   }, [slashQuery, commands]);
-  const slashOpen = slashMatches.length > 0;
+  const slashOpen = slashMatches.length > 0 && threadId !== undefined;
 
   useEffect(() => {
     if (slashIndex >= slashMatches.length) setSlashIndex(0);
@@ -207,8 +207,9 @@ export function Composer({ threadId }: { threadId?: string }) {
       if (e.key !== "Escape" || e.defaultPrevented) return;
       const target = e.target;
       const inOverlay =
-        target instanceof HTMLElement &&
-        target.closest('[role="dialog"], [role="listbox"]') !== null;
+        (target instanceof HTMLElement &&
+          target.closest('[role="dialog"], [role="listbox"]') !== null) ||
+        document.querySelector("[data-escape-layer]") !== null;
       const overlayOpen =
         paletteOpen || activeElicitation !== null || awaitingDecision || inOverlay;
       if (!shouldCancelOnEscape({ runActive, overlayOpen })) return;
@@ -280,7 +281,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length);
         return;
       }
-      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+      if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         pickSlash(slashMatches[slashIndex] ?? slashMatches[0]);
         return;
@@ -314,7 +315,13 @@ export function Composer({ threadId }: { threadId?: string }) {
             )
             .map((option) => {
               const hint =
-                option.kind === "allow_once" ? "A" : option.kind === "allow_always" ? "S" : "D";
+                option.kind === "allow_once"
+                  ? "A"
+                  : option.kind === "allow_always"
+                    ? "S"
+                    : option.kind === "reject_once"
+                      ? "D"
+                      : "";
               const variant = option.kind.startsWith("reject")
                 ? "danger_outline"
                 : option.kind === "allow_once"
@@ -333,7 +340,12 @@ export function Composer({ threadId }: { threadId?: string }) {
                     ).catch((err) => console.error("runs_respond_permission failed", err))
                   }
                 >
-                  {option.name} <span className="ml-1 text-xs opacity-70">{hint}</span>
+                  {option.name}{" "}
+                  {hint && (
+                    <span aria-hidden className="ml-1 text-xs opacity-70">
+                      {hint}
+                    </span>
+                  )}
                 </Button>
               );
             })}
@@ -435,6 +447,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           }}
           onKeyDown={onKeyDown}
           onPaste={(e) => void handlePaste(e)}
+          readOnly={awaitingDecision}
           rows={1}
           spellCheck={false}
           placeholder={

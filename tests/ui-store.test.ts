@@ -3,7 +3,13 @@ import { useUiStore } from "../src/stores/ui";
 
 describe("ui store", () => {
   beforeEach(() => {
-    useUiStore.setState({ sidebarOpen: true, rightPanelOpen: false, rightPanelTab: "diff" });
+    useUiStore.setState({
+      sidebarOpen: true,
+      rightPanelOpen: false,
+      rightPanelTab: "diff",
+      processEvents: {},
+      globalError: null,
+    });
   });
 
   it("toggles the sidebar", () => {
