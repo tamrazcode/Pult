@@ -16,7 +16,8 @@ const SHELF_HINTS: Record<ShelfName, string> = {
   pinned: "Threads you pinned for quick access.",
 };
 
-/** Dragging onto a shelf moves the thread there (persisted status/pinned). */
+/** Dragging onto a shelf moves the thread there (persisted status/pinned).
+ * `working` is earned by a live run, never chosen by a drag. */
 const SHELF_TARGET: Record<ShelfName, { status?: Thread["status"]; pinned?: boolean }> = {
   drafts: { status: "draft", pinned: false },
   working: { status: "waiting" },
@@ -24,6 +25,13 @@ const SHELF_TARGET: Record<ShelfName, { status?: Thread["status"]; pinned?: bool
   settled: { status: "settled", pinned: false },
   pinned: { pinned: true },
 };
+
+/** The persisted patch for a shelf drop, or null when the shelf is derived. */
+export function shelfDropTarget(
+  shelf: ShelfName,
+): { status?: Thread["status"]; pinned?: boolean } | null {
+  return shelf === "working" ? null : SHELF_TARGET[shelf];
+}
 
 const STATUS_DOT_CLASSES: Partial<Record<Thread["status"], string>> = {
   working: "bg-accent",
@@ -80,7 +88,8 @@ export function Sidebar({ width }: { width: number }) {
     if (!threadId) return;
     const thread = threads.find((t) => t.id === threadId);
     if (!thread) return;
-    const target = SHELF_TARGET[shelf];
+    const target = shelfDropTarget(shelf);
+    if (!target) return;
     if (target.pinned) {
       void useThreadsStore.getState().setThreadPinned(threadId, true);
       return;

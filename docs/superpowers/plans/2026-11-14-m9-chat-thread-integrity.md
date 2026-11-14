@@ -43,6 +43,7 @@ The repo has zero commits and the whole tree is untracked. Before Task 1:
 ### Task 1: Thread hydration keeps live runs alive
 
 **Files:**
+
 - Modify: `src/routes/thread.$threadId.tsx`
 - Modify: `src/stores/runs.ts` (no signature change; behaviour only)
 - Modify: `src/stores/ui.ts`, `src/lib/ipc.ts` (pass `detail` through)
@@ -50,6 +51,7 @@ The repo has zero commits and the whole tree is untracked. Before Task 1:
 - Test: `tests/runs-store.test.ts`, `tests/ui-store.test.ts`
 
 **Interfaces:**
+
 - Consumes: `ThreadDetail.activeRunId` (`src/lib/types.ts:136`), `AgentProcessPayload.detail` (`types.ts:240`).
 - Produces: `UiState.applyProcessEvent(instanceId: string, kind: string, detail?: string | null): void` — appends `{ at, kind, detail }` to `processEvents[instanceId]`.
 
@@ -107,10 +109,12 @@ Expected: PASS, no type errors.
 ### Task 2: Composer stops the run on Esc, inserts slashes, exposes allow_always
 
 **Files:**
+
 - Modify: `src/components/chat/Composer.tsx`
 - Test: `tests/composer.test.tsx`
 
 **Interfaces:**
+
 - Produces: `formatSlashInsertion(command: CommandInfo): string` → `` `/${command.name} ` ``; exported from `Composer.tsx` for the test.
 - Produces: Escape handling at the composer level: if the slash menu is open → close it (`preventDefault`); else if a run is active → `runsCancel(activeRun.id)`; overlays keep precedence via their own `defaultPrevented`.
 
@@ -147,12 +151,14 @@ Expected: PASS.
 ### Task 3: `@` file mentions from the workspace
 
 **Files:**
+
 - Modify: `src-tauri/src/ipc/mod.rs`, `src-tauri/src/lib.rs`
 - Create: `src-tauri/src/workspace.rs` (listing + validation + tests)
 - Modify: `src/lib/ipc.ts`, `src/components/chat/Composer.tsx`
 - Test: Rust module tests; `tests/composer.test.tsx`
 
 **Interfaces:**
+
 - Rust: `pub fn list_workspace_files(root: &Path, query: &str, limit: usize) -> Result<Vec<String>, PultError>` — POSIX-relative paths, skips `.git`, `node_modules`, `target`, `dist`, `.pult`, `.vite`, hard caps 3000 visited / 200 returned.
 - IPC: `workspace_files(thread_id: Option<String>, workspace: Option<String>, query: Option<String>) -> Result<Vec<String>, PultError>`.
 - TS: `workspaceFiles(params: { threadId?: string; workspace?: string; query?: string }): Promise<string[]>`.
@@ -170,11 +176,13 @@ Expected: PASS.
 ### Task 4: Session mode survives between turns and per thread
 
 **Files:**
+
 - Modify: `src-tauri/src/runtime/mod.rs` (`set_mode`, `dispatch`, `RunRecord.mode`), `src-tauri/src/ipc/mod.rs` (`ThreadDetail`, `runs_dispatch` mode arg)
 - Modify: `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/runs.ts`, `src/components/chat/ComposerControls.tsx`
 - Test: Rust runtime test; `tests/runs-store.test.ts`
 
 **Interfaces:**
+
 - `AgentRuntime::set_mode(&self, thread_id: &str, mode_id: &str)` persists `thread_mode:<threadId>` in the settings table and applies `conn.set_mode` only when a run is live; never errors when idle.
 - `RunRecord.mode: Option<String>` is set from the persisted value at dispatch, before `session/prompt`.
 - `ThreadDetail.desiredMode?: string | null`.
@@ -191,10 +199,12 @@ Expected: PASS.
 ### Task 5: Thread management in the UI
 
 **Files:**
+
 - Modify: `src/components/chat/ChatHeader.tsx`, `src/components/layout/Sidebar.tsx`, `src/stores/threads.ts`, `src/stores/runs.ts`
 - Test: `tests/threads.test.ts`, new `tests/thread-actions.test.tsx`
 
 **Interfaces:**
+
 - `useRunsStore.dropThreadState(threadId: string): void` removes `runsByThread`, its views and queue rows.
 - ChatHeader: inline rename (trimmed, Esc cancels), actions Pin/Unpin, Snooze, Mark settled, Delete (two-step inline confirm, warns when `worktreeName` is set).
 - Deleting the active thread: cancel live run, `threadsDelete`, `dropThreadState`, navigate `/chat`.
@@ -211,11 +221,13 @@ Expected: PASS.
 ### Task 6: Honest navigation and labels
 
 **Files:**
+
 - Create: `src/lib/breadcrumbs.ts`
 - Modify: `src/components/layout/Topbar.tsx`, `src/components/layout/Sidebar.tsx`, `src/components/chat/ChatColumn.tsx`, `src/components/terminal/TerminalPanel.tsx`
 - Test: `tests/breadcrumbs.test.ts`, `tests/e2e/smoke.spec.ts`
 
 **Interfaces:**
+
 - `resolveBreadcrumbs(pathname: string, threads: Array<{ id: string; title: string; workspace?: string | null }>): Array<{ label: string; to?: string }>` with the mappings: `/chat` → pult / New thread; `/thread/$id` → pult / thread title; `/pull-requests` → pult / Pull requests; `/settings/x` → pult / Settings / section; `/welcome` → pult / Setup.
 - Sidebar "Add project" becomes an honest workspace menu (recent workspaces from threads → `/chat` with the field focused); TerminalPanel title uses the active terminal's title and the workspace folder name.
 
@@ -230,11 +242,13 @@ Expected: PASS.
 ### Task 7: External links really open (elicitation URL mode, PR links)
 
 **Files:**
+
 - Modify: `src-tauri/src/ipc/mod.rs`, `src-tauri/src/lib.rs`, `src/lib/ipc.ts`
 - Modify: `src/components/chat/ElicitationModal.tsx`, `src/components/diff/DiffPanel.tsx`, `src/routes/pull-requests.tsx`
 - Test: Rust unit test; `tests/elicitation-modal.test.tsx`
 
 **Interfaces:**
+
 - Rust: `pub fn validate_external_url(url: &str) -> Result<(), PultError>` (http/https only, non-empty, no control chars) and `pub fn open_external_url(url: String) -> Result<(), PultError>` which validates then launches the OS opener without a shell (`rundll32 url.dll,FileProtocolHandler <url>` / `open` / `xdg-open`).
 - TS: `openExternalUrl(url: string): Promise<void>` (`window.open` fallback outside Tauri).
 - `ElicitationModal`'s "Open URL" calls the opener first; on failure it shows an inline error and does not silently accept.

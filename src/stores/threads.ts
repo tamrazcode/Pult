@@ -124,9 +124,17 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
 
   setThreadStatus: async (threadId, status) => {
     await threadsSetStatus(threadId, status);
+    set((s) => ({
+      threads: s.threads.map((t) =>
+        t.id === threadId ? { ...t, status, pinned: status === "draft" ? false : t.pinned } : t,
+      ),
+    }));
   },
 
   setThreadPinned: async (threadId, pinned) => {
     await threadsSetPinned(threadId, pinned);
+    set((s) => ({
+      threads: s.threads.map((t) => (t.id === threadId ? { ...t, pinned } : t)),
+    }));
   },
 }));

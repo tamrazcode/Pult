@@ -419,6 +419,8 @@ interface RunsState {
   setQueue: (threadId: string, items: QueueItem[]) => void;
   /** Thread id for a run, or null when unknown (event fan-in helpers). */
   runThreadId: (runId: string) => string | null;
+  /** Drops all run/queue state of a removed thread (no live run survives it). */
+  dropThreadState: (threadId: string) => void;
 }
 
 export const useRunsStore = create<RunsState>((set, get) => ({
@@ -437,6 +439,24 @@ export const useRunsStore = create<RunsState>((set, get) => ({
     }
     return null;
   },
+
+  dropThreadState: (threadId) =>
+    set((s) => {
+      const runIds = new Set((s.runsByThread[threadId] ?? []).map((r) => r.id));
+      const viewsByRun = Object.fromEntries(
+        Object.entries(s.viewsByRun).filter(([id]) => !runIds.has(id)),
+      );
+      const appliedEvents = Object.fromEntries(
+        Object.entries(s.appliedEvents).filter(([id]) => !runIds.has(id)),
+      );
+      const runsByThread = { ...s.runsByThread };
+      delete runsByThread[threadId];
+      const queueByThread = { ...s.queueByThread };
+      delete queueByThread[threadId];
+      const desiredModeByThread = { ...s.desiredModeByThread };
+      delete desiredModeByThread[threadId];
+      return { runsByThread, viewsByRun, appliedEvents, queueByThread, desiredModeByThread };
+    }),
 
   registerRun: (run) =>
     set((s) => {

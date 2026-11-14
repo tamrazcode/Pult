@@ -163,13 +163,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       // backend persists it and applies it to this run's session.
       const desired = useRunsStore.getState().desiredModeByThread;
       const mode = desired[targetThreadId] ?? desired[""] ?? null;
-      const outcome = await runsDispatch(
-        targetThreadId,
-        text,
-        selectedInstanceId,
-        images,
-        mode,
-      );
+      const outcome = await runsDispatch(targetThreadId, text, selectedInstanceId, images, mode);
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
       // A queued outcome is confirmed by the "queue:update" event.
@@ -408,9 +402,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           {pendingApproval.options
             .filter(
               (o) =>
-                o.kind === "allow_once" ||
-                o.kind === "allow_always" ||
-                o.kind.startsWith("reject"),
+                o.kind === "allow_once" || o.kind === "allow_always" || o.kind.startsWith("reject"),
             )
             .map((option) => {
               const hint =

@@ -72,9 +72,7 @@ describe("runs store", () => {
     };
     useRunsStore.getState().receiveRunEvent("r1", event);
     useRunsStore.getState().registerRun(run("r1", "th", "running"));
-    useRunsStore
-      .getState()
-      .hydrateThread("th", [run("r1", "th", "running")], [event], [], "r1");
+    useRunsStore.getState().hydrateThread("th", [run("r1", "th", "running")], [event], [], "r1");
     expect(useRunsStore.getState().viewsByRun["r1"].items).toHaveLength(1);
   });
 

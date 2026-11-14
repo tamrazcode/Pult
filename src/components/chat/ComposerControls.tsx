@@ -75,11 +75,7 @@ export function AgentPicker() {
       </button>
       {open && (
         <>
-          <div
-            className="fixed inset-0 z-40"
-            data-escape-layer
-            onClick={() => setOpen(false)}
-          />
+          <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
           <div className="absolute bottom-full right-0 z-50 mb-1 w-72 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
             {instances.length === 0 ? (
               <p className="px-3 py-2 text-xs text-text-tertiary">No agent instances detected</p>
@@ -247,11 +243,7 @@ export function ModePill({ threadId }: { threadId?: string }) {
       </button>
       {open && (
         <>
-          <div
-            className="fixed inset-0 z-40"
-            data-escape-layer
-            onClick={() => setOpen(false)}
-          />
+          <div className="fixed inset-0 z-40" data-escape-layer onClick={() => setOpen(false)} />
           <div className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)">
             <p className="px-3 py-1.5 text-xs text-text-tertiary">How freely agents may act here</p>
             {MODES.map((mode) => (
