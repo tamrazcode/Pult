@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -16,24 +16,13 @@ import { useThreadsStore } from "../../stores/threads";
 import type { DiffFile } from "../../lib/types";
 import { SplitLines, UnifiedLines } from "./DiffLines";
 
-/** Latest "Suggested commit message: …" line from the thread's transcript. */
+/** Latest "Suggested commit message: …" line, cached on the run at finish. */
 function useSuggestedCommitMessage(threadId: string | null): string | null {
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
-  const views = useRunsStore((s) => s.viewsByRun);
-  return useMemo(() => {
-    if (!threadId) return null;
-    let suggestion: string | null = null;
-    for (const run of runs ?? []) {
-      for (const item of views[run.id]?.items ?? []) {
-        if (item.type !== "assistant") continue;
-        for (const line of item.text.split("\n")) {
-          const match = /^suggested commit(?: message)?:\s*(.+)$/i.exec(line.trim());
-          if (match) suggestion = match[1].trim();
-        }
-      }
-    }
-    return suggestion;
-  }, [threadId, runs, views]);
+  const lastRunId = runs?.[runs.length - 1]?.id;
+  return useRunsStore((s) =>
+    lastRunId ? (s.viewsByRun[lastRunId]?.suggestedCommit ?? null) : null,
+  );
 }
 
 function Diffstat({ added, removed }: { added: number; removed: number }) {

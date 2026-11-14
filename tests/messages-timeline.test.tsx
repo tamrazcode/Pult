@@ -4,6 +4,17 @@ import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
 import { useRunsStore } from "../src/stores/runs";
 import type { AppEvent, Run } from "../src/lib/types";
 
+const { markdownRenderCounts } = vi.hoisted(() => ({
+  markdownRenderCounts: new Map<string, number>(),
+}));
+
+vi.mock("../src/components/chat/Markdown", () => ({
+  default: ({ text }: { text: string }) => {
+    markdownRenderCounts.set(text, (markdownRenderCounts.get(text) ?? 0) + 1);
+    return <div>{text}</div>;
+  },
+}));
+
 const run = (id: string, status: Run["status"], idx: number): Run => ({
   id,
   threadId: "th",
@@ -23,6 +34,7 @@ const deltaEvent = (runId: string, seq: number, text: string): AppEvent => ({
 });
 
 beforeEach(() => {
+  markdownRenderCounts.clear();
   Element.prototype.scrollIntoView = vi.fn();
   useRunsStore.setState({
     runsByThread: {},
@@ -113,5 +125,80 @@ describe("MessagesTimeline", () => {
     });
     expect(screen.getByText("old-0")).toBeInTheDocument();
     expect(screen.getByText("latest reply")).toBeInTheDocument();
+  });
+
+  it("does not re-render a previous run row when a later run streams", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0), run("r2", "running", 1)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "first prompt", images: [] },
+            { type: "assistant", text: "run-1 answer", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+        r2: {
+          items: [
+            { type: "user", text: "second prompt", images: [] },
+            { type: "assistant", text: "run-2 start", streaming: true },
+          ],
+          streaming: true,
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+    const countBefore = markdownRenderCounts.get("run-1 answer") ?? 0;
+    expect(countBefore).toBe(1);
+
+    act(() => {
+      useRunsStore.getState().receiveRunEvent("r2", deltaEvent("r2", 0, " more"));
+    });
+
+    expect(markdownRenderCounts.get("run-1 answer")).toBe(countBefore);
+  });
+
+  it("does not auto-scroll when the user is reading history", async () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "running", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "prompt", images: [] },
+            { type: "assistant", text: "initial chunk", streaming: true },
+          ],
+          streaming: true,
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    const scrollContainer = container.querySelector("div.flex-1.overflow-y-auto") as HTMLElement;
+    expect(scrollContainer).not.toBeNull();
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 400, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", {
+      value: 100,
+      writable: true,
+      configurable: true,
+    });
+
+    fireEvent.scroll(scrollContainer);
+    scrollIntoView.mockClear();
+
+    act(() => {
+      useRunsStore.getState().receiveRunEvent("r1", deltaEvent("r1", 0, " next chunk"));
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+    });
+
+    expect(scrollIntoView).not.toHaveBeenCalledWith(expect.objectContaining({ block: "end" }));
   });
 });

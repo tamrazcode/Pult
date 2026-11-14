@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   ArrowRightLeft,
   Brain,
@@ -98,17 +98,24 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
   const [activeHistoryKey, setActiveHistoryKey] = useState<string | null>(null);
+  // Follow the stream only while the reader is already at the bottom.
+  const isAtBottomRef = useRef(true);
 
   // Reset the window when switching threads, not when a new run starts: the
   // merged transcript of the same thread must keep its expanded window.
   useEffect(() => {
     setWindowSize(TRANSCRIPT_WINDOW);
     setActiveHistoryKey(null);
+    isAtBottomRef.current = true;
   }, [threadId]);
 
-  // Follow the stream: any new/patched view scrolls the sentinel into view.
+  // Follow the stream: scroll only while pinned to the bottom, in a frame.
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ block: "end" });
+    if (!isAtBottomRef.current) return;
+    const frame = requestAnimationFrame(() => {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    });
+    return () => cancelAnimationFrame(frame);
   }, [view]);
 
   if (!threadId || !view) return <EmptyState />;
@@ -149,10 +156,12 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     });
   };
 
-  // Active tick = topmost user row still visible in the scroll container.
+  // Active tick = topmost user row still visible; also track bottom pinning.
   const trackActiveTick = () => {
     const container = scrollRef.current;
     if (!container) return;
+    isAtBottomRef.current =
+      container.scrollHeight - container.scrollTop - container.clientHeight < 48;
     const top = container.getBoundingClientRect().top;
     let current: string | null = null;
     for (const row of container.querySelectorAll<HTMLElement>("[data-history-user]")) {
@@ -225,24 +234,27 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   );
 }
 
-function ChatItemRow({ item, showCaret }: { item: ChatItem; showCaret: boolean }) {
-  switch (item.type) {
-    case "user":
-      return <UserRow text={item.text} images={item.images} />;
-    case "assistant":
-      return <TextRow text={item.text} streaming={item.streaming && showCaret} />;
-    case "thought":
-      return <ThoughtGroup item={item} streaming={item.streaming && showCaret} />;
-    case "tool":
-      return <ToolRow item={item} />;
-    case "trace":
-      return <TraceRow optionId={item.optionId} />;
-    case "compaction":
-      return <CompactionDivider item={item} />;
-    case "notice":
-      return <NoticeRow level={item.level} message={item.message} />;
-  }
-}
+const ChatItemRow = memo(
+  function ChatItemRow({ item, showCaret }: { item: ChatItem; showCaret: boolean }) {
+    switch (item.type) {
+      case "user":
+        return <UserRow text={item.text} images={item.images} />;
+      case "assistant":
+        return <TextRow text={item.text} streaming={item.streaming} showCaret={showCaret} />;
+      case "thought":
+        return <ThoughtGroup item={item} streaming={item.streaming && showCaret} />;
+      case "tool":
+        return <ToolRow item={item} />;
+      case "trace":
+        return <TraceRow optionId={item.optionId} />;
+      case "compaction":
+        return <CompactionDivider item={item} />;
+      case "notice":
+        return <NoticeRow level={item.level} message={item.message} />;
+    }
+  },
+  (prev, next) => prev.item === next.item && prev.showCaret === next.showCaret,
+);
 
 function EmptyState() {
   return (
@@ -295,11 +307,19 @@ function UserRow({ text, images }: { text: string; images: { data: string; mimeT
   );
 }
 
-function TextRow({ text, streaming }: { text: string; streaming: boolean }) {
+function TextRow({
+  text,
+  streaming,
+  showCaret,
+}: {
+  text: string;
+  streaming: boolean;
+  showCaret: boolean;
+}) {
   return (
     <div className="md text-base text-text-primary">
-      <Markdown text={text} />
-      {streaming && <Caret show />}
+      <Markdown text={text} streaming={streaming} />
+      {streaming && showCaret && <Caret show />}
     </div>
   );
 }

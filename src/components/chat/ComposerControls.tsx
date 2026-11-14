@@ -86,19 +86,23 @@ export function ConfigOptionPickers({ threadId }: { threadId?: string }) {
   const instances = useUiStore((s) => s.instances);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
-  const views = useRunsStore((s) => s.viewsByRun);
   const desired = useRunsStore((s) =>
     threadId ? s.desiredConfigByThread[threadId] : s.desiredConfigByThread[""],
   );
   const activeRun = activeRunForThread(runs);
-  const liveOptions =
-    activeRun &&
+  const activeRunId = activeRun?.id;
+  const liveOptions = useRunsStore((s) =>
+    activeRunId ? s.viewsByRun[activeRunId]?.configOptions : undefined,
+  );
+  const instance = instances.find((i) => i.id === selectedInstanceId);
+  const options =
+    (activeRun &&
     (activeRun.status === "running" || activeRun.status === "queued") &&
     activeRun.instanceId === selectedInstanceId
-      ? views[activeRun.id]?.configOptions
-      : undefined;
-  const instance = instances.find((i) => i.id === selectedInstanceId);
-  const options = liveOptions ?? instance?.configOptions ?? [];
+      ? liveOptions
+      : undefined) ??
+    instance?.configOptions ??
+    [];
   if (options.length === 0) return null;
 
   const pick = (option: SessionConfigOption, value: ConfigOptionValue) => {
@@ -370,15 +374,14 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
 
   const modes = instances.find((i) => i.id === selectedInstanceId)?.modes ?? [];
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
-  const views = useRunsStore((s) => s.viewsByRun);
   const desiredModeId = useRunsStore((s) =>
     threadId ? s.desiredModeByThread[threadId] : s.desiredModeByThread[""],
   );
   const activeRun = activeRunForThread(runs);
-  const liveModeId =
-    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
-      ? views[activeRun.id]?.modeId
-      : undefined;
+  const activeRunId = activeRun?.id;
+  const liveModeId = useRunsStore((s) =>
+    activeRunId ? s.viewsByRun[activeRunId]?.modeId : undefined,
+  );
   const currentModeId = pickerModeId(activeRun, liveModeId, desiredModeId);
   if (modes.length === 0) return null;
 

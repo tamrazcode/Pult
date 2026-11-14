@@ -525,7 +525,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           ))}
         </div>
       )}
-      <div className="relative rounded-2xl border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
+      <div className="relative mx-auto w-full max-w-3xl rounded-2xl border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
         {runActive && (
           <div
             aria-hidden

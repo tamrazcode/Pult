@@ -125,6 +125,8 @@ export interface RunView {
   configOptions?: SessionConfigOption[];
   /** Failure detail from run_finished (crash diagnostics banner). */
   error?: string;
+  /** Computed once at run end: latest suggested commit message line. */
+  suggestedCommit?: string;
   /** Stored for later milestones; rendered per-thread, not per-run. */
   modeId?: string;
   usage?: UsageDetail;
@@ -189,6 +191,19 @@ function findCompactionIndex(items: ChatItem[], compactionId: string): number {
   return items.findIndex(
     (item) => item.type === "compaction" && item.compactionId === compactionId,
   );
+}
+
+/** Latest "Suggested commit message: …" line, computed once at run end. */
+function suggestedCommitFromItems(items: ChatItem[]): string | undefined {
+  let suggestion: string | undefined;
+  for (const item of items) {
+    if (item.type !== "assistant") continue;
+    for (const line of item.text.split("\n")) {
+      const match = /^suggested commit(?: message)?:\s*(.+)$/i.exec(line.trim());
+      if (match) suggestion = match[1].trim();
+    }
+  }
+  return suggestion;
 }
 
 /**
@@ -294,13 +309,16 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
     }
 
     case "run_finished": {
+      const items = closeStreamingText(view.items);
       const next: RunView = {
         ...view,
-        items: closeStreamingText(view.items),
+        items,
         streaming: false,
         stopReason: event.payload.stopReason,
         pendingApproval: undefined,
       };
+      const suggestedCommit = suggestedCommitFromItems(items);
+      if (suggestedCommit) next.suggestedCommit = suggestedCommit;
       const error = defined(event.payload.error);
       return error ? { ...next, error } : next;
     }
