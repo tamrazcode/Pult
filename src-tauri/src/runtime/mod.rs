@@ -1104,11 +1104,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // first because agents narrow dependent options (thought level) when the
     // model changes.
     let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
-    picks.sort_by_key(|(id, _)| match id.as_str() {
-        "model" => 0,
-        "thought_level" | "reasoning_effort" => 1,
-        _ => 2,
-    });
+    picks.sort_by_key(|(id, _)| config_apply_order(id));
     for (config_id, value) in picks {
         match conn
             .set_config_option(&session_id, &config_id, value)
@@ -1631,6 +1627,16 @@ fn desired_string(config: &DesiredConfigMap, id: &str) -> Option<String> {
     match config.get(id) {
         Some(ConfigOptionValue::String(value)) => Some(value.clone()),
         _ => None,
+    }
+}
+
+/// Application order: `model` first (agents narrow dependent options when it
+/// changes), then thought level, then the rest.
+fn config_apply_order(id: &str) -> u8 {
+    match id {
+        "model" => 0,
+        "thought_level" | "reasoning_effort" => 1,
+        _ => 2,
     }
 }
 

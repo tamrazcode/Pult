@@ -5,6 +5,17 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### M10 — Typed config options & composer pickers (2026-11-14)
+
+- ACP `configOptions` typed end to end: select (flat/grouped) and boolean, lenient
+  deserialization for old DB rows, boolean capability advertised, `session/set_config_option`.
+- Composer pills for model and thought level (group headers), boolean toggles; picks persist
+  per thread, apply before the next prompt (model first), fill `RunRecord.model`/`.effort`,
+  and never fail a turn when the agent rejects a stale value.
+- Preflight caches session config options; Providers/Diagnostics show them; `/chat` picks
+  apply once and are cleared; Esc closes a picker without stopping the run.
+- Mock agent serves model/thought/toggle options and validates `set_config_option`.
+
 ### M9 — Chat, thread lifecycle & navigation integrity (2026-11-14)
 
 - Thread hydration keeps live runs alive: `activeRunId`/`desiredMode` travel with

@@ -2,6 +2,26 @@
 
 One entry per milestone — decisions made, deviations from the spec, known issues (§0.6).
 
+## M10 — Typed config options & composer pickers (2026-11-14)
+
+**Scope shipped.** Session `configOptions` are now typed end to end (select flat/grouped and boolean), with a lenient deserializer that keeps old `pult.db` rows and future option types loadable. The client advertises `session.configOptions.boolean`, the driver speaks `session/set_config_option` (string values without `type`, booleans with it), and the mock agent serves `model` (grouped: mock-fast/mock-pro, legacy mock-v1 that narrows thought levels), `thought_level` and a `web_search` toggle. Preflight caches the probe session's options, so the composer pills appear right after Connect. Picks persist per thread in the settings KV (`thread_config:<id>`), ride on `ThreadDetail.desiredConfig`, apply to the next run before the prompt (model first, then thought level), and fill `RunRecord.model`/`.effort`; a rejecting agent logs a warning and emits a Notice instead of failing the turn. The composer renders select pills with group headers and boolean toggles; `/chat` picks apply once to the new thread and are cleared; Esc closes a popover without cancelling the run. Providers and Diagnostics show the option count.
+
+**Verification.** Rust 100/100 (typed parsing incl. grouped skip-invalid, wire shapes, capabilities, golden config round-trip with `-32602`, preflight cache, apply-before-prompt, stale pick does not fail the turn, live mid-run pick keeps the run healthy, deterministic apply order), clippy `-D warnings` clean. Frontend typecheck/lint green, vitest 98/98. Gemini final review: 1 blocker + 2 majors + 3 minors; all fixed with tests (live config sequencing via the run's answer channel, empty-map hydrate no longer wipes picks, deterministic apply order, lenient group options, settings cleanup on delete, live options only for the selected instance).
+
+**Decisions.**
+
+1. **One event writer per run:** a live `set_config_option` is queued to the run loop through the existing answer channel; the loop owns `next_seq`. Direct DB writes from the IPC command raced the run's counter and could fail the turn.
+2. **Apply order is fixed, not HashMap order** — `model` first, then thought level, because agents narrow dependent option lists when the model changes.
+3. **Lenient by construction:** null/unknown/broken option entries are skipped, never fatal for the whole picker or transcript.
+4. **Picks are optimistic in the UI and verified by the agent:** the store updates immediately, the backend persists, and the next `session/set_config_option` is the source of truth.
+
+**Known issues / gaps.**
+
+- `RunRecord.model`/`.effort` name the requested values; when an agent rejects a stale pick the record still shows it (the run uses the agent default). Cosmetic until a run-details surface reads these fields.
+- Option ids `model` / `thought_level` / `reasoning_effort` drive the record fields; agents using a different id with `category: "model"` are shown correctly in the picker but leave the record fields empty.
+- Real CLI legs (Codex/OpenCode/Claude/Gemini) were not exercised this round; the mock covers the protocol shapes.
+- No GUI/Playwright pass.
+
 ## M9 — Chat, thread lifecycle & navigation integrity (2026-11-14)
 
 **Scope shipped.** The daily loop is now internally consistent. Hydration: `threads_get` carries `activeRunId` and `desiredMode` into the store; a live run no longer flips to "pult restarted while this run was active" when you switch threads, transcript events are deduped by id (both replay orders), a stale snapshot cannot resurrect a finished run, and `threads_get` reads the live-run id before the runs. Composer: Esc stops the run unless a palette/dialog/picker/slash/@ layer owns the key (layers advertise `data-escape-layer`), slash picks keep their leading `/`, the approval bar exposes every offered option (A/S/D), the textarea is read-only while a decision is pending, and `@` opens a debounced workspace file list (`workspace_files`, BFS with VCS/build skips and 3000/200 caps). Session mode: picked modes persist per thread in the settings KV (no schema change), survive restarts via `ThreadDetail.desiredMode`, apply to the next run before its prompt, and never leak from `/chat` into an existing thread; the picker prefers the remembered mode over a finished run's mode. Thread lifecycle: rename, pin, snooze, settle and delete (two-step confirm, worktree hint) live in `ChatHeader`; deleting the active thread cancels its run, drops store state and lands on `/chat` only on success; the `working` shelf no longer accepts drops. Navigation: route-aware breadcrumbs replace the static `pult / chat`, the sidebar's fake "Add project…" is an honest workspace entry, and the terminal label uses the active shell + workspace folder. Links: `open_external_url` opens http(s) in the system browser (validated, one argv element, no shell) and backs elicitation URL mode and PR links; a failed open shows an error instead of silently accepting. `fresh` detail: vitest now actually runs `*.test.tsx` (three suites had been silently skipped since M7).

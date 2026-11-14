@@ -858,3 +858,10 @@ async fn set_config_option_during_a_live_run_keeps_the_run_healthy() {
             ))
     )));
 }
+
+#[test]
+fn config_apply_order_puts_model_before_dependent_options() {
+    let mut ids = vec!["web_search", "thought_level", "model"];
+    ids.sort_by_key(|id| super::config_apply_order(id));
+    assert_eq!(ids, vec!["model", "thought_level", "web_search"]);
+}

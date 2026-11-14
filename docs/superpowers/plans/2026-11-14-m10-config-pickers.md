@@ -10,6 +10,8 @@
 
 **Spec:** README.md, DEVLOG.md (M9 entry), TODO.md (model picker, reasoning effort), protocol/acp-schema.json (`SessionConfigOption`, `SessionConfigSelect`, `SessionConfigBoolean`, `SetSessionConfigOptionRequest`, `ClientSessionCapabilities.configOptions`).
 
+**Status 2026-11-14:** Tasks 1–5 done (`43097d6` … `77c6821`), review fix pass in `6f0cbaf`, docs in DEVLOG/CHANGELOG. Gates: cargo 100/100, vitest 98/98, clippy/typecheck/lint clean. No GUI/Playwright pass.
+
 ## Global Constraints
 
 - No SQLite migrations: per-thread picks live in `settings` under `thread_config:<threadId>` as `Record<string, string | boolean>`.
