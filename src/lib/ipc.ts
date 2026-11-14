@@ -25,6 +25,7 @@ import type {
   SendOutcome,
   Thread,
   ThreadDetail,
+  UsageReport,
 } from "./types";
 
 /**
@@ -215,8 +216,9 @@ export function providersDetectInstalled(): Promise<DetectedAgent[]> {
   return invokeWithFallback<DetectedAgent[]>("providers_detect_installed", []);
 }
 
-/** One-click connect check: spawn → handshake → cache caps → shut down. */
-export function providersPreflight(instanceId: string): Promise<PreflightReport> {
+/** One-click connect check: spawn → handshake → cache caps → shut down. */ export function providersPreflight(
+  instanceId: string,
+): Promise<PreflightReport> {
   return invokeRequired<PreflightReport>("providers_preflight", { instanceId });
 }
 
@@ -226,6 +228,16 @@ export function providersAuthenticate(
   methodId: string,
 ): Promise<PreflightReport> {
   return invokeRequired<PreflightReport>("providers_authenticate", { instanceId, methodId });
+}
+
+/** Read-only usage report (last ACP usage snapshot per run). */
+export function usageReport(): Promise<UsageReport> {
+  return invokeWithFallback<UsageReport>("usage_report", {
+    totalRuns: 0,
+    runs: [],
+    byThread: [],
+    byInstance: [],
+  });
 }
 
 /** Rewrites the agent matrix (config.toml) and swaps the live registry. */

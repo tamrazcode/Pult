@@ -363,7 +363,16 @@ pub async fn providers_preflight(
     runtime.preflight(&instance_id).await
 }
 
-/// One-click sign-in: run an agent-managed auth method and re-probe the
+/// Usage insights: latest ACP usage snapshot per run, grouped honestly.
+#[tauri::command]
+pub async fn usage_report(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<crate::store::usage::UsageReport, PultError> {
+    let store = Arc::clone(runtime.store());
+    tokio::task::spawn_blocking(move || store.usage_report())
+        .await
+        .map_err(|e| PultError::internal(format!("usage query failed: {e}")))?
+}
 /// session. Terminal methods are rejected by the runtime.
 #[tauri::command]
 pub async fn providers_authenticate(

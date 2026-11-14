@@ -32,6 +32,7 @@ describe("resolveBreadcrumbs", () => {
       "Keybindings",
     ]);
     expect(resolveBreadcrumbs("/welcome", []).map((c) => c.label)).toEqual(["pult", "Setup"]);
+    expect(resolveBreadcrumbs("/usage", []).map((c) => c.label)).toEqual(["pult", "Usage"]);
   });
 
   it("falls back to a neutral label for an unknown or missing thread", () => {

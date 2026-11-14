@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, GitPullRequest, Plus, Search } from "lucide-react";
+import { BarChart3, FolderOpen, GitPullRequest, Plus, Search } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
@@ -172,6 +172,15 @@ export function Sidebar({ width }: { width: number }) {
       </nav>
 
       <footer className="border-t border-border-subtle p-3">
+        <button
+          onClick={() => void router.navigate({ to: "/usage" })}
+          className={`mb-1 flex w-full items-center gap-2 rounded-(--radius-md) px-2 py-1.5 text-sm transition hover:bg-hover ${
+            pathname.startsWith("/usage") ? "bg-active text-text-primary" : "text-text-secondary"
+          }`}
+        >
+          <BarChart3 size={15} className="text-text-tertiary" />
+          <span>Usage</span>
+        </button>
         <button
           onClick={() => void router.navigate({ to: "/pull-requests" })}
           className="mb-1 flex w-full items-center gap-2 rounded-(--radius-md) px-2 py-1.5 text-sm text-text-secondary transition hover:bg-hover"

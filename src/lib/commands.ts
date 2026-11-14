@@ -38,6 +38,13 @@ export const STATIC_COMMANDS: Command[] = [
     run: ({ navigate }) => navigate("/chat"),
   },
   {
+    id: "navigate.usage",
+    title: "Go to usage",
+    section: "Navigate",
+    keywords: "usage tokens context cost stats",
+    run: ({ navigate }) => navigate("/usage"),
+  },
+  {
     id: "navigate.welcome",
     title: "Go to onboarding",
     section: "Navigate",

@@ -390,3 +390,55 @@ export interface PtyExitPayload {
   threadId: string;
   exitCode: number | null;
 }
+
+// ---- usage report (M12) ----
+
+export interface UsageCost {
+  amount: number;
+  currency?: string | null;
+}
+
+export interface RunUsageRecord {
+  runId: string;
+  threadId: string;
+  threadTitle: string;
+  runIdx: number;
+  status: string;
+  instanceId: string;
+  model?: string | null;
+  startedAt: number;
+  stoppedAt?: number | null;
+  usageTs: number;
+  used?: number | null;
+  size?: number | null;
+  cost?: UsageCost | null;
+}
+
+export interface ThreadUsageSummary {
+  threadId: string;
+  threadTitle: string;
+  runsWithUsage: number;
+  latestRunId: string;
+  latestInstanceId: string;
+  latestStartedAt: number;
+  latestUsed?: number | null;
+  latestSize?: number | null;
+  peakUsed?: number | null;
+  latestCost?: UsageCost | null;
+}
+
+export interface InstanceUsageSummary {
+  instanceId: string;
+  runsWithUsage: number;
+  medianUsed?: number | null;
+  peakUsed?: number | null;
+  latestCost?: UsageCost | null;
+  lastUsedAt: number;
+}
+
+export interface UsageReport {
+  totalRuns: number;
+  runs: RunUsageRecord[];
+  byThread: ThreadUsageSummary[];
+  byInstance: InstanceUsageSummary[];
+}

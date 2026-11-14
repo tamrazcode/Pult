@@ -170,6 +170,7 @@ pub fn run() {
             ipc::settings_set,
             ipc::providers_preflight,
             ipc::providers_authenticate,
+            ipc::usage_report,
         ])
         .run(tauri::generate_context!())
         .expect("pult: failed to start tauri application");

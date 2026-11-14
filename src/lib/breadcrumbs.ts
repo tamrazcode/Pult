@@ -31,6 +31,7 @@ export function resolveBreadcrumbs(pathname: string, threads: Thread[]): Crumb[]
     ];
   }
   if (pathname.startsWith("/pull-requests")) return [root, { label: "Pull requests" }];
+  if (pathname.startsWith("/usage")) return [root, { label: "Usage" }];
   if (pathname.startsWith("/welcome")) return [root, { label: "Setup" }];
   return [root, { label: "New thread" }];
 }

@@ -74,4 +74,11 @@ describe("command palette registry", () => {
     commands.find((c) => c.id === "settings.appearance")!.run({ navigate: (p) => paths.push(p) });
     expect(paths).toEqual(["/settings/appearance"]);
   });
+
+  it("the usage command navigates", () => {
+    const paths: string[] = [];
+    const commands = buildCommands({ navigate: (p) => paths.push(p) }, []);
+    commands.find((c) => c.id === "navigate.usage")!.run({ navigate: (p) => paths.push(p) });
+    expect(paths).toEqual(["/usage"]);
+  });
 });

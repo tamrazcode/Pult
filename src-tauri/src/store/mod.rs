@@ -12,6 +12,7 @@ mod queue;
 pub mod records;
 mod runs;
 mod threads;
+pub mod usage;
 #[cfg(test)]
 mod tests;
 
