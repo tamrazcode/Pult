@@ -90,7 +90,7 @@ export function ChatHeader({
   };
 
   return (
-    <div className="relative flex h-12 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
+    <div className="relative flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
       {editing ? (
         <input
           autoFocus

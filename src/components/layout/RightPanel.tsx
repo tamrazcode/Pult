@@ -85,8 +85,8 @@ export function RightPanel({ width }: { width: number }) {
             onClick={() => setTab(id)}
             className={`flex h-7 items-center gap-1.5 rounded-(--radius-sm) px-2.5 text-sm transition-colors duration-150 ${
               tab === id
-                ? "bg-active text-text-primary"
-                : "text-text-tertiary hover:bg-hover hover:text-text-secondary"
+                ? "border border-accent/40 bg-active text-text-primary"
+                : "border border-transparent text-text-tertiary hover:bg-hover hover:text-text-secondary"
             }`}
           >
             <Icon size={14} /> {label}

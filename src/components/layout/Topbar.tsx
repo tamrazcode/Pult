@@ -40,7 +40,7 @@ export function Topbar() {
   return (
     <header
       data-tauri-drag-region
-      className="flex h-12 shrink-0 select-none items-center gap-3 border-b border-border-subtle bg-chrome pr-0 pl-4"
+      className="flex h-10 shrink-0 select-none items-center gap-3 border-b border-border-subtle bg-chrome pr-0 pl-4"
     >
       <PultLogo className="h-5 w-5 shrink-0 text-text-primary" />
       {/* breadcrumbs "pult / where you are" — route-aware, never static */}
@@ -134,7 +134,7 @@ function WindowControls() {
   }, [win]);
 
   const base =
-    "flex h-12 w-11 items-center justify-center text-text-secondary transition-colors duration-150";
+    "flex h-10 w-11 items-center justify-center text-text-secondary transition-colors duration-150";
   return (
     <div className="ml-1 flex items-center">
       <button
