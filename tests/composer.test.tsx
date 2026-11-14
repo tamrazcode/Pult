@@ -210,7 +210,8 @@ describe("composer", () => {
           promptImage: false,
           loadSession: true,
           modes: [],
-          configOptions: [            {
+          configOptions: [
+            {
               type: "select",
               id: "model",
               name: "Model",

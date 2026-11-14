@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Plus, RefreshCw, Trash2, X } from "lucide-react";
 import {
   ipcErrorMessage,
+  providersAuthenticate,
   providersDetectInstalled,
   providersInstancesList,
   providersInstancesSave,
@@ -11,6 +12,7 @@ import {
 import { isTauri } from "../lib/tauri";
 import { useUiStore } from "../stores/ui";
 import { ConnectRow } from "../components/settings/AgentConnect";
+import { SignInActions } from "../components/settings/SignInActions";
 import type { DetectedAgent, InstanceInfo, InstanceSpec, PreflightReport } from "../lib/types";
 
 export const Route = createFileRoute("/settings/providers")({ component: ProvidersSettings });
@@ -60,13 +62,20 @@ function statusLine(
   info: InstanceInfo,
   report: PreflightReport | undefined,
   checking: boolean,
+  authenticating = false,
+  authAttempted = false,
 ): { text: string; tone: "ok" | "warn" | "muted" | "bad" } {
   if (checking) return { text: "Checking connection…", tone: "muted" };
+  if (authenticating) return { text: "Signing in…", tone: "muted" };
   if (!info.enabled) return { text: "Disabled", tone: "muted" };
-  if (info.status === "needs_auth") return { text: "Needs sign-in", tone: "warn" };
+  if (info.status === "needs_auth") {
+    return { text: authAttempted ? "Still needs sign-in" : "Needs sign-in", tone: "warn" };
+  }
   if (info.status === "crashed") return { text: "Crashed on last run", tone: "bad" };
   if (report) {
-    if (report.authRequired) return { text: "Needs sign-in", tone: "warn" };
+    if (report.authRequired) {
+      return { text: authAttempted ? "Still needs sign-in" : "Needs sign-in", tone: "warn" };
+    }
     const caps = [report.loadSession ? "resume" : null, report.promptImage ? "images" : null]
       .filter(Boolean)
       .join(" · ");
@@ -106,6 +115,8 @@ function ProvidersSettings() {
   const [adding, setAdding] = useState(false);
   const [runtimeDraft, setRuntimeDraft] = useState<DraftRuntime | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [authenticating, setAuthenticating] = useState<Record<string, boolean>>({});
+  const [authAttempted, setAuthAttempted] = useState<Record<string, boolean>>({});
 
   const reload = async () => {
     if (!isTauri()) return;
@@ -160,6 +171,24 @@ function ProvidersSettings() {
   };
 
   const [checkError, setCheckError] = useState<Record<string, string>>({});
+
+  const signIn = async (id: string, methodId: string) => {
+    setAuthenticating((m) => ({ ...m, [id]: true }));
+    setAuthAttempted((m) => ({ ...m, [id]: true }));
+    try {
+      const report = await providersAuthenticate(id, methodId);
+      setReports((m) => ({ ...m, [id]: report }));
+      setCheckError((m) => {
+        const { [id]: _dropped, ...rest } = m;
+        return rest;
+      });
+      await reload();
+    } catch (err) {
+      setCheckError((m) => ({ ...m, [id]: ipcErrorMessage(err) }));
+    } finally {
+      setAuthenticating((m) => ({ ...m, [id]: false }));
+    }
+  };
 
   const remove = async (id: string) => {
     await providersInstancesSave(
@@ -259,8 +288,16 @@ function ProvidersSettings() {
           <div className="max-w-xl">
             <h2 className="text-lg font-medium text-text-primary">{selected.displayName}</h2>
             {(() => {
-              const st = statusLine(selected, reports[selected.id], checking[selected.id]);
+              const st = statusLine(
+                selected,
+                reports[selected.id],
+                checking[selected.id],
+                authenticating[selected.id],
+                authAttempted[selected.id],
+              );
               const err = checkError[selected.id];
+              const needsAuth =
+                reports[selected.id]?.authRequired === true || selected.status === "needs_auth";
               return (
                 <div className="mt-3 rounded-(--radius-md) border border-border-subtle bg-surface p-3">
                   <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
@@ -291,6 +328,22 @@ function ProvidersSettings() {
                     <RefreshCw size={12} className={checking[selected.id] ? "animate-spin" : ""} />
                     Check connection
                   </button>
+                  {needsAuth && (
+                    <SignInActions
+                      instanceId={selected.id}
+                      launch={{
+                        command: selected.command,
+                        args: selected.args,
+                        env: selected.env,
+                      }}
+                      authMethods={reports[selected.id]?.authMethods ?? selected.authMethods ?? []}
+                      authHint={reports[selected.id]?.authHint ?? selected.authHint}
+                      signingIn={authenticating[selected.id] === true}
+                      authAttempted={authAttempted[selected.id] === true}
+                      onSignIn={(methodId) => void signIn(selected.id, methodId)}
+                      onRecheck={() => void check(selected.id)}
+                    />
+                  )}
                 </div>
               );
             })()}
@@ -408,6 +461,10 @@ function ProvidersSettings() {
                   agent={agent}
                   alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
                   onAdded={() => void reload()}
+                  onReport={(report) => {
+                    setReports((m) => ({ ...m, [agent.suggestedInstanceId]: report }));
+                    setSelectedId(agent.suggestedInstanceId);
+                  }}
                 />
               ))}
               <AddInstanceForm onAdded={() => void reload()} />

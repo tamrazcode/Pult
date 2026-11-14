@@ -37,8 +37,6 @@ export function buildTerminalAuthCommand(
   const envPrefix = Object.entries(env)
     .map(([key, value]) => `${key}=${quote(value)}`)
     .join(" ");
-  const argv = [launch.command, ...launch.args, ...(method.args ?? [])]
-    .map(quote)
-    .join(" ");
+  const argv = [launch.command, ...launch.args, ...(method.args ?? [])].map(quote).join(" ");
   return envPrefix ? `${envPrefix} ${argv}` : argv;
 }

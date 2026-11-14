@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Check, Loader2, ShieldAlert, TerminalSquare } from "lucide-react";
 import {
   ipcErrorMessage,
+  providersAuthenticate,
   providersDetectInstalled,
   providersInstancesList,
   providersInstancesSave,
@@ -9,6 +10,7 @@ import {
 } from "../../lib/ipc";
 import { useUiStore } from "../../stores/ui";
 import type { DetectedAgent, PreflightReport } from "../../lib/types";
+import { SignInActions } from "./SignInActions";
 
 /** Appends a detected agent as an instance without touching the others. */
 export async function addDetectedAgent(agent: DetectedAgent): Promise<void> {
@@ -55,22 +57,61 @@ export function ConnectRow({
   agent,
   alreadyAdded,
   onAdded,
+  onReport,
 }: {
   agent: DetectedAgent;
   alreadyAdded: boolean;
   onAdded: () => void;
+  onReport?: (report: PreflightReport) => void;
 }) {
   const [state, setState] = useState<ConnectState>({ kind: "idle" });
+  const [signingIn, setSigningIn] = useState(false);
+  const [authAttempted, setAuthAttempted] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const connect = async () => {
     setState({ kind: "working" });
+    setAuthError(null);
     try {
       await addDetectedAgent(agent);
       onAdded();
       const report = await providersPreflight(agent.suggestedInstanceId);
+      onReport?.(report);
       setState({ kind: report.authRequired ? "needs_auth" : "connected", report });
     } catch (err) {
       setState({ kind: "error", message: ipcErrorMessage(err) });
+    }
+  };
+
+  const signIn = async (methodId: string) => {
+    setSigningIn(true);
+    setAuthAttempted(true);
+    setAuthError(null);
+    try {
+      const report = await providersAuthenticate(agent.suggestedInstanceId, methodId);
+      onReport?.(report);
+      await useUiStore.getState().loadInstances();
+      setState({ kind: report.authRequired ? "needs_auth" : "connected", report });
+    } catch (err) {
+      setAuthError(ipcErrorMessage(err));
+    } finally {
+      setSigningIn(false);
+    }
+  };
+
+  const launch = {
+    command: agent.suggestedCommand?.[0] ?? agent.command,
+    args: agent.suggestedCommand?.slice(1) ?? [],
+  };
+
+  const recheck = async () => {
+    setAuthError(null);
+    try {
+      const report = await providersPreflight(agent.suggestedInstanceId);
+      onReport?.(report);
+      setState({ kind: report.authRequired ? "needs_auth" : "connected", report });
+    } catch (err) {
+      setAuthError(ipcErrorMessage(err));
     }
   };
 
@@ -94,11 +135,8 @@ export function ConnectRow({
         );
       case "needs_auth":
         return (
-          <span
-            className="flex shrink-0 items-center gap-1.5 text-xs text-warning"
-            title="Run the agent's own sign-in command once (e.g. `claude`, `codex`); pult picks it up on the next run."
-          >
-            <ShieldAlert size={12} /> Needs sign-in
+          <span className="flex shrink-0 items-center gap-1.5 text-xs text-warning">
+            <ShieldAlert size={12} /> {authAttempted ? "Still needs sign-in" : "Needs sign-in"}
           </span>
         );
       case "error":
@@ -116,21 +154,21 @@ export function ConnectRow({
   };
 
   return (
-    <div className="flex items-center gap-3 rounded-(--radius-md) border border-border-subtle bg-surface-raised px-3 py-2">
-      <TerminalSquare size={16} className="shrink-0 text-text-tertiary" />
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm text-text-primary">{agent.displayName}</p>
-        <p className="truncate text-xs text-text-tertiary">
-          {state.kind === "error" ? state.message : agent.notes}
-        </p>
-      </div>
-      {alreadyAdded ? (
-        <span className="flex shrink-0 items-center gap-1 text-xs text-success">
-          <Check size={12} /> Added
-        </span>
-      ) : (
-        <>
-          {status()}
+    <div className="rounded-(--radius-md) border border-border-subtle bg-surface-raised">
+      <div className="flex items-center gap-3 px-3 py-2">
+        <TerminalSquare size={16} className="shrink-0 text-text-tertiary" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm text-text-primary">{agent.displayName}</p>
+          <p className="truncate text-xs text-text-tertiary">
+            {state.kind === "error" ? state.message : agent.notes}
+          </p>
+        </div>
+        {status()}
+        {alreadyAdded ? (
+          <span className="flex shrink-0 items-center gap-1 text-xs text-success">
+            <Check size={12} /> Added
+          </span>
+        ) : (
           <button
             onClick={() => void connect()}
             disabled={state.kind === "working" || !agent.suggestedCommand}
@@ -143,7 +181,26 @@ export function ConnectRow({
           >
             Connect
           </button>
-        </>
+        )}
+      </div>
+      {state.kind === "needs_auth" && (
+        <div className="px-3 pb-2">
+          {authError && (
+            <p role="alert" className="mb-1 text-xs text-danger">
+              {authError}
+            </p>
+          )}
+          <SignInActions
+            instanceId={agent.suggestedInstanceId}
+            launch={launch}
+            authMethods={state.report.authMethods}
+            authHint={state.report.authHint}
+            signingIn={signingIn}
+            authAttempted={authAttempted}
+            onSignIn={(methodId) => void signIn(methodId)}
+            onRecheck={() => void recheck()}
+          />
+        </div>
       )}
     </div>
   );
