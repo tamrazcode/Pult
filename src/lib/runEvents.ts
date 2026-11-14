@@ -25,9 +25,11 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offRun = await onRunEvent(({ runId, event }) => {
     useRunsStore.getState().receiveRunEvent(runId, event);
     // The runtime caches agent capabilities during a run's handshake;
-    // refresh the instance list when a run ends so composer gating
-    // (image attach) stays current.
-    if (event.kind === "run_finished") void useUiStore.getState().loadInstances();
+    // refresh the instance list when a run ends or its config options change
+    // so composer gating and pickers stay current.
+    if (event.kind === "run_finished" || event.kind === "config_options") {
+      void useUiStore.getState().loadInstances();
+    }
     // Diff panel freshness: every write re-projects the git diff (debounced).
     const threadId = useRunsStore.getState().runThreadId(runId);
     if (threadId && (event.kind === "file_changed" || event.kind === "run_finished")) {

@@ -23,5 +23,6 @@ export async function loadThread(
       detail.queue,
       detail.activeRunId,
       detail.desiredMode,
+      detail.desiredConfig,
     );
 }

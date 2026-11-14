@@ -5,6 +5,7 @@ import { isTauri } from "./tauri";
 import type {
   AgentProcessPayload,
   CommitOutcome,
+  ConfigOptionValue,
   DetectedAgent,
   GitDiff,
   GitStatus,
@@ -142,6 +143,7 @@ export function runsDispatch(
   instanceId: string,
   images: ImageInput[] = [],
   mode?: string | null,
+  configOptions?: Record<string, ConfigOptionValue> | null,
 ): Promise<SendOutcome> {
   return invokeRequired<SendOutcome>("runs_dispatch", {
     threadId,
@@ -149,7 +151,17 @@ export function runsDispatch(
     images,
     instanceId,
     mode: mode ?? null,
+    configOptions: configOptions ?? null,
   });
+}
+
+/** Applies one session config option now and remembers it for the next run. */
+export function runsSetConfigOption(
+  threadId: string,
+  configId: string,
+  value: ConfigOptionValue,
+): Promise<void> {
+  return invokeRequired<void>("runs_set_config_option", { threadId, configId, value });
 }
 
 export function runsCancel(runId: string): Promise<void> {

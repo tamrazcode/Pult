@@ -51,6 +51,47 @@ export interface SessionMode {
   description?: string | null;
 }
 
+// ---- session config options (M10) ----
+
+export type ConfigOptionValue = string | boolean;
+
+export interface SessionConfigSelectOption {
+  value: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface SessionConfigSelectGroup {
+  group: string;
+  name: string;
+  options: SessionConfigSelectOption[];
+}
+
+export type SessionConfigSelectOptions =
+  | SessionConfigSelectOption[]
+  | SessionConfigSelectGroup[];
+
+export interface SessionConfigSelectOptionDef {
+  type: "select";
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  currentValue: string;
+  options: SessionConfigSelectOptions;
+}
+
+export interface SessionConfigBooleanOptionDef {
+  type: "boolean";
+  id: string;
+  name: string;
+  description?: string | null;
+  category?: string | null;
+  currentValue: boolean;
+}
+
+export type SessionConfigOption = SessionConfigSelectOptionDef | SessionConfigBooleanOptionDef;
+
 export interface InstanceInfo {
   id: string;
   displayName: string;
@@ -66,6 +107,8 @@ export interface InstanceInfo {
   loadSession: boolean;
   /** Session modes the agent advertised (M6 picker; empty until known). */
   modes: SessionMode[];
+  /** Session config options (model, thought level, toggles). */
+  configOptions: SessionConfigOption[];
 }
 
 /** One configured agent instance (config.toml; M6 agent matrix). */
@@ -100,6 +143,8 @@ export interface PreflightReport {
   authRequired: boolean;
   /** Detail when the probe failed (shown under "Needs sign-in"). */
   authHint: string | null;
+  /** Session config options seen on the probe session (pickers warm). */
+  configOptions: SessionConfigOption[];
 }
 
 /** A message waiting in the backend queue for the active run to finish. */
@@ -136,6 +181,8 @@ export interface ThreadDetail {
   activeRunId?: string | null;
   /** Session mode picked for the next run (persisted per thread). */
   desiredMode?: string | null;
+  /** Config options picked for the next run (persisted per thread). */
+  desiredConfig?: Record<string, ConfigOptionValue>;
 }
 
 export interface PlanEntry {
@@ -208,7 +255,7 @@ export type EventPayloadUnion =
   | { kind: "notice"; payload: { level: string; message: string } }
   | { kind: "commands_update"; payload: { commands: CommandInfo[] } }
   | { kind: "session_info"; payload: { title?: string | null } }
-  | { kind: "config_options"; payload: { options: unknown } }
+  | { kind: "config_options"; payload: { options: SessionConfigOption[] } }
   | {
       kind: "compaction";
       payload: {

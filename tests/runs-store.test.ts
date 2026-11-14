@@ -90,6 +90,51 @@ describe("runs store", () => {
     expect(useRunsStore.getState().viewsByRun["r1"].items).toHaveLength(1);
   });
 
+  it("stores the latest config options in the run view", () => {
+    useRunsStore.getState().hydrateThread(
+      "th",
+      [run("r1", "th", "running")],
+      [
+        {
+          id: "r1-5",
+          runId: "r1",
+          seq: 5,
+          ts: 0,
+          kind: "config_options",
+          payload: {
+            options: [
+              {
+                type: "select",
+                id: "model",
+                name: "Model",
+                currentValue: "mock-fast",
+                options: [{ value: "mock-fast", name: "Mock Fast" }],
+              },
+            ],
+          },
+        },
+      ],
+      [],
+      "r1",
+    );
+    expect(useRunsStore.getState().viewsByRun["r1"].configOptions?.[0].id).toBe("model");
+  });
+
+  it("keeps desired config per thread and drops it with the thread", () => {
+    useRunsStore.getState().setDesiredConfig("th", "model", "mock-pro");
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({
+      model: "mock-pro",
+    });
+    useRunsStore
+      .getState()
+      .hydrateThread("th", [], [], [], null, null, { thought_level: "high" });
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({
+      thought_level: "high",
+    });
+    useRunsStore.getState().dropThreadState("th");
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toBeUndefined();
+  });
+
   it("stores the backend queue per thread and replaces it on queue:update", () => {
     useRunsStore.getState().setQueue("th", [
       {

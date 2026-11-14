@@ -2,11 +2,13 @@ import { create } from "zustand";
 import type {
   AppEvent,
   CommandInfo,
+  ConfigOptionValue,
   ImageInput,
   PermissionOption,
   PlanEntry,
   QueueItem,
   Run,
+  SessionConfigOption,
 } from "../lib/types";
 import { useThreadsStore } from "./threads";
 
@@ -119,6 +121,8 @@ export interface RunView {
   pendingApproval?: ApprovalRequest;
   streaming: boolean;
   stopReason?: string;
+  /** Latest session config options (model, thought level, toggles). */
+  configOptions?: SessionConfigOption[];
   /** Failure detail from run_finished (crash diagnostics banner). */
   error?: string;
   /** Stored for later milestones; rendered per-thread, not per-run. */
@@ -344,11 +348,13 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
     case "usage":
       return { ...view, usage: event.payload.detail as UsageDetail };
 
+    case "config_options":
+      return { ...view, configOptions: event.payload.options };
+
     // Thread-level session state: intercepted by the store before the
     // reducer runs, so the run view itself is unchanged.
     case "commands_update":
     case "session_info":
-    case "config_options":
     case "file_changed":
     case "elicitation_request":
       return view;
@@ -402,6 +408,10 @@ interface RunsState {
   desiredModeByThread: Record<string, string>;
   /** Remembers the picker's choice before a run exists. */
   setDesiredMode: (threadId: string, modeId: string) => void;
+  /** Config picks per thread ("" = the draft on /chat). */
+  desiredConfigByThread: Record<string, Record<string, ConfigOptionValue>>;
+  setDesiredConfig: (threadId: string, configId: string, value: ConfigOptionValue) => void;
+  clearDesiredConfig: (threadId: string) => void;
   /** Upserts a run (from runs_dispatch / threads_get) and seeds its view. */
   registerRun: (run: Run) => void;
   /** Rebuilds all views of a thread from the threads_get transcript. */
@@ -412,6 +422,7 @@ interface RunsState {
     queue: QueueItem[],
     activeRunId?: string | null,
     desiredMode?: string | null,
+    desiredConfig?: Record<string, ConfigOptionValue>,
   ) => void;
   /** Applies a "run:event" payload; seeds a view for unknown runs. */
   receiveRunEvent: (runId: string, event: AppEvent) => void;
@@ -432,6 +443,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   queueByThread: {},
   activeElicitation: null,
   desiredModeByThread: {},
+  desiredConfigByThread: {},
 
   runThreadId: (runId) => {
     for (const [threadId, runs] of Object.entries(get().runsByThread)) {
@@ -455,6 +467,8 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       delete queueByThread[threadId];
       const desiredModeByThread = { ...s.desiredModeByThread };
       delete desiredModeByThread[threadId];
+      const desiredConfigByThread = { ...s.desiredConfigByThread };
+      delete desiredConfigByThread[threadId];
       const commandsByThread = { ...s.commandsByThread };
       delete commandsByThread[threadId];
       const filesByThread = { ...s.filesByThread };
@@ -467,6 +481,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         appliedEvents,
         queueByThread,
         desiredModeByThread,
+        desiredConfigByThread,
         commandsByThread,
         filesByThread,
         activeElicitation,
@@ -487,7 +502,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       return { runsByThread: { ...s.runsByThread, [run.threadId]: nextRuns }, viewsByRun };
     }),
 
-  hydrateThread: (threadId, runs, events, queue, activeRunId, desiredMode) =>
+  hydrateThread: (threadId, runs, events, queue, activeRunId, desiredMode, desiredConfig) =>
     set((s) => {
       // Merge, don't replace: a threads_get snapshot taken before a local
       // runs_dispatch resolved may lack the run that is already streaming.
@@ -567,6 +582,9 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           desiredMode && desiredMode !== s.desiredModeByThread[threadId]
             ? { ...s.desiredModeByThread, [threadId]: desiredMode }
             : s.desiredModeByThread,
+        desiredConfigByThread: desiredConfig
+          ? { ...s.desiredConfigByThread, [threadId]: desiredConfig }
+          : s.desiredConfigByThread,
       };
     }),
 
@@ -626,6 +644,19 @@ export const useRunsStore = create<RunsState>((set, get) => ({
     set((s) => ({
       desiredModeByThread: { ...s.desiredModeByThread, [threadId]: modeId },
     })),
+  setDesiredConfig: (threadId, configId, value) =>
+    set((s) => ({
+      desiredConfigByThread: {
+        ...s.desiredConfigByThread,
+        [threadId]: { ...s.desiredConfigByThread[threadId], [configId]: value },
+      },
+    })),
+  clearDesiredConfig: (threadId) =>
+    set((s) => {
+      const desiredConfigByThread = { ...s.desiredConfigByThread };
+      delete desiredConfigByThread[threadId];
+      return { desiredConfigByThread };
+    }),
 }));
 
 function threadIdForRun(
