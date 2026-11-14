@@ -197,6 +197,8 @@ pub struct ClientCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fs: Option<FileSystemCapabilities>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<ClientSessionCapabilities>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth: Option<AuthCapability>,
@@ -210,13 +212,43 @@ pub struct AuthCapability {
     pub terminal: bool,
 }
 
+/// `$defs/ClientSessionCapabilities` (only what pult advertises).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientSessionCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config_options: Option<SessionConfigOptionsCapabilities>,
+}
+
+/// `$defs/SessionConfigOptionsCapabilities`.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigOptionsCapabilities {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boolean: Option<BooleanConfigOptionCapabilities>,
+}
+
+/// `$defs/BooleanConfigOptionCapabilities`: `{}` means boolean options are
+/// supported (the agent may send them and the client may set them).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BooleanConfigOptionCapabilities {
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<serde_json::Value>,
+}
+
 impl ClientCapabilities {
-    /// What pult advertises in M1: fs callbacks + terminal auth (§5.2).
+    /// What pult advertises: fs callbacks, terminal auth, boolean config options.
     pub fn pult_v1() -> Self {
         Self {
             fs: Some(FileSystemCapabilities {
                 read_text_file: true,
                 write_text_file: true,
+            }),
+            session: Some(ClientSessionCapabilities {
+                config_options: Some(SessionConfigOptionsCapabilities {
+                    boolean: Some(BooleanConfigOptionCapabilities::default()),
+                }),
             }),
             terminal: Some(true),
             auth: Some(AuthCapability { terminal: true }),
@@ -292,6 +324,134 @@ pub struct CancelParams {
 pub struct SetModeParams {
     pub session_id: String,
     pub mode_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Session config options (§5.4 config pickers)
+// ---------------------------------------------------------------------------
+
+/// A selected config value: strings for `select`, booleans for toggles.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ConfigOptionValue {
+    String(String),
+    Bool(bool),
+}
+
+/// One value of a `select` option.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigSelectOption {
+    pub value: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+/// A titled group of select values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigSelectGroup {
+    pub group: String,
+    pub name: String,
+    #[serde(default)]
+    pub options: Vec<SessionConfigSelectOption>,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+/// Flat or grouped option values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SessionConfigSelectOptions {
+    Flat(Vec<SessionConfigSelectOption>),
+    Grouped(Vec<SessionConfigSelectGroup>),
+}
+
+/// The `type`-discriminated half of a config option.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum SessionConfigOptionKind {
+    Select {
+        #[serde(rename = "currentValue")]
+        current_value: String,
+        options: SessionConfigSelectOptions,
+    },
+    Boolean {
+        #[serde(rename = "currentValue")]
+        current_value: bool,
+    },
+}
+
+/// `$defs/SessionConfigOption`: one selector with its current value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionConfigOption {
+    pub id: String,
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub category: Option<String>,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+    #[serde(flatten)]
+    pub kind: SessionConfigOptionKind,
+}
+
+/// Lenient `configOptions` deserializer: `null` → empty, invalid items are
+/// skipped (old rows and future option types must not break the transcript).
+pub fn deserialize_config_options<'de, D>(
+    deserializer: D,
+) -> Result<Vec<SessionConfigOption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Vec<Value>>::deserialize(deserializer)?;
+    Ok(raw
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| serde_json::from_value(item).ok())
+        .collect())
+}
+
+/// `session/set_config_option` request params; `type` is only sent for
+/// boolean values (strings are the schema's default shape).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetConfigOptionParams {
+    pub session_id: String,
+    pub config_id: String,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub kind: Option<&'static str>,
+    pub value: Value,
+}
+
+impl SetConfigOptionParams {
+    pub fn new(session_id: &str, config_id: &str, value: ConfigOptionValue) -> Self {
+        let (kind, value) = match value {
+            ConfigOptionValue::String(v) => (None, Value::String(v)),
+            ConfigOptionValue::Bool(v) => (Some("boolean"), Value::Bool(v)),
+        };
+        Self {
+            session_id: session_id.to_string(),
+            config_id: config_id.to_string(),
+            kind,
+            value,
+        }
+    }
+}
+
+/// `session/set_config_option` response: the full updated option set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetConfigOptionResult {
+    #[serde(deserialize_with = "deserialize_config_options")]
+    pub config_options: Vec<SessionConfigOption>,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// `authenticate` request params.
@@ -406,21 +566,21 @@ pub struct NewSessionResult {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<SessionModeState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_options: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_config_options")]
+    pub config_options: Vec<SessionConfigOption>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
 }
 
-/// `session/load` response (`$defs/LoadSessionResponse`): no `sessionId` —
+/// `session/load` response (`$defs/LoadSessionResponse`): no `sessionId` -
 /// the client already knows the id it asked to load.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadSessionResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modes: Option<SessionModeState>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub config_options: Option<Value>,
+    #[serde(default, deserialize_with = "deserialize_config_options")]
+    pub config_options: Vec<SessionConfigOption>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
 }
@@ -511,8 +671,8 @@ pub enum SessionUpdate {
         meta: Option<Value>,
     },
     ConfigOptionUpdate {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        config_options: Option<Value>,
+        #[serde(default, deserialize_with = "deserialize_config_options")]
+        config_options: Vec<SessionConfigOption>,
     },
     SessionInfoUpdate {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -979,6 +1139,77 @@ mod tests {
         assert_eq!(v, json!({"type": "text", "text": "hello"}));
         let back: ContentBlock = serde_json::from_value(v).unwrap();
         assert_eq!(back, block);
+    }
+
+    #[test]
+    fn config_options_parse_flat_grouped_boolean_and_skip_unknown() {
+        #[derive(serde::Deserialize)]
+        struct Holder {
+            #[serde(default, deserialize_with = "deserialize_config_options")]
+            config_options: Vec<SessionConfigOption>,
+        }
+        let holder: Holder = serde_json::from_value(json!({
+            "config_options": [
+                {"id":"model","name":"Model","category":"model","type":"select","currentValue":"m1",
+                 "options":[{"value":"m1","name":"M1"}]},
+                {"id":"thought","name":"Thought","category":"thought_level","type":"select","currentValue":"low",
+                 "options":[{"group":"main","name":"Main","options":[{"value":"low","name":"Low"}]}]},
+                {"id":"search","name":"Search","type":"boolean","currentValue":false},
+                {"id":"future","name":"Future","type":"slider","currentValue":5}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(holder.config_options.len(), 3);
+        match &holder.config_options[1].kind {
+            SessionConfigOptionKind::Select {
+                current_value,
+                options,
+            } => {
+                assert_eq!(current_value, "low");
+                match options {
+                    SessionConfigSelectOptions::Grouped(groups) => {
+                        assert_eq!(groups[0].group, "main");
+                        assert_eq!(groups[0].options[0].value, "low");
+                    }
+                    SessionConfigSelectOptions::Flat(_) => panic!("expected grouped options"),
+                }
+            }
+            SessionConfigOptionKind::Boolean { .. } => panic!("expected select"),
+        }
+
+        let empty: Holder = serde_json::from_value(json!({"config_options": null})).unwrap();
+        assert!(empty.config_options.is_empty());
+    }
+
+    #[test]
+    fn set_config_option_params_serialize_select_and_boolean() {
+        let string = serde_json::to_value(SetConfigOptionParams::new(
+            "s1",
+            "model",
+            ConfigOptionValue::String("m1".into()),
+        ))
+        .unwrap();
+        assert_eq!(string, json!({"sessionId":"s1","configId":"model","value":"m1"}));
+
+        let boolean = serde_json::to_value(SetConfigOptionParams::new(
+            "s1",
+            "search",
+            ConfigOptionValue::Bool(true),
+        ))
+        .unwrap();
+        assert_eq!(
+            boolean,
+            json!({"sessionId":"s1","configId":"search","type":"boolean","value":true})
+        );
+    }
+
+    #[test]
+    fn client_capabilities_advertise_boolean_config_options() {
+        let caps = serde_json::to_value(ClientCapabilities::pult_v1()).unwrap();
+        assert!(
+            caps["session"]["configOptions"]["boolean"].is_object(),
+            "{caps}"
+        );
     }
 
     #[test]

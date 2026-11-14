@@ -25,13 +25,13 @@ use crate::protocol::jsonrpc::{
     ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_RESOURCE_NOT_FOUND,
 };
 use crate::protocol::types::{
-    CancelParams, ClientCapabilities, ContentBlock, CreateElicitationParams, CreateTerminalParams,
-    ElicitationAction, ElicitationResult, Implementation, InitializeParams, InitializeResult,
-    LoadSessionParams, LoadSessionResult, NewSessionParams, NewSessionResult, PromptParams,
-    PromptResult, ReadTextFileParams, TerminalRefParams,
-    RequestPermissionOutcome, RequestPermissionOutcomeKind, RequestPermissionParams,
-    SessionNotification, SessionUpdate, SetModeParams, ToolCallStatus, ToolCallUpdateData,
-    ToolKind, WriteTextFileParams,
+    CancelParams, ClientCapabilities, ConfigOptionValue, ContentBlock, CreateElicitationParams,
+    CreateTerminalParams, ElicitationAction, ElicitationResult, Implementation, InitializeParams,
+    InitializeResult, LoadSessionParams, LoadSessionResult, NewSessionParams, NewSessionResult,
+    PromptParams, PromptResult, ReadTextFileParams, RequestPermissionOutcome,
+    RequestPermissionOutcomeKind, RequestPermissionParams, SessionNotification, SessionUpdate,
+    SetConfigOptionParams, SetConfigOptionResult, SetModeParams, TerminalRefParams, ToolCallStatus,
+    ToolCallUpdateData, ToolKind, WriteTextFileParams,
 };
 use crate::protocol::LATEST_PROTOCOL_VERSION;
 
@@ -480,6 +480,23 @@ impl AcpConn {
         .await
     }
 
+    /// §5.4 config option switch (`session/set_config_option`).
+    pub async fn set_config_option(
+        &self,
+        session_id: &str,
+        config_id: &str,
+        value: ConfigOptionValue,
+    ) -> Result<SetConfigOptionResult, DriverError> {
+        let value = self
+            .request(
+                "session/set_config_option",
+                serde_json::to_value(SetConfigOptionParams::new(session_id, config_id, value))?,
+                std::time::Duration::from_secs(15),
+            )
+            .await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
     /// Answer a pending client-side request (permission/fs/elicitation).
     pub async fn respond_client(
         &self,
@@ -700,9 +717,11 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                 .collect(),
         }],
         SessionUpdate::SessionInfoUpdate { title, .. } => vec![EventKind::SessionInfo { title }],
-        SessionUpdate::ConfigOptionUpdate { config_options, .. } => vec![EventKind::ConfigOptions {
-            options: config_options.unwrap_or(serde_json::Value::Null),
-        }],
+        SessionUpdate::ConfigOptionUpdate { config_options, .. } => {
+            vec![EventKind::ConfigOptions {
+                options: config_options,
+            }]
+        }
         SessionUpdate::CompactionUpdate {
             compaction_id,
             status,
@@ -935,11 +954,28 @@ mod tests {
         assert_eq!(info, vec![EventKind::SessionInfo { title: Some("Echo turn".into()) }]);
 
         let config = project_update(wire::SessionUpdate::ConfigOptionUpdate {
-            config_options: Some(json!([{ "id": "model", "name": "Model" }])),
+            config_options: vec![wire::SessionConfigOption {
+                id: "model".into(),
+                name: "Model".into(),
+                description: None,
+                category: Some("model".into()),
+                meta: None,
+                kind: wire::SessionConfigOptionKind::Select {
+                    current_value: "m1".into(),
+                    options: wire::SessionConfigSelectOptions::Flat(vec![
+                        wire::SessionConfigSelectOption {
+                            value: "m1".into(),
+                            name: "M1".into(),
+                            description: None,
+                            meta: None,
+                        },
+                    ]),
+                },
+            }],
         });
         match &config[..] {
             [EventKind::ConfigOptions { options }] => {
-                assert_eq!(options[0]["id"], "model");
+                assert_eq!(options[0].id, "model");
             }
             other => panic!("wrong config projection: {other:?}"),
         }

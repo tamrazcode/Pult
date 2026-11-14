@@ -4,6 +4,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::protocol::types::{deserialize_config_options, SessionConfigOption};
+
 /// Execution status of a tool call (mirrors ACP `ToolCallStatus`).
 pub const TOOL_STATUSES: [&str; 4] = ["pending", "in_progress", "completed", "failed"];
 
@@ -97,9 +99,11 @@ pub enum EventKind {
     CommandsUpdate { commands: Vec<CommandInfo> },
     /// Partial session metadata; `title: Some` renames the thread in the store.
     SessionInfo { title: Option<String> },
-    /// Raw `configOptions` passthrough from `config_option_update` (the wire
-    /// carries an array; kept raw until the pickers land in M6).
-    ConfigOptions { options: serde_json::Value },
+    /// The full session config option set (model, thought level, toggles...).
+    ConfigOptions {
+        #[serde(default, deserialize_with = "deserialize_config_options")]
+        options: Vec<SessionConfigOption>,
+    },
     /// Context compaction lifecycle. `status: Some` transitions the divider;
     /// `summary_replace` (update patch, `Some("")` clears) and `summary_append`
     /// (chunk) carry the user-displayable summary text.
