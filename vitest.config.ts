@@ -9,6 +9,6 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts"],
     css: false,
     // *.spec.ts belongs to the Playwright suite (tests/e2e)
-    include: ["tests/**/*.test.ts", "src/**/*.test.ts"],
+    include: ["tests/**/*.test.{ts,tsx}", "src/**/*.test.{ts,tsx}"],
   },
 });
