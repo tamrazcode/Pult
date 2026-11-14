@@ -356,7 +356,7 @@ pub struct SessionConfigSelectOption {
 pub struct SessionConfigSelectGroup {
     pub group: String,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_select_options")]
     pub options: Vec<SessionConfigSelectOption>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
@@ -417,6 +417,21 @@ where
         .collect())
 }
 
+/// Lenient one group's `options`: invalid entries are skipped, not fatal.
+pub fn deserialize_select_options<'de, D>(
+    deserializer: D,
+) -> Result<Vec<SessionConfigSelectOption>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<Vec<Value>>::deserialize(deserializer)?;
+    Ok(raw
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|item| serde_json::from_value(item).ok())
+        .collect())
+}
+
 /// `session/set_config_option` request params; `type` is only sent for
 /// boolean values (strings are the schema's default shape).
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -448,7 +463,7 @@ impl SetConfigOptionParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetConfigOptionResult {
-    #[serde(deserialize_with = "deserialize_config_options")]
+    #[serde(default, deserialize_with = "deserialize_config_options")]
     pub config_options: Vec<SessionConfigOption>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
@@ -1153,7 +1168,7 @@ mod tests {
                 {"id":"model","name":"Model","category":"model","type":"select","currentValue":"m1",
                  "options":[{"value":"m1","name":"M1"}]},
                 {"id":"thought","name":"Thought","category":"thought_level","type":"select","currentValue":"low",
-                 "options":[{"group":"main","name":"Main","options":[{"value":"low","name":"Low"}]}]},
+                 "options":[{"group":"main","name":"Main","options":[{"value":"low","name":"Low"},{"broken":true}]}]},
                 {"id":"search","name":"Search","type":"boolean","currentValue":false},
                 {"id":"future","name":"Future","type":"slider","currentValue":5}
             ]

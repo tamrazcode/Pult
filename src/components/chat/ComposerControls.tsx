@@ -92,7 +92,9 @@ export function ConfigOptionPickers({ threadId }: { threadId?: string }) {
   );
   const activeRun = activeRunForThread(runs);
   const liveOptions =
-    activeRun && (activeRun.status === "running" || activeRun.status === "queued")
+    activeRun &&
+    (activeRun.status === "running" || activeRun.status === "queued") &&
+    activeRun.instanceId === selectedInstanceId
       ? views[activeRun.id]?.configOptions
       : undefined;
   const instance = instances.find((i) => i.id === selectedInstanceId);

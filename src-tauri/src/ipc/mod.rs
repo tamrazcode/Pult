@@ -177,6 +177,12 @@ pub async fn threads_delete(
         }
     }
     runtime.store().delete_thread(&thread_id)?;
+    let _ = runtime
+        .store()
+        .delete_setting(&format!("thread_mode:{thread_id}"));
+    let _ = runtime
+        .store()
+        .delete_setting(&format!("thread_config:{thread_id}"));
     Ok(())
 }
 

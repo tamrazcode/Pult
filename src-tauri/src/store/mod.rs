@@ -170,6 +170,15 @@ impl Store {
             Ok(())
         })
     }
+
+    /// Removes one setting key (thread-scoped picks on delete).
+    pub fn delete_setting(&self, key: &str) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            conn.execute("DELETE FROM settings WHERE key = ?1", [key])
+                .map_err(|e| sql("delete_setting", e))?;
+            Ok(())
+        })
+    }
 }
 
 /// Maps a rusqlite error into `PultError::Store`, prefixed with the SQL action

@@ -582,9 +582,10 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           desiredMode && desiredMode !== s.desiredModeByThread[threadId]
             ? { ...s.desiredModeByThread, [threadId]: desiredMode }
             : s.desiredModeByThread,
-        desiredConfigByThread: desiredConfig
-          ? { ...s.desiredConfigByThread, [threadId]: desiredConfig }
-          : s.desiredConfigByThread,
+        desiredConfigByThread:
+          desiredConfig && Object.keys(desiredConfig).length > 0
+            ? { ...s.desiredConfigByThread, [threadId]: desiredConfig }
+            : s.desiredConfigByThread,
       };
     }),
 

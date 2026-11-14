@@ -807,3 +807,54 @@ async fn invalid_desired_config_does_not_fail_prompt() {
     let run = runs.iter().find(|r| r.id == run_id).expect("run");
     assert_eq!(run.status, "finished", "a bad pick must not fail the turn");
 }
+
+/// Picking a config option while the run is live must not race the run's
+/// event sequence: the run finishes and the new value is echoed.
+#[tokio::test]
+async fn set_config_option_during_a_live_run_keeps_the_run_healthy() {
+    use crate::protocol::types::{ConfigOptionValue, SessionConfigOptionKind};
+    let (runtime, sink, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join("pult-m10-live-config");
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let thread = thread_record("th-live-config");
+        runtime.store().create_thread(&thread).expect("create thread");
+        let run = runtime.dispatch(&thread, "slow turn", &[], "mock").expect("dispatch");
+        runtime
+            .set_config_option(
+                "th-live-config",
+                "model",
+                ConfigOptionValue::String("mock-pro".into()),
+            )
+            .await
+            .expect("live pick");
+        (runtime, sink, run.id)
+    };
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(10), || {
+        runtime
+            .store()
+            .list_runs("th-live-config")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs("th-live-config").unwrap();
+    let run = runs.iter().find(|r| r.id == run_id).expect("run");
+    assert_eq!(run.status, "finished", "live config pick must not fail the run");
+    let kinds = kinds_of(&runtime, &run_id);
+    assert!(kinds.iter().any(|k| matches!(
+        k,
+        EventKind::ConfigOptions { options }
+            if options.iter().any(|o| o.id == "model" && matches!(
+                &o.kind,
+                SessionConfigOptionKind::Select { current_value, .. } if current_value == "mock-pro"
+            ))
+    )));
+}

@@ -120,6 +120,12 @@ describe("runs store", () => {
     expect(useRunsStore.getState().viewsByRun["r1"].configOptions?.[0].id).toBe("model");
   });
 
+  it("keeps desired config when a stale hydrate reports an empty map", () => {
+    useRunsStore.getState().setDesiredConfig("th", "model", "mock-pro");
+    useRunsStore.getState().hydrateThread("th", [], [], [], null, null, {});
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({ model: "mock-pro" });
+  });
+
   it("keeps desired config per thread and drops it with the thread", () => {
     useRunsStore.getState().setDesiredConfig("th", "model", "mock-pro");
     expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({

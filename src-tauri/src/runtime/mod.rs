@@ -134,6 +134,11 @@ pub enum AnswerPayload {
         action: ElicitationAction,
         content: Option<serde_json::Value>,
     },
+    /// Live config option switch; applied by the run loop (single event writer).
+    ConfigOption {
+        config_id: String,
+        value: ConfigOptionValue,
+    },
 }
 
 /// A permission request parked in the pending set, awaiting the UI.
@@ -470,7 +475,8 @@ impl AgentRuntime {
     }
 
     /// Applies a config option now (live run) and remembers it for the next
-    /// run. A rejecting agent is warned about, never treated as a failure.
+    /// run. The run loop is the single event writer, so a mid-run switch is
+    /// queued to it instead of racing its sequence counter.
     pub async fn set_config_option(
         &self,
         thread_id: &str,
@@ -484,54 +490,20 @@ impl AgentRuntime {
         let Some(run_id) = self.active_run_for(thread_id) else {
             return Ok(());
         };
-        let (conn, session_id, instance_id) = {
+        let tx = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
-            match inner.runs.get(&run_id) {
-                Some(state) => (
-                    Arc::clone(&state.conn),
-                    state.session_id.clone(),
-                    state.instance_id.clone(),
-                ),
-                None => return Ok(()),
-            }
+            inner.answer_queues.get(&run_id).cloned()
         };
-        match conn
-            .set_config_option(&session_id, config_id, value)
-            .await
-        {
-            Ok(result) => {
-                self.update_cached_config_options(&instance_id, result.config_options.clone());
-                if let Ok(seq) = self.store.next_seq(&run_id) {
-                    let event = Event::new(
-                        run_id.clone(),
-                        seq,
-                        EventKind::ConfigOptions {
-                            options: result.config_options,
-                        },
-                    );
-                    let _ = self.store.append_event(&event);
-                    self.emit_run_event(&run_id, &event);
-                }
-                Ok(())
-            }
-            Err(err) => {
-                tracing::warn!(target: "pult::runtime",
-                    config = %config_id, error = %err, "config option was not applied");
-                if let Ok(seq) = self.store.next_seq(&run_id) {
-                    let event = Event::new(
-                        run_id.clone(),
-                        seq,
-                        EventKind::Notice {
-                            level: "warning".to_string(),
-                            message: format!("The agent rejected {config_id}: {err}"),
-                        },
-                    );
-                    let _ = self.store.append_event(&event);
-                    self.emit_run_event(&run_id, &event);
-                }
-                Ok(())
-            }
+        if let Some(tx) = tx {
+            let _ = tx.send((
+                config_id.to_string(),
+                AnswerPayload::ConfigOption {
+                    config_id: config_id.to_string(),
+                    value,
+                },
+            ));
         }
+        Ok(())
     }
 
     /// Queue-aware send (§6.1 composer semantics): if the thread is working,
@@ -1128,8 +1100,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
 
     // Apply the thread's config picks to this fresh session, then tell the
     // timeline about the effective option set. A rejecting agent never kills
-    // the prompt (§5.4: stale picks must degrade, not fail).
-    for (config_id, value) in config {
+    // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
+    // first because agents narrow dependent options (thought level) when the
+    // model changes.
+    let mut picks: Vec<(String, ConfigOptionValue)> = config.into_iter().collect();
+    picks.sort_by_key(|(id, _)| match id.as_str() {
+        "model" => 0,
+        "thought_level" | "reasoning_effort" => 1,
+        _ => 2,
+    });
+    for (config_id, value) in picks {
         match conn
             .set_config_option(&session_id, &config_id, value)
             .await
@@ -1228,6 +1208,47 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                         elicitation_reply(action, content),
                                     )
                                     .await;
+                            }
+                        }
+                        AnswerPayload::ConfigOption { config_id, value } => {
+                            match conn
+                                .set_config_option(&session_id, &config_id, value)
+                                .await
+                            {
+                                Ok(result) => {
+                                    runtime.update_cached_config_options(
+                                        &instance_id,
+                                        result.config_options.clone(),
+                                    );
+                                    let event = Event::new(
+                                        run_id.clone(),
+                                        next_seq,
+                                        EventKind::ConfigOptions {
+                                            options: result.config_options,
+                                        },
+                                    );
+                                    next_seq += 1;
+                                    let _ = runtime.store.append_event(&event);
+                                    runtime.emit_run_event(&run_id, &event);
+                                }
+                                Err(err) => {
+                                    tracing::warn!(target: "pult::runtime",
+                                        config = %config_id, error = %err,
+                                        "live config option was not applied");
+                                    let event = Event::new(
+                                        run_id.clone(),
+                                        next_seq,
+                                        EventKind::Notice {
+                                            level: "warning".to_string(),
+                                            message: format!(
+                                                "The agent rejected {config_id}: {err}"
+                                            ),
+                                        },
+                                    );
+                                    next_seq += 1;
+                                    let _ = runtime.store.append_event(&event);
+                                    runtime.emit_run_event(&run_id, &event);
+                                }
                             }
                         }
                     }
