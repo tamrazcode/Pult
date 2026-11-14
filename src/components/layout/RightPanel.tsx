@@ -76,7 +76,7 @@ export function RightPanel({ width }: { width: number }) {
   return (
     <aside
       style={{ width }}
-      className="flex shrink-0 flex-col border-l border-border-subtle bg-chrome"
+      className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
       <div className="flex items-center gap-1 border-b border-border-subtle px-2 py-1.5">
         {TABS.map(({ id, label, icon: Icon }) => (

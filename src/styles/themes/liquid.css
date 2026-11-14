@@ -1,0 +1,68 @@
+/* pult Liquid Glass theme (v2): deep blue-black opaque base plus a translucent
+   glass layer that is only enabled where backdrop-filter exists. Text pairs
+   pass the same §6.6 contrast tests as the other themes. */
+:root[data-theme="liquid"] {
+  --canvas: #0b0e14;
+  --panel-bg: #141923;
+  --chrome: #121722;
+  --surface: #171d2b;
+  --surface-raised: #1e2638;
+  --input: #232c40;
+  --hover: rgba(255, 255, 255, 0.05);
+  --active: rgba(255, 255, 255, 0.09);
+  --border-subtle: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.2);
+  --text-primary: #f4f6fb;
+  --text-secondary: #b4bdd0;
+  --text-tertiary: #8d99b0;
+  --accent: #346bf1;
+  --accent-hover: #4f7cff;
+  --accent-fg: #ffffff;
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #ff6369;
+  --info: #7dd3fc;
+  --diff-add-bg: rgba(52, 211, 153, 0.16);
+  --diff-add-fg: #34d399;
+  --diff-del-bg: rgba(255, 99, 105, 0.16);
+  --diff-del-fg: #ff6369;
+  --code-bg: #10151f;
+  --mention-bg: color-mix(in oklab, var(--accent) 16%, transparent);
+  --composer-blur: 22px;
+  --composer-tint: rgba(23, 29, 43, 0.62);
+
+  --glass-panel: rgba(20, 25, 35, 0.72);
+  --glass-surface: rgba(30, 38, 56, 0.68);
+  --glass-blur: 18px;
+  --glass-saturate: 1.35;
+  --glass-border: rgba(255, 255, 255, 0.12);
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  :root[data-theme="liquid"] .glass-panel {
+    background: var(--glass-panel);
+    border-color: var(--glass-border);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+
+  :root[data-theme="liquid"] .glass-surface,
+  :root[data-theme="liquid"] [data-glass] {
+    background: var(--glass-surface);
+    border-color: var(--glass-border);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+}
+
+/* No transparency requested: keep the same colors, fully opaque, no blur. */
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-theme="liquid"] {
+    --glass-panel: #141923;
+    --glass-surface: #171d2b;
+    --glass-blur: 0px;
+    --glass-saturate: 1;
+    --composer-tint: #171d2b;
+    --composer-blur: 0px;
+  }
+}

@@ -146,6 +146,13 @@ export const STATIC_COMMANDS: Command[] = [
     keywords: "switch theme monochrome",
     run: () => useSettingsStore.getState().setTheme("graphite"),
   },
+  {
+    id: "theme.liquid",
+    title: "Theme: Liquid Glass",
+    section: "Appearance",
+    keywords: "switch theme glass blur translucent",
+    run: () => useSettingsStore.getState().setTheme("liquid"),
+  },
 ];
 
 /**

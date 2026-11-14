@@ -2,6 +2,7 @@
    everything else neutral. Text pairs ≥ 4.5:1 (tests/theme-contrast.test.ts). */
 :root[data-theme="graphite"] {
   --canvas: #0d0d0d;
+  --panel-bg: #141414;
   --chrome: #111111;
   --surface: #161616;
   --surface-raised: #1b1b1b;

@@ -5,6 +5,7 @@ export const THEMES: { id: ThemeName; label: string }[] = [
   { id: "dark", label: "Dark" },
   { id: "light", label: "Light" },
   { id: "graphite", label: "Graphite" },
+  { id: "liquid", label: "Liquid Glass" },
 ];
 
 /** Accent presets (hue values for `hsl(h s% l%)`) plus the "stock" reset. */

@@ -4,7 +4,7 @@ import { isTauri } from "../lib/tauri";
 import { applyTheme } from "../lib/theme";
 
 export type PermissionMode = "supervised" | "auto_edit" | "auto" | "full_access";
-export type ThemeName = "dark" | "light" | "graphite";
+export type ThemeName = "dark" | "light" | "graphite" | "liquid";
 
 /** Human-readable labels for permission modes (raw enum ids are not user-facing copy). */
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
@@ -29,7 +29,7 @@ interface SettingsState {
 }
 
 const isThemeName = (v: unknown): v is ThemeName =>
-  v === "dark" || v === "light" || v === "graphite";
+  v === "dark" || v === "light" || v === "graphite" || v === "liquid";
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: "dark",

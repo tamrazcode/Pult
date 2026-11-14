@@ -397,7 +397,7 @@ export function Sidebar({ width }: { width: number }) {
   return (
     <aside
       style={{ width }}
-      className="flex shrink-0 flex-col border-r border-border-subtle bg-chrome"
+      className="glass-panel flex shrink-0 flex-col border-r border-border-subtle bg-panel"
     >
       <div className="flex items-center gap-2 px-3 pt-3 pb-2">
         <span className="flex min-w-0 flex-1 items-center gap-2">

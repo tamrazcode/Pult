@@ -3,11 +3,13 @@
 @import "./tokens.css";
 @import "./themes/light.css";
 @import "./themes/graphite.css";
+@import "./themes/liquid.css";
 
 /* Map raw tokens onto Tailwind theme namespaces: generates utilities like
    bg-canvas, text-text-secondary, border-border-strong, font-ui. */
 @theme inline {
   --color-canvas: var(--canvas);
+  --color-panel: var(--panel-bg);
   --color-chrome: var(--chrome);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);

@@ -5,6 +5,7 @@
    Components consume these via Tailwind arbitrary values or var(), never hex. */
 :root {
   --canvas: #000000;
+  --panel-bg: #0c0c0c;
   --chrome: #0a0a0a;
   --surface: #111111;
   --surface-raised: #141414;

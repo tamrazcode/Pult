@@ -22,7 +22,11 @@ function AppearanceSettings() {
       <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
         Theme
       </h2>
-      <div className="mt-2 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Theme">
+      <div
+        className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"
+        role="radiogroup"
+        aria-label="Theme"
+      >
         {THEMES.map(({ id, label }) => (
           <button
             key={id}
