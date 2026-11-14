@@ -9,6 +9,7 @@ import {
   RefreshCw,
   Upload,
 } from "lucide-react";
+import { openExternalUrl } from "../../lib/ipc";
 import { useGitStore } from "../../stores/git";
 import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
@@ -361,14 +362,12 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           </span>
           {state.pushedSha === state.lastCommit.sha && <span>· pushed</span>}
           {state.prUrl && (
-            <a
-              href={state.prUrl}
-              target="_blank"
-              rel="noreferrer"
+            <button
+              onClick={() => void openExternalUrl(state.prUrl!)}
               className="ml-auto truncate text-accent hover:underline"
             >
               {state.prUrl}
-            </a>
+            </button>
           )}
         </div>
       )}

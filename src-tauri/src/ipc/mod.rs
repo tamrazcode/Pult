@@ -511,3 +511,69 @@ use crate::runtime::ThreadUpdatedPayload as _UnusedImport;
 // (kept as a compile-time re-export check of the payload type used in events)
 #[allow(unused_imports)]
 use _UnusedImport as _;
+
+/// External links (elicitation URL mode, PR links) may only be http(s). The
+/// URL is passed as a single argv element, never through a shell.
+pub fn validate_external_url(url: &str) -> Result<(), PultError> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(PultError::internal("empty URL"));
+    }
+    if trimmed.len() > 2048 {
+        return Err(PultError::internal("URL is too long"));
+    }
+    if trimmed.chars().any(char::is_control) {
+        return Err(PultError::internal("URL contains control characters"));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return Err(PultError::internal(
+            "only http(s) links can be opened in the browser",
+        ));
+    }
+    Ok(())
+}
+
+/// Opens an http(s) link in the system browser (no in-app webview, no shell).
+#[tauri::command]
+pub fn open_external_url(url: String) -> Result<(), PultError> {
+    validate_external_url(&url)?;
+    let url = url.trim();
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("rundll32.exe");
+        command.arg("url.dll,FileProtocolHandler").arg(url);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(url);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(url);
+        command
+    };
+    command
+        .spawn()
+        .map_err(|e| PultError::internal(format!("could not open the browser: {e}")))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod external_url_tests {
+    use super::validate_external_url;
+
+    #[test]
+    fn validate_external_url_allows_http_https_and_rejects_others() {
+        assert!(validate_external_url("https://example.com/auth?a=1&b=2").is_ok());
+        assert!(validate_external_url("  http://localhost:8080/callback  ").is_ok());
+        assert!(validate_external_url("file:///C:/Windows").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+        assert!(validate_external_url("").is_err());
+        assert!(validate_external_url("https://example.com/\nnext").is_err());
+    }
+}

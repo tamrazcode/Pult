@@ -4,6 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { ElicitationModal } from "../src/components/chat/ElicitationModal";
 import type { ElicitationRequest } from "../src/components/chat/ElicitationModal";
 
+const { openExternalUrl } = vi.hoisted(() => ({ openExternalUrl: vi.fn() }));
+
+vi.mock("../src/lib/ipc", async (importOriginal) => {
+  const actual = (await importOriginal()) as Record<string, unknown>;
+  return { ...actual, openExternalUrl };
+});
+
 const MESSAGE = "The agent needs input to continue";
 
 function makeRequest(
@@ -100,7 +107,8 @@ describe("ElicitationModal", () => {
     expect(onSubmit).toHaveBeenCalledWith("accept", { count: 42, flag: true });
   });
 
-  it("url mode: shows the url and Open URL reports accept", async () => {
+  it("url mode: opens the link before accepting", async () => {
+    openExternalUrl.mockReset().mockResolvedValue(undefined);
     const onSubmit = vi.fn();
     render(
       <ElicitationModal
@@ -112,10 +120,27 @@ describe("ElicitationModal", () => {
     expect(screen.getByText("https://example.com/connect")).toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "Open URL" }));
+    expect(openExternalUrl).toHaveBeenCalledWith("https://example.com/connect");
     expect(onSubmit).toHaveBeenCalledOnce();
     expect(onSubmit).toHaveBeenCalledWith("accept");
 
     expect(screen.getByRole("button", { name: "Decline" })).toBeVisible();
+  });
+
+  it("url mode: a failed open shows the error and does not accept", async () => {
+    openExternalUrl.mockReset().mockRejectedValue(new Error("no browser"));
+    const onSubmit = vi.fn();
+    render(
+      <ElicitationModal
+        request={makeRequest({ mode: "url", url: "https://example.com/connect" })}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Open URL" }));
+    expect(openExternalUrl).toHaveBeenCalledOnce();
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(/no browser/);
   });
 
   it("unknown mode: shows the hint and Decline reports decline", async () => {

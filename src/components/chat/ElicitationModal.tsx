@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from "react";
 import { Button } from "../ui/button";
+import { ipcErrorMessage, openExternalUrl } from "../../lib/ipc";
 
 export interface ElicitationRequest {
   runId: string;
@@ -130,6 +131,7 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
   const [values, setValues] = useState<Record<string, FieldValue>>(() =>
     initialValues(fields ?? []),
   );
+  const [urlError, setUrlError] = useState<string | null>(null);
 
   const url = typeof detail.url === "string" && detail.url !== "" ? detail.url : null;
   const isForm = fields !== null;
@@ -158,6 +160,17 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
       if (value !== undefined) content[field.name] = value;
     }
     onSubmit("accept", content);
+  };
+
+  const openUrl = async () => {
+    if (!url) return;
+    setUrlError(null);
+    try {
+      await openExternalUrl(url);
+      onSubmit("accept");
+    } catch (err) {
+      setUrlError(ipcErrorMessage(err));
+    }
   };
 
   return (
@@ -271,9 +284,16 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
             })}
 
           {isUrl && (
-            <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs break-all whitespace-pre-wrap text-text-secondary">
-              {url}
-            </pre>
+            <>
+              <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs break-all whitespace-pre-wrap text-text-secondary">
+                {url}
+              </pre>
+              {urlError && (
+                <p role="alert" className="text-xs text-danger">
+                  {urlError}
+                </p>
+              )}
+            </>
           )}
 
           {!isForm && !isUrl && (
@@ -287,7 +307,7 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
             </Button>
           )}
           {isUrl && (
-            <Button variant="primary" onClick={() => onSubmit("accept")}>
+            <Button variant="primary" onClick={() => void openUrl()}>
               Open URL
             </Button>
           )}

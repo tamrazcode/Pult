@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { GitPullRequest } from "lucide-react";
+import { openExternalUrl } from "../lib/ipc";
 import { useGitStore } from "../stores/git";
 
 export const Route = createFileRoute("/pull-requests")({ component: PullRequestsPage });
@@ -35,14 +36,12 @@ function PullRequestsPage() {
                     from thread “{pr.threadTitle}”
                   </p>
                 </div>
-                <a
-                  href={pr.url}
-                  target="_blank"
-                  rel="noreferrer"
+                <button
+                  onClick={() => void openExternalUrl(pr.url)}
                   className="shrink-0 font-mono text-xs text-accent hover:underline"
                 >
                   {pr.url}
-                </a>
+                </button>
               </li>
             ))}
         </ul>

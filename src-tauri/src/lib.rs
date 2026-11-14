@@ -154,6 +154,7 @@ pub fn run() {
             ipc::providers_detect_installed,
             ipc::providers_instances_save,
             ipc::workspace_files,
+            ipc::open_external_url,
             ipc::runs_set_mode,
             ipc::diagnostics_frames,
             ipc::settings_get,

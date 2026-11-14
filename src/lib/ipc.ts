@@ -223,6 +223,15 @@ export function diagnosticsFrames(instanceId: string): Promise<string[]> {
   return invokeRequired<string[]>("diagnostics_frames", { instanceId });
 }
 
+/** Opens an http(s) link in the system browser (external, never a shell). */
+export function openExternalUrl(url: string): Promise<void> {
+  if (!isTauri()) {
+    window.open(url, "_blank", "noopener,noreferrer");
+    return Promise.resolve();
+  }
+  return invokeRequired<void>("open_external_url", { url });
+}
+
 // ---- settings (§4.5) ----
 
 /** Reads one JSON setting; null outside Tauri or when unset. */
