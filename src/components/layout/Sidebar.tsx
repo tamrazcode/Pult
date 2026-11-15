@@ -20,6 +20,7 @@ import {
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
 import {
+  ipcErrorMessage,
   providersUpdateCheck,
   providersUpdateInstall,
   runsCancel,
@@ -227,6 +228,15 @@ function ProjectRow({
   );
 }
 
+/** One line naming the provider and version transition being installed. */
+export function formatUpdateProgress(update: ProviderUpdate): string {
+  if (update.current && update.latest) {
+    return `Updating ${update.displayName} ${update.current} -> ${update.latest}`;
+  }
+  if (update.latest) return `Updating ${update.displayName} to ${update.latest}`;
+  return `Updating ${update.displayName}…`;
+}
+
 export function Sidebar({ width }: { width: number }) {
   const projects = useProjectsStore((s) => s.projects);
   const threads = useThreadsStore((s) => s.threads);
@@ -243,6 +253,8 @@ export function Sidebar({ width }: { width: number }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [updates, setUpdates] = useState<ProviderUpdate[]>([]);
   const [installing, setInstalling] = useState(false);
+  const [activeUpdate, setActiveUpdate] = useState<ProviderUpdate | null>(null);
+  const [updateErrors, setUpdateErrors] = useState<Record<string, string>>({});
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -250,6 +262,19 @@ export function Sidebar({ width }: { width: number }) {
     thread?: Thread;
   } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
+  const failedUpdates = updates.filter((update) => updateErrors[update.instanceId]);
+  const updateErrorText = failedUpdates
+    .map((update) => `${update.displayName}: ${updateErrors[update.instanceId]}`)
+    .join("\n");
+  const updateLabel = installing
+    ? activeUpdate
+      ? formatUpdateProgress(activeUpdate)
+      : "Updating providers…"
+    : failedUpdates.length > 0
+      ? updateErrorText
+      : updates.length > 0
+        ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
+        : "Check provider updates";
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -296,23 +321,51 @@ export function Sidebar({ width }: { width: number }) {
     void useUiStore.getState().loadInstances();
     if (!isTauri()) return;
     void providersUpdateCheck()
-      .then(setUpdates)
+      .then((next) => {
+        setUpdates(next);
+        if (next.length === 0) setUpdateErrors({});
+      })
       .catch(() => setUpdates([]));
   };
 
   const installUpdates = () => {
     if (installing) return;
+    const pending = [...updates];
     setInstalling(true);
     void (async () => {
-      for (const update of updates) {
+      const failed: Array<{ update: ProviderUpdate; message: string }> = [];
+      for (const update of pending) {
+        setActiveUpdate(update);
         try {
           await providersUpdateInstall(update.instanceId);
+          setUpdateErrors((prev) => {
+            if (!(update.instanceId in prev)) return prev;
+            const next = { ...prev };
+            delete next[update.instanceId];
+            return next;
+          });
         } catch (err) {
-          console.error("provider update failed", err);
+          const message = ipcErrorMessage(err);
+          failed.push({ update, message });
+          setUpdateErrors((prev) => ({ ...prev, [update.instanceId]: message }));
         }
       }
-      setUpdates([]);
-      refresh();
+      setActiveUpdate(null);
+
+      let fresh: ProviderUpdate[] = [];
+      try {
+        fresh = await providersUpdateCheck();
+      } catch (err) {
+        console.error("provider update check failed", err);
+      }
+      const merged = [...fresh];
+      for (const { update } of failed) {
+        if (!merged.some((candidate) => candidate.instanceId === update.instanceId)) {
+          merged.push(update);
+        }
+      }
+      setUpdates(merged);
+      if (merged.length === 0) setUpdateErrors({});
       setInstalling(false);
     })();
   };
@@ -595,71 +648,79 @@ export function Sidebar({ width }: { width: number }) {
         })}
       </nav>
 
-      <footer className="flex items-center gap-1 border-t border-border-subtle p-2">
-        <Tooltip label="Settings">
-          <button
-            type="button"
-            aria-label="Settings"
-            onClick={() => void router.navigate({ to: "/settings/appearance" })}
-            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+      <footer className="border-t border-border-subtle p-2">
+        <div className="flex items-center gap-1">
+          <Tooltip label="Settings">
+            <button
+              type="button"
+              aria-label="Settings"
+              onClick={() => void router.navigate({ to: "/settings/appearance" })}
+              className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <Settings size={16} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Pull requests">
+            <button
+              type="button"
+              aria-label="Pull requests"
+              onClick={() => void router.navigate({ to: "/pull-requests" })}
+              className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <GitPullRequest size={16} />
+            </button>
+          </Tooltip>
+          <Tooltip label="Usage">
+            <button
+              type="button"
+              aria-label="Usage"
+              onClick={() => void router.navigate({ to: "/usage" })}
+              className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <BarChart3 size={16} />
+            </button>
+          </Tooltip>
+          <Tooltip label={updateLabel}>
+            <button
+              type="button"
+              aria-label="Refresh"
+              title={updateLabel}
+              onClick={updates.length > 0 ? installUpdates : refresh}
+              className="relative flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              {installing ? (
+                <Loader2 size={15} className="animate-spin" />
+              ) : updates.length > 0 ? (
+                <Download size={15} className="text-accent" />
+              ) : (
+                <RefreshCw size={15} />
+              )}
+              {updates.length > 0 && !installing && (
+                <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent" />
+              )}
+            </button>
+          </Tooltip>
+        </div>
+        {installing && activeUpdate && (
+          <p
+            role="status"
+            data-update-progress
+            className="truncate px-1 pt-1 text-xs text-text-secondary"
+            title={formatUpdateProgress(activeUpdate)}
           >
-            <Settings size={16} />
-          </button>
-        </Tooltip>
-        <Tooltip label="Pull requests">
-          <button
-            type="button"
-            aria-label="Pull requests"
-            onClick={() => void router.navigate({ to: "/pull-requests" })}
-            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            {formatUpdateProgress(activeUpdate)}
+          </p>
+        )}
+        {!installing && failedUpdates.length > 0 && (
+          <p
+            role="alert"
+            data-update-error
+            className="truncate px-1 pt-1 text-xs text-danger"
+            title={updateErrorText}
           >
-            <GitPullRequest size={16} />
-          </button>
-        </Tooltip>
-        <Tooltip label="Usage">
-          <button
-            type="button"
-            aria-label="Usage"
-            onClick={() => void router.navigate({ to: "/usage" })}
-            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            <BarChart3 size={16} />
-          </button>
-        </Tooltip>
-        <Tooltip
-          label={
-            installing
-              ? "Updating providers…"
-              : updates.length > 0
-                ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
-                : "Check provider updates"
-          }
-        >
-          <button
-            type="button"
-            aria-label="Refresh"
-            title={
-              installing
-                ? "Updating providers…"
-                : updates.length > 0
-                  ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
-                  : "Check provider updates"
-            }
-            onClick={updates.length > 0 ? installUpdates : refresh}
-            className="relative flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            {installing ? (
-              <Loader2 size={15} className="animate-spin" />
-            ) : updates.length > 0 ? (
-              <Download size={15} className="text-accent" />
-            ) : (
-              <RefreshCw size={15} />
-            )}
-            {updates.length > 0 && !installing && (
-              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent" />
-            )}
-          </button>
-        </Tooltip>
+            {failedUpdates[0].displayName}: {updateErrors[failedUpdates[0].instanceId]}
+          </p>
+        )}
       </footer>
 
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />
