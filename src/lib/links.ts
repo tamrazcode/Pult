@@ -24,7 +24,15 @@ export function classifyMarkdownHref(
   if (!raw) return { kind: "unsupported", raw };
   if (raw.startsWith("#")) return { kind: "anchor", id: raw.slice(1) };
 
-  if (/^https?:\/\//i.test(raw)) {
+  const drivePath = /^[a-zA-Z]:[\\/]/.test(raw);
+  const scheme = drivePath
+    ? undefined
+    : /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(raw)?.[1]?.toLowerCase();
+  if (scheme && scheme !== "http" && scheme !== "https" && scheme !== "file") {
+    return { kind: "unsupported", raw };
+  }
+
+  if (scheme === "http" || scheme === "https") {
     try {
       const url = new URL(raw);
       if (url.hostname) return { kind: "external", url: raw };
@@ -33,13 +41,24 @@ export function classifyMarkdownHref(
     }
     return { kind: "unsupported", raw };
   }
-  if (/^(mailto|javascript|data|vbscript|file):/i.test(raw) && !raw.startsWith("file://")) {
+
+  let path = raw;
+  if (scheme === "file") {
+    try {
+      const url = new URL(raw);
+      if (url.host && url.host !== "localhost") return { kind: "unsupported", raw };
+    } catch {
+      return { kind: "unsupported", raw };
+    }
+    path = fileUrlToPath(raw);
+  }
+  path = path.split("#")[0].split("?")[0].replace(/\\/g, "/");
+  if (!path || path.startsWith("/") || path.startsWith("//")) {
     return { kind: "unsupported", raw };
   }
-
-  let path = raw.startsWith("file://") ? fileUrlToPath(raw) : raw;
-  path = path.split("#")[0].split("?")[0].replace(/\\/g, "/");
-  if (!path || path.startsWith("//")) return { kind: "unsupported", raw };
+  if (path.split("/").some((part) => part === "..")) {
+    return { kind: "unsupported", raw };
+  }
 
   let relative: string;
   const root = workspaceRoot?.replace(/[\\/]+$/, "").replace(/\\/g, "/");
@@ -52,7 +71,6 @@ export function classifyMarkdownHref(
     }
     relative = path.slice(root.length).replace(/^\/+/, "");
   } else {
-    if (/^\.\.(\/|$)/.test(path)) return { kind: "unsupported", raw };
     relative = path.replace(/^\.\//, "");
   }
   if (!relative) return { kind: "unsupported", raw };

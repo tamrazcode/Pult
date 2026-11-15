@@ -793,10 +793,24 @@ impl AgentRuntime {
         self.emit_queue_updated(thread_id);
         if let Some(run_id) = self.active_run_for(thread_id) {
             if let Err(err) = self.cancel(&run_id) {
-                tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed");
-                if self.active_run_for(thread_id).is_none() {
-                    self.auto_dispatch_queue(thread_id);
-                }
+                tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed; retrying");
+                // The run may still be finishing its handshake, so its live
+                // connection is not registered yet. Retry off the caller.
+                let runtime = self.clone();
+                let thread_id = thread_id.to_string();
+                tokio::spawn(async move {
+                    for _ in 0..100 {
+                        if runtime.active_run_for(&thread_id).is_none() {
+                            runtime.auto_dispatch_queue(&thread_id);
+                            return;
+                        }
+                        if runtime.cancel(&run_id).is_ok() {
+                            return;
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                    }
+                    tracing::warn!(target: "pult::runtime", "steer could not cancel the active run");
+                });
             }
         } else {
             self.auto_dispatch_queue(thread_id);

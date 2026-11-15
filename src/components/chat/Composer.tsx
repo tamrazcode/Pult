@@ -165,10 +165,12 @@ async function fileToTextChip(file: File): Promise<FileChip | null> {
 function withFileAttachments(text: string, files: FileChip[]): string {
   if (files.length === 0) return text;
   const blocks = files
-    .map(
-      (file) =>
-        `Attached file: ${file.name}${file.truncated ? " (truncated)" : ""}\n\`\`\`\n${file.text}\n\`\`\``,
-    )
+    .map((file) => {
+      const name = file.name.replace(/[\r\n`]/g, " ").trim() || "attachment";
+      const longestRun = Math.max(0, ...(file.text.match(/`+/g) ?? []).map((run) => run.length));
+      const fence = "`".repeat(Math.max(3, longestRun + 1));
+      return `Attached file: ${name}${file.truncated ? " (truncated)" : ""}\n${fence}\n${file.text}\n${fence}`;
+    })
     .join("\n\n");
   return [text, blocks].filter(Boolean).join("\n\n");
 }

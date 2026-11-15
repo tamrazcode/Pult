@@ -148,4 +148,39 @@ describe("BrowserPanel", () => {
     expect(alert).toBeInTheDocument();
     expect(screen.queryByTitle("Browser preview")).toBeNull();
   });
+
+  it("clears stale srcDoc when navigating to an http URL or going Back to one and omits allow-same-origin", async () => {
+    render(<BrowserPanel threadId="th" />);
+
+    navigateTo("dist/preview.html");
+    await waitFor(() => {
+      const iframe = screen.getByTitle("Browser preview");
+      expect(iframe.getAttribute("srcdoc")).toContain("Local Preview");
+    });
+
+    navigateTo("http://localhost:5173/page");
+    await waitFor(() => {
+      const iframe = screen.getByTitle("Browser preview");
+      expect(iframe).toHaveAttribute("src", "http://localhost:5173/page");
+      expect(iframe).not.toHaveAttribute("srcdoc");
+      expect(document.querySelector("iframe[srcdoc]")).toBeNull();
+      expect(iframe.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    });
+
+    navigateTo("dist/second.html");
+    await waitFor(() => {
+      expect(screen.getByTitle("Browser preview").getAttribute("srcdoc")).toContain(
+        "Local Preview",
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() => {
+      const iframe = screen.getByTitle("Browser preview");
+      expect(iframe).toHaveAttribute("src", "http://localhost:5173/page");
+      expect(iframe).not.toHaveAttribute("srcdoc");
+      expect(document.querySelector("iframe[srcdoc]")).toBeNull();
+      expect(iframe.getAttribute("sandbox")).not.toContain("allow-same-origin");
+    });
+  });
 });

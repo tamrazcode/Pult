@@ -294,4 +294,32 @@ describe("composer attachments", () => {
       /truncat/i.test(container.textContent ?? "") || /truncat/i.test(dispatchedText);
     expect(hasVisibleMarker).toBe(true);
   });
+
+  it("wraps text files containing backtick fences in a longer fence and sanitizes backticks in the filename", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance({ promptImage: false })],
+    });
+
+    const { container } = render(<Composer threadId="th" />);
+    const { input } = getAttachControls(container);
+    const body = "before\n```\nfake close\n```\nafter";
+    const trickyFile = new File([body], "a```b.md", { type: "text/markdown" });
+
+    await user.upload(input, trickyFile);
+
+    await waitFor(() => {
+      const chip = container.querySelector("[data-file-chip]");
+      expect(chip).toBeTruthy();
+    });
+
+    await user.click(within(container).getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(runsDispatch).toHaveBeenCalledTimes(1));
+    const dispatchedText = String(runsDispatch.mock.calls[0]?.[1] ?? "");
+    expect(dispatchedText).toContain("Attached file: a   b.md");
+    expect(dispatchedText).not.toContain("a```b.md");
+    expect(dispatchedText).toMatch(/`{4,}\n[\s\S]*before\n```\nfake close\n```\nafter\n`{4,}/);
+  });
 });

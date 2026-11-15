@@ -392,7 +392,7 @@ const COMPONENTS: Components = {
             openWorkspace();
             return;
           }
-          if (link.kind === "unsupported" && /^(javascript|data|vbscript):/i.test(href)) {
+          if (link.kind === "unsupported") {
             event.preventDefault();
           }
         }}

@@ -212,4 +212,14 @@ describe("Floating ProjectInfoWidget", () => {
     expect(useUiStore.getState().rightPanelOpen).toBe(false);
     expect(screen.getByRole("button", { name: /Commit & push/i })).toBeInTheDocument();
   });
+
+  it("does not clip the editor dropdown with overflow-hidden on the widget root aside", () => {
+    render(<ChatColumn title="Widget thread" threadId="th" />);
+
+    const aside = screen.getByRole("complementary", { name: "Project info" });
+    expect(aside).not.toHaveClass("overflow-hidden");
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose editor" }));
+    expect(screen.getByRole("menu", { name: "Editor" })).toBeInTheDocument();
+  });
 });

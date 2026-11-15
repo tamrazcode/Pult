@@ -90,6 +90,7 @@ fn mock_runtime() -> (Arc<AgentRuntime>, Arc<TestSink>) {
     let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
     let sink = Arc::new(TestSink::default());
     let runtime = Arc::new(AgentRuntime::new(store, Arc::clone(&sink) as Arc<dyn EventSink>));
+    runtime.set_instances_in_memory(vec![crate::config::mock_spec()]);
     (runtime, sink)
 }
 

@@ -27,6 +27,13 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
 
   const current = index >= 0 ? history[index] : null;
 
+  const jumpTo = (next: number) => {
+    setHtml(null);
+    setEmbed(null);
+    setError(null);
+    setIndex(next);
+  };
+
   const navigate = async (raw: string) => {
     setError(null);
     setEmbed(null);
@@ -57,6 +64,9 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
     const entry = history[index];
     if (!entry) return;
     let cancelled = false;
+    setHtml(null);
+    setEmbed(null);
+    setError(null);
     setChecking(true);
     if (entry.kind === "file") {
       if (!threadId) {
@@ -113,7 +123,7 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
           aria-label="Back"
           title="Back"
           disabled={index <= 0}
-          onClick={() => setIndex((value) => Math.max(0, value - 1))}
+          onClick={() => jumpTo(Math.max(0, index - 1))}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
           <ArrowLeft size={13} />
@@ -123,7 +133,7 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
           aria-label="Forward"
           title="Forward"
           disabled={index >= history.length - 1}
-          onClick={() => setIndex((value) => Math.min(history.length - 1, value + 1))}
+          onClick={() => jumpTo(Math.min(history.length - 1, index + 1))}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
           <ArrowRight size={13} />
@@ -205,7 +215,7 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
           <iframe
             key={`${index}-${reloadKey}`}
             title="Browser preview"
-            sandbox="allow-scripts allow-forms allow-same-origin"
+            sandbox="allow-scripts allow-forms"
             src={current.target}
             className="h-full w-full border-0 bg-white"
           />

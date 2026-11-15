@@ -79,7 +79,7 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
   return (
     <aside
       aria-label="Project info"
-      className="pointer-events-auto absolute top-3 right-3 z-20 w-72 overflow-hidden rounded-(--radius-md) border border-border-strong bg-surface-raised/95 shadow-(--shadow-composer) backdrop-blur"
+      className="pointer-events-auto absolute top-3 right-3 z-20 w-72 rounded-(--radius-md) border border-border-strong bg-surface-raised/95 shadow-(--shadow-composer) backdrop-blur"
     >
       <button
         type="button"

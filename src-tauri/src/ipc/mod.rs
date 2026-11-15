@@ -529,7 +529,7 @@ pub fn runs_queue_reorder(
 }
 
 #[tauri::command]
-pub fn runs_queue_steer(
+pub async fn runs_queue_steer(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
     queue_id: String,
@@ -963,7 +963,7 @@ pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultEr
     if raw.is_empty() {
         return Err(PultError::internal("empty editor path"));
     }
-    if raw.starts_with("\\\\") {
+    if raw.starts_with("\\\\") || raw.starts_with("//") {
         return Err(PultError::internal("UNC paths are not allowed"));
     }
     let target = std::path::Path::new(raw)
@@ -991,9 +991,12 @@ pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultEr
 
     #[cfg(target_os = "windows")]
     let mut command = {
+        use std::os::windows::process::CommandExt;
         let mut command = std::process::Command::new("explorer.exe");
         if requested == "explorer" && target.is_file() {
-            command.arg(format!("/select,{}", target.display()));
+            // Explorer needs /select,"path" as one raw token; normal arg
+            // quoting puts the quote before /select.
+            command.raw_arg(format!("/select,\"{}\"", target.display()));
         } else {
             command.arg(&target);
         }
@@ -1450,10 +1453,62 @@ pub struct EmbedCheck {
 }
 
 #[tauri::command]
-pub fn browser_check_frame_headers(url: String) -> Result<EmbedCheck, PultError> {
-    validate_external_url(&url)?;
+pub async fn browser_check_frame_headers(url: String) -> Result<EmbedCheck, PultError> {
+    tokio::task::spawn_blocking(move || check_frame_headers(&url))
+        .await
+        .map_err(|e| PultError::internal(format!("header check failed: {e}")))?
+}
+
+fn parse_frame_headers(raw: &str) -> EmbedCheck {
+    let headers = raw.replace("\r\n", "\n").to_ascii_lowercase();
+    // Follow redirects and inspect the final response block only.
+    let final_block = headers
+        .split("\n\n")
+        .filter(|block| !block.is_empty())
+        .last()
+        .unwrap_or("");
+    let xfo = final_block
+        .lines()
+        .find(|line| line.starts_with("x-frame-options:"))
+        .unwrap_or("");
+    if xfo.contains("deny") || xfo.contains("sameorigin") {
+        return EmbedCheck {
+            embeddable: false,
+            reason: Some("Blocked by X-Frame-Options".to_string()),
+        };
+    }
+    let csp = final_block
+        .lines()
+        .find(|line| line.starts_with("content-security-policy:") && line.contains("frame-ancestors"))
+        .unwrap_or("");
+    let mut allowed = true;
+    if !csp.is_empty() {
+        let directive = csp
+            .split("frame-ancestors")
+            .nth(1)
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim();
+        allowed = directive.split_whitespace().any(|token| token == "*");
+    }
+    if !allowed {
+        return EmbedCheck {
+            embeddable: false,
+            reason: Some("Blocked by Content-Security-Policy frame-ancestors".to_string()),
+        };
+    }
+    EmbedCheck {
+        embeddable: true,
+        reason: None,
+    }
+}
+
+fn check_frame_headers(url: &str) -> Result<EmbedCheck, PultError> {
+    validate_external_url(url)?;
     let output = std::process::Command::new("curl")
-        .args(["-sI", "-L", "--max-time", "5", &url])
+        .args(["-sIL", "--max-time", "5", url])
         .output();
     let Ok(output) = output else {
         return Ok(EmbedCheck {
@@ -1461,31 +1516,7 @@ pub fn browser_check_frame_headers(url: String) -> Result<EmbedCheck, PultError>
             reason: None,
         });
     };
-    let headers = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
-    let xfo = headers
-        .lines()
-        .find(|line| line.starts_with("x-frame-options:"))
-        .unwrap_or("");
-    if xfo.contains("deny") || xfo.contains("sameorigin") {
-        return Ok(EmbedCheck {
-            embeddable: false,
-            reason: Some("Blocked by X-Frame-Options".to_string()),
-        });
-    }
-    let csp = headers
-        .lines()
-        .find(|line| line.starts_with("content-security-policy:") && line.contains("frame-ancestors"))
-        .unwrap_or("");
-    if !csp.is_empty() && !csp.contains("frame-ancestors *") {
-        return Ok(EmbedCheck {
-            embeddable: false,
-            reason: Some("Blocked by Content-Security-Policy frame-ancestors".to_string()),
-        });
-    }
-    Ok(EmbedCheck {
-        embeddable: true,
-        reason: None,
-    })
+    Ok(parse_frame_headers(&String::from_utf8_lossy(&output.stdout)))
 }
 
 /// Reads an HTML file from the thread workspace for the browser surface.
@@ -1620,3 +1651,69 @@ mod payload_cap_tests {
 
 #[cfg(test)]
 mod workspace_tree_tests;
+
+#[cfg(test)]
+mod security_regression_tests {
+    use super::{open_in_editor, parse_frame_headers};
+
+    #[test]
+    fn open_in_editor_rejects_unc_paths_before_filesystem_lookup() {
+        let err = open_in_editor("//server/share".to_string(), None)
+            .expect_err("expected UNC forward-slash path to be rejected");
+        assert!(err.to_string().contains("UNC paths are not allowed"), "got: {err}");
+
+        let err_backslash = open_in_editor("\\\\server\\share".to_string(), None)
+            .expect_err("expected UNC backslash path to be rejected");
+        assert!(err_backslash.to_string().contains("UNC paths are not allowed"), "got: {err_backslash}");
+    }
+
+    #[test]
+    fn parse_frame_headers_blocks_x_frame_options_deny_and_sameorigin() {
+        let deny = parse_frame_headers("HTTP/1.1 200 OK\r\nX-Frame-Options: DENY\r\n\r\n");
+        assert!(!deny.embeddable);
+        assert!(deny.reason.as_deref().unwrap_or("").contains("X-Frame-Options"));
+
+        let sameorigin = parse_frame_headers("HTTP/1.1 200 OK\r\nX-Frame-Options: SameOrigin\r\n\r\n");
+        assert!(!sameorigin.embeddable);
+        assert!(sameorigin.reason.as_deref().unwrap_or("").contains("X-Frame-Options"));
+    }
+
+    #[test]
+    fn parse_frame_headers_checks_csp_frame_ancestors_on_final_response_block_only() {
+        let blocked_csp = parse_frame_headers(
+            "HTTP/1.1 200 OK\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\n\r\n",
+        );
+        assert!(!blocked_csp.embeddable);
+        assert!(blocked_csp.reason.as_deref().unwrap_or("").contains("frame-ancestors"));
+
+        let wildcard_csp = parse_frame_headers(
+            "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *\r\n\r\n",
+        );
+        assert!(wildcard_csp.embeddable);
+
+        let redirect_then_ok = parse_frame_headers(
+            "HTTP/1.1 302 Found\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: frame-ancestors 'none'\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n",
+        );
+        assert!(redirect_then_ok.embeddable);
+
+        let ok_then_blocked = parse_frame_headers(
+            "HTTP/1.1 302 Found\r\nLocation: https://example.com\r\n\r\nHTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors 'self'\r\n\r\n",
+        );
+        assert!(!ok_then_blocked.embeddable);
+    }
+
+    #[test]
+    fn parse_frame_headers_treats_host_wildcard_frame_ancestors_as_blocked() {
+        let host_wildcard = parse_frame_headers(
+            "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *.example.com\r\n\r\n",
+        );
+        assert!(!host_wildcard.embeddable);
+        assert!(host_wildcard.reason.as_deref().unwrap_or("").contains("frame-ancestors"));
+
+        let wildcard = parse_frame_headers(
+            "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *\r\n\r\n",
+        );
+        assert!(wildcard.embeddable);
+    }
+
+}
