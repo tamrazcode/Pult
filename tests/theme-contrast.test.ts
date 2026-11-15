@@ -13,9 +13,9 @@ function contrast(a: string, b: string): number {
 
 type Tokens = Record<string, string>;
 
-/** Parses the `--x: value` pairs of the first `:root[...] { }` block. */
+/** Parses the `--x: value` pairs of the first `:root` or `[data-theme="..."]` block. */
 function parseTokens(css: string): Tokens {
-  const rootMatch = css.match(/:root(?:\[[^\]]*\])?\s*\{([^}]*)\}/);
+  const rootMatch = css.match(/(?::root(?:\[[^\]]*\])?|\[data-theme="[^"]+"\])[^{]*\{([^}]*)\}/);
   const body = rootMatch?.[1] ?? "";
   const tokens: Tokens = {};
   for (const [, name, value] of body.matchAll(/(--[a-z-]+)\s*:\s*([^;]+);/g)) {
@@ -153,6 +153,30 @@ describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
         (k) => !darkKeys.has(k) && !(name === "liquid" && k.startsWith("--glass-")),
       );
       expect(unknown, name).toEqual([]);
+    }
+  });
+
+  it("scopes every theme selector with [data-theme=...] (not :root[...]) for nested preview cards", () => {
+    const themeFiles: Array<[string, string]> = [
+      ["dark", "src/styles/tokens.css"],
+      ["light", "src/styles/themes/light.css"],
+      ["graphite", "src/styles/themes/graphite.css"],
+      ["liquid", "src/styles/themes/liquid.css"],
+    ];
+
+    for (const [id, relPath] of themeFiles) {
+      const css = readFileSync(join(ROOT, relPath), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+      expect(css, `${relPath} must not scope with :root[data-theme=...]`).not.toMatch(
+        /:root\[data-theme=/,
+      );
+      expect(css, `${relPath} must define [data-theme="${id}"]`).toMatch(
+        new RegExp(`(?:^|[\\s,{])\\[data-theme="${id}"\\]`),
+      );
+      if (id === "dark") {
+        expect(css, `${relPath} should keep :root alongside [data-theme="dark"]`).toMatch(
+          /(?:^|[\s,}]):root\b/,
+        );
+      }
     }
   });
 });

@@ -3,7 +3,8 @@
    themePalettes.ts T3_CODE_DARK_THEME_COLORS + apps/web index.css): neutral
    true-black surfaces, hairline white-alpha borders, one blue accent.
    Components consume these via Tailwind arbitrary values or var(), never hex. */
-:root {
+:root,
+[data-theme="dark"] {
   --canvas: #000000;
   --panel-bg: #0c0c0c;
   --chrome: #0a0a0a;

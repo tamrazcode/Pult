@@ -1,7 +1,7 @@
 /* pult light theme (§6.6) — overrides the token block only; the base block
    in tokens.css is the dark default. Text pairs are chosen for WCAG ≥ 4.5:1
    against canvas/surface (verified by tests/theme-contrast.test.ts). */
-:root[data-theme="light"] {
+[data-theme="light"] {
   --canvas: #ffffff;
   --panel-bg: #f7f7f8;
   --chrome: #fafafa;

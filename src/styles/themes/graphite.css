@@ -1,6 +1,6 @@
 /* pult graphite theme (§6.6) — near-monochrome dark: one grey-blue accent,
    everything else neutral. Text pairs ≥ 4.5:1 (tests/theme-contrast.test.ts). */
-:root[data-theme="graphite"] {
+[data-theme="graphite"] {
   --canvas: #0d0d0d;
   --panel-bg: #141414;
   --chrome: #111111;

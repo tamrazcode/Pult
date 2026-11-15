@@ -1,7 +1,7 @@
 /* pult Liquid Glass theme (v2): deep blue-black opaque base plus a translucent
    glass layer that is only enabled where backdrop-filter exists. Text pairs
    pass the same §6.6 contrast tests as the other themes. */
-:root[data-theme="liquid"] {
+[data-theme="liquid"] {
   --canvas: #0a0a0a;
   --panel-bg: #141414;
   --chrome: #111111;
@@ -39,15 +39,15 @@
 }
 
 @supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
-  :root[data-theme="liquid"] .glass-panel {
+  [data-theme="liquid"] .glass-panel {
     background: var(--glass-panel);
     border-color: var(--glass-border);
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
   }
 
-  :root[data-theme="liquid"] .glass-surface,
-  :root[data-theme="liquid"] [data-glass] {
+  [data-theme="liquid"] .glass-surface,
+  [data-theme="liquid"] [data-glass] {
     background: var(--glass-surface);
     border-color: var(--glass-border);
     backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
@@ -57,7 +57,7 @@
 
 /* No transparency requested: keep the same colors, fully opaque, no blur. */
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-theme="liquid"] {
+  [data-theme="liquid"] {
     --glass-panel: #141414;
     --glass-surface: #171717;
     --glass-blur: 0px;

@@ -39,15 +39,49 @@ function AppearanceSettings() {
                 : "border-border-subtle hover:border-border-strong hover:bg-hover"
             }`}
           >
-            {/* mini preview: canvas/chrome/surface/accent swatches */}
+            {/* miniature app window rendered with this theme's own tokens */}
             <span
-              className="flex h-10 items-end gap-1 rounded-(--radius-sm) p-1.5"
-              style={{ background: "var(--canvas)" }}
+              data-theme={id}
+              aria-hidden
+              className={`block h-16 overflow-hidden rounded-(--radius-sm) border border-border-subtle bg-canvas ${
+                id === "liquid" ? "glass-surface" : ""
+              }`}
+              style={
+                id === "liquid"
+                  ? {
+                      backgroundImage:
+                        "radial-gradient(circle at 82% 18%, rgba(52,107,241,0.30), transparent 62%)",
+                    }
+                  : undefined
+              }
             >
-              <Swatch var="--chrome" />
-              <Swatch var="--surface" />
-              <Swatch var="--surface-raised" />
-              <Swatch var="--accent" />
+              <span className="flex h-full">
+                <span className="flex w-9 flex-col gap-1 border-r border-border-subtle bg-panel p-1">
+                  <span className="h-1.5 w-5 rounded-full bg-text-secondary/80" />
+                  <span className="h-1 w-6 rounded-full bg-text-tertiary/50" />
+                  <span className="mt-auto flex items-center gap-1">
+                    <span className="h-2 w-2 rounded-full bg-accent" />
+                    <span className="h-1 w-3 rounded-full bg-text-tertiary/40" />
+                  </span>
+                </span>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="flex h-3.5 items-center gap-1 border-b border-border-subtle bg-chrome px-1.5">
+                    <span className="h-1 w-7 rounded-full bg-text-tertiary/60" />
+                    <span className="ml-auto h-1 w-3 rounded-full bg-text-tertiary/40" />
+                  </span>
+                  <span className="flex flex-1 flex-col gap-1 p-1.5">
+                    <span className="flex items-center gap-1 rounded-[3px] border border-border-subtle bg-surface p-1">
+                      <span className="h-1.5 w-1/2 rounded-full bg-text-primary/80" />
+                      <span className="ml-auto h-1.5 w-2 rounded-sm bg-surface-raised" />
+                    </span>
+                    <span className="h-1 w-2/3 rounded-full bg-text-tertiary/60" />
+                    <span className="mt-auto flex items-center gap-1">
+                      <span className="h-2 w-10 rounded-sm bg-surface-raised" />
+                      <span className="h-2 w-4 rounded-sm bg-accent" />
+                    </span>
+                  </span>
+                </span>
+              </span>
             </span>
             <span className="mt-2 flex items-center gap-1.5 text-sm text-text-primary">
               {label}
@@ -92,15 +126,5 @@ function AppearanceSettings() {
         and survives restarts.
       </p>
     </div>
-  );
-}
-
-function Swatch({ var: name }: { var: string }) {
-  return (
-    <span
-      className="h-6 flex-1 rounded-[4px] border border-border-subtle"
-      style={{ background: `var(${name})` }}
-      aria-hidden
-    />
   );
 }
