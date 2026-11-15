@@ -301,6 +301,9 @@ export function Composer({ threadId }: { threadId?: string }) {
     activeRun !== undefined && (activeRun.status === "running" || activeRun.status === "queued");
 
   const selectedInstance = instances.find((i) => i.id === selectedInstanceId);
+  const threadWorkspace = useThreadsStore((s) =>
+    threadId ? s.threads.find((thread) => thread.id === threadId)?.workspace : undefined,
+  );
   // Image attach is capability-gated: only agents that declared
   // promptCapabilities.image show the chip affordance.
   const imageCapable = selectedInstance?.promptImage === true;
@@ -361,7 +364,9 @@ export function Composer({ threadId }: { threadId?: string }) {
       config: Record<string, ConfigOptionValue> | null,
     ) => {
       if (!selectedInstanceId) {
-        throw new Error("No agent instance selected - pick one in the header");
+        throw new Error(
+          "No agent selected — pick a provider in the composer or connect one in Settings ▸ Providers",
+        );
       }
       useUiStore.getState().rememberInstance(targetThreadId, selectedInstanceId);
       // The picks for this send are persisted by the backend and applied to
@@ -576,10 +581,16 @@ export function Composer({ threadId }: { threadId?: string }) {
     [threadId, queue],
   );
 
+  const cancelling = useRunsStore((s) =>
+    activeRun ? s.cancellingByRun[activeRun.id] === true : false,
+  );
+
   const handleStop = useCallback(() => {
     if (!activeRun || activeRun.status !== "running") return;
-    runsCancel(activeRun.id).catch((err) => console.error("runs_cancel failed", err));
-  }, [activeRun]);
+    // The first press asks the agent to cancel; once that is in flight the
+    // same button escalates to killing a wedged process.
+    runsCancel(activeRun.id, cancelling).catch((err) => console.error("runs_cancel failed", err));
+  }, [activeRun, cancelling]);
 
   // Esc stops the run (§6.1), unless an overlay or a pending decision owns
   // the key first; the slash menu and dialogs call preventDefault themselves.
@@ -766,8 +777,12 @@ export function Composer({ threadId }: { threadId?: string }) {
     <div className="shrink-0 px-6 pb-5">
       {pendingApproval && (
         <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-(--radius-md) border border-warning bg-warning/10 px-3 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-xs text-warning">
-            Decision needed: {pendingApproval.title}
+          <span className="min-w-0 flex-1 text-xs text-warning">
+            <span className="block truncate">Decision needed: {pendingApproval.title}</span>
+            <span className="block truncate text-text-tertiary">
+              {selectedInstance?.displayName ?? selectedInstanceId ?? "Agent"}
+              {threadWorkspace ? ` · ${threadWorkspace}` : ""}
+            </span>
           </span>
           {pendingApproval.options
             .filter(
@@ -1104,8 +1119,8 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <button
                   type="button"
                   onClick={handleStop}
-                  aria-label="Stop run"
-                  title="Stop run"
+                  aria-label={cancelling ? "Force stop" : "Stop run"}
+                  title={cancelling ? "Force stop" : "Stop run"}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
                 >
                   <Square size={11} />

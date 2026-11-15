@@ -51,6 +51,26 @@ describe("auth helpers", () => {
     expect(launch.env).toEqual({ BASE: "1" });
   });
 
+  it("formats PowerShell env assignment and quoted path with spaces", () => {
+    const command = buildTerminalAuthCommand(
+      { command: "cmd", args: [], env: { KEY: "value" } },
+      { type: "terminal", id: "t", name: "Login", args: ["arg with space"] },
+      "powershell",
+    );
+    expect(command).toBe('$env:KEY="value"; & "cmd" "arg with space"');
+    expect(command).not.toMatch(/\bKEY=value\b/);
+  });
+
+  it("formats POSIX env assignment on macOS/Linux", () => {
+    const command = buildTerminalAuthCommand(
+      { command: "cmd", args: ["arg"], env: { KEY: "value" } },
+      { type: "terminal", id: "t", name: "Login" },
+      "posix",
+    );
+    expect(command).toMatch(/^KEY=("value"|value) cmd arg$/);
+    expect(command).not.toContain("$env:");
+  });
+
   it("providersAuthenticate invokes providers_authenticate", async () => {
     invoke.mockReset().mockResolvedValue({ authRequired: false });
     await providersAuthenticate("mock", "mock-token");

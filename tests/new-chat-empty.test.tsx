@@ -1,82 +1,96 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import type * as IpcModule from "../src/lib/ipc";
-import type { Project } from "../src/lib/types";
+import userEvent from "@testing-library/user-event";
+import type { InstanceInfo } from "../src/lib/types";
 
-const { navigate, providersInstancesList } = vi.hoisted(() => ({
-  navigate: vi.fn(async () => undefined),
-  providersInstancesList: vi.fn(async () => []),
-}));
-
-vi.mock("../src/lib/ipc", async (importOriginal) => {
-  const actual = await importOriginal<typeof IpcModule>();
-  return {
-    ...actual,
-    providersInstancesList,
-    onAgentProcess: vi.fn(async () => () => {}),
-  };
-});
-
-vi.mock("../src/lib/tauri", () => ({
-  isTauri: () => false,
+const { navigate } = vi.hoisted(() => ({
+  navigate: vi.fn(),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
   useRouter: () => ({ navigate }),
 }));
 
+vi.mock("../src/components/chat/Composer", () => ({
+  Composer: () => <div data-testid="composer-mock" />,
+}));
+
+vi.mock("../src/components/chat/LivingAscii", () => ({
+  LivingAscii: () => <div data-testid="living-ascii-mock" />,
+}));
+
 import { NewChatEmptyState } from "../src/components/chat/NewChatEmptyState";
 import { useProjectsStore } from "../src/stores/projects";
-import { useRunsStore } from "../src/stores/runs";
-import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
 
-const project: Project = {
-  id: "proj-1",
-  name: "Pult App",
-  rootPath: "C:\\work\\pult",
-  color: "#346bf1",
-  worktreeStrategy: "root",
-  pinned: false,
-  createdAt: 0,
-};
+function makeInstance(overrides: Partial<InstanceInfo> = {}): InstanceInfo {
+  return {
+    id: "inst-1",
+    displayName: "Agent",
+    enabled: true,
+    driver: "acp",
+    command: "agent",
+    args: [],
+    env: {},
+    status: "stopped",
+    promptImage: false,
+    loadSession: false,
+    modes: [],
+    configOptions: [],
+    authMethods: [],
+    ...overrides,
+  };
+}
 
 describe("NewChatEmptyState", () => {
   beforeEach(() => {
-    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    navigate.mockReset();
     useProjectsStore.setState({ projects: [], selectedProjectId: null, loaded: true });
-    useThreadsStore.setState({ threads: [], activeThreadId: null, unreadIds: [], loaded: true });
-    useRunsStore.setState({
-      runsByThread: {},
-      viewsByRun: {},
-      appliedEvents: {},
-      commandsByThread: {},
-      queueByThread: {},
-      desiredModeByThread: {},
-      desiredConfigByThread: {},
-      activeElicitation: null,
+    useUiStore.setState({ instances: [] });
+  });
+
+  it("shows Connect an agent CTA when no enabled providers exist and navigates to /settings/providers", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      instances: [makeInstance({ id: "disabled", enabled: false })],
     });
-    useUiStore.setState({ selectedInstanceId: null, instances: [] });
-  });
-
-  it("renders heading 'What should we work on?', living ASCII canvas, and no giant PultLogo", () => {
-    useProjectsStore.setState({ projects: [project], selectedProjectId: null });
-
-    const { container } = render(<NewChatEmptyState />);
-
-    expect(screen.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
-    expect(screen.getByText("No project")).toBeVisible();
-    expect(container.querySelector("canvas")).not.toBeNull();
-    expect(screen.queryByRole("img", { name: "pult" })).toBeNull();
-    expect(container.querySelector('[aria-label="pult"]')).toBeNull();
-  });
-
-  it("renders the selected project name subtitle when selectedProjectId is set", () => {
-    useProjectsStore.setState({ projects: [project], selectedProjectId: "proj-1" });
 
     render(<NewChatEmptyState />);
 
-    expect(screen.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
-    expect(screen.getByText("Pult App")).toBeVisible();
+    const cta = screen.getByRole("button", { name: "Connect an agent" });
+    expect(cta).toBeVisible();
+    expect(screen.queryByText(/Dev mock active/i)).toBeNull();
+
+    await user.click(cta);
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/providers" });
+  });
+
+  it("labels built-in dev mock without blocking chat and navigates to /settings/providers", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      instances: [makeInstance({ id: "mock", displayName: "Mock", driver: "mock", enabled: true })],
+    });
+
+    render(<NewChatEmptyState />);
+
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    const mockPill = screen.getByRole("button", { name: /Dev mock active/i });
+    expect(mockPill).toBeVisible();
+
+    await user.click(mockPill);
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/providers" });
+  });
+
+  it("renders neither missing-agent CTA nor dev-mock label when a real provider is enabled", () => {
+    useUiStore.setState({
+      instances: [
+        makeInstance({ id: "claude", displayName: "Claude", driver: "acp", enabled: true }),
+      ],
+    });
+
+    render(<NewChatEmptyState />);
+
+    expect(screen.queryByRole("button", { name: "Connect an agent" })).toBeNull();
+    expect(screen.queryByText(/Dev mock active/i)).toBeNull();
   });
 });

@@ -847,6 +847,22 @@ function keyHint(kind: string): string | null {
 
 function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRequest }) {
   const [sent, setSent] = useState(false);
+  // Show WHO asks and WHERE: an approval is about this agent in this project.
+  const instanceId = useRunsStore((s) => {
+    for (const runs of Object.values(s.runsByThread)) {
+      const run = runs.find((candidate) => candidate.id === runId);
+      if (run) return run.instanceId;
+    }
+    return null;
+  });
+  const providerName = useUiStore((s) =>
+    instanceId
+      ? s.instances.find((instance) => instance.id === instanceId)?.displayName
+      : undefined,
+  );
+  const workspace = useThreadsStore(
+    (s) => s.threads.find((thread) => thread.id === s.activeThreadId)?.workspace,
+  );
   const respond = (optionId: string | null) => {
     if (sent) return;
     setSent(true);
@@ -862,6 +878,10 @@ function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRe
       </div>
       <div className="space-y-2.5 px-3 py-2.5">
         <p className="text-sm text-text-primary">{approval.title}</p>
+        <p className="text-xs text-text-tertiary">
+          {providerName ?? instanceId ?? "Agent"}
+          {workspace ? ` · ${workspace}` : ""}
+        </p>
         <div className="flex flex-wrap gap-2">
           {approval.options.map((option) => (
             <Button
@@ -878,6 +898,9 @@ function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRe
               disabled={sent}
             >
               {option.name}
+              {option.kind === "allow_always" && (
+                <span className="ml-1 text-xs opacity-70">· this agent &amp; project</span>
+              )}
               <span className="ml-1 text-xs opacity-60">{keyHint(option.kind)}</span>
             </Button>
           ))}
@@ -885,6 +908,11 @@ function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRe
             Cancel
           </Button>
         </div>
+        {approval.options.some((option) => option.kind === "allow_always") && (
+          <p className="text-xs text-text-tertiary">
+            “Always” remembers this agent &amp; project only — revoke it in Settings ▸ General.
+          </p>
+        )}
       </div>
     </div>
   );

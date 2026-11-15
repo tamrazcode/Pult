@@ -82,7 +82,7 @@ export function SettingsLayout() {
       <div className="flex min-h-0 flex-1">
         <nav
           aria-label="Settings"
-          className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-canvas px-3 py-4"
+          className="flex w-48 shrink-0 flex-col border-r border-border-subtle bg-canvas px-2 py-4 min-[1120px]:w-60 min-[1120px]:px-3"
         >
           <div className="relative mb-3 px-0">
             <Search

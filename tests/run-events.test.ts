@@ -29,6 +29,7 @@ const ipcMocks = vi.hoisted(() => {
     onRunEvent?: (payload: RunEventPayload) => void;
     onRunEvents?: (payload: RunEventsPayload) => void;
     onRunStarted?: (run: Run) => void;
+    onRunCancelling?: (runId: string) => void;
     onQueueUpdate?: (payload: QueueUpdatedPayload) => void;
     onElicitationRequest?: (payload: ElicitationRequestPayload) => void;
     onPtyOutput?: (payload: PtyOutputPayload) => void;
@@ -56,6 +57,10 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     }),
     onRunStarted: vi.fn(async (handler: (run: Run) => void) => {
       ipcMocks.handlers.onRunStarted = handler;
+      return () => {};
+    }),
+    onRunCancelling: vi.fn(async (handler: (runId: string) => void) => {
+      ipcMocks.handlers.onRunCancelling = handler;
       return () => {};
     }),
     onQueueUpdate: vi.fn(async (handler: (payload: QueueUpdatedPayload) => void) => {

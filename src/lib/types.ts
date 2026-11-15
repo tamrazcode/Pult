@@ -192,7 +192,26 @@ export interface QueueItem {
   instanceId: string;
   text: string;
   images: ImageInput[];
+  /** Settings snapshotted when the message was queued. */
+  mode?: string | null;
+  configOptions?: Record<string, ConfigOptionValue>;
   createdAt: number;
+}
+
+/** Uncommitted state of a worktree before a destructive delete. */
+export interface WorktreeDirtyStatus {
+  dirty: boolean;
+  modified: number;
+  untracked: number;
+  entries: string[];
+}
+
+/** One persisted allow_always decision, scoped to a workspace. */
+export interface RememberedPermission {
+  workspace: string;
+  instanceId: string;
+  toolKind: string;
+  optionId: string;
 }
 
 /** Result of the queue-aware send: either a fresh run or a queue slot. */

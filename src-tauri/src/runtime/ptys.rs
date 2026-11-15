@@ -81,6 +81,22 @@ pub struct PtyRegistry {
     next_id: std::sync::atomic::AtomicU64,
 }
 
+/// Shell used when the caller did not name one. Windows has no `$SHELL`.
+fn default_shell() -> (String, Vec<String>) {
+    #[cfg(windows)]
+    {
+        ("powershell".to_string(), vec!["-NoLogo".to_string()])
+    }
+    #[cfg(not(windows))]
+    {
+        let shell = std::env::var("SHELL")
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "/bin/sh".to_string());
+        (shell, Vec::new())
+    }
+}
+
 impl PtyRegistry {
     pub fn new(sink: Arc<dyn crate::runtime::EventSink>) -> Self {
         Self {
@@ -112,7 +128,7 @@ impl PtyRegistry {
             Some(argv) if !argv.is_empty() => {
                 (argv[0].clone(), argv[1..].to_vec())
             }
-            _ => ("powershell".to_string(), vec!["-NoLogo".to_string()]),
+            _ => default_shell(),
         };
         let mut cmd = CommandBuilder::new(&program);
         cmd.args(&args);
@@ -567,5 +583,26 @@ mod tests {
         registry.resize(&live.terminal_id, 30, 120).unwrap();
         registry.kill(&live.terminal_id).unwrap();
     }
-}
 
+    #[test]
+    fn default_shell_matches_target_os() {
+        #[cfg(windows)]
+        {
+            let (program, args) = default_shell();
+            assert_eq!(program, "powershell");
+            assert_eq!(args, vec!["-NoLogo".to_string()]);
+        }
+        #[cfg(not(windows))]
+        {
+            let prev = std::env::var_os("SHELL");
+            std::env::set_var("SHELL", "/bin/zsh");
+            assert_eq!(default_shell(), ("/bin/zsh".to_string(), Vec::new()));
+            std::env::remove_var("SHELL");
+            assert_eq!(default_shell(), ("/bin/sh".to_string(), Vec::new()));
+            match prev {
+                Some(v) => std::env::set_var("SHELL", v),
+                None => std::env::remove_var("SHELL"),
+            }
+        }
+    }
+}

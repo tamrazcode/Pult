@@ -2516,11 +2516,12 @@ impl AgentRuntime {
             guard.cancelling_runs.remove(run_id);
             guard.deleting_threads.contains(thread_id)
         };
+        // The run is over either way; a refused delete leaves a usable thread.
+        let _ = self.store.set_thread_status(thread_id, "settled");
         if deleting {
             // The thread is going away: never start its next queued message.
             return Ok(());
         }
-        let _ = self.store.set_thread_status(thread_id, "settled");
         if let Ok(thread) = self.store.get_thread(thread_id) {
             self.spawn_checkpoint(&thread, run_id);
             self.emit("thread:update", &ThreadUpdatedPayload { thread });

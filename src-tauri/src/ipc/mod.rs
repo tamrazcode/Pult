@@ -291,12 +291,39 @@ pub fn threads_list(
 /// crosses the IPC boundary; the row itself stays in SQLite.
 fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
     const MAX_BYTES: usize = 2_000_000;
-    fn cap_value(slot: &mut Option<serde_json::Value>) {
+    // The whole history crosses one IPC call: per-payload caps alone still let
+    // 10k medium events freeze the WebView. Trim the oldest payloads until the
+    // serialized history fits.
+    const TOTAL_BUDGET: usize = 16_000_000;
+    const TRIM_BYTES: usize = 4_096;
+    for event in events.iter_mut() {
+        cap_event_payloads(event, MAX_BYTES);
+    }
+    let mut sizes: Vec<usize> = events
+        .iter()
+        .map(|event| serde_json::to_string(event).map(|text| text.len()).unwrap_or(0))
+        .collect();
+    let mut total: usize = sizes.iter().sum();
+    if total > TOTAL_BUDGET {
+        for (index, event) in events.iter_mut().enumerate() {
+            if total <= TOTAL_BUDGET {
+                break;
+            }
+            cap_event_payloads(event, TRIM_BYTES);
+            let after = serde_json::to_string(event).map(|text| text.len()).unwrap_or(0);
+            total = total.saturating_sub(sizes[index].saturating_sub(after));
+            sizes[index] = after;
+        }
+    }
+}
+
+fn cap_event_payloads(event: &mut crate::events::Event, max: usize) {
+    fn cap_value(slot: &mut Option<serde_json::Value>, max: usize) {
         let Some(value) = slot else { return };
         let Ok(text) = serde_json::to_string(value) else {
             return;
         };
-        if text.len() > MAX_BYTES {
+        if text.len() > max {
             *slot = Some(serde_json::json!({
                 "truncated": true,
                 "bytes": text.len(),
@@ -304,33 +331,31 @@ fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
             }));
         }
     }
-    for event in events {
-        match &mut event.kind {
-            crate::events::EventKind::ToolCall { raw_input, .. } => cap_value(raw_input),
-            crate::events::EventKind::ToolCallUpdate {
-                content, raw_output, ..
-            } => {
-                cap_value(content);
-                cap_value(raw_output);
-            }
-            crate::events::EventKind::AgentMessageDelta { delta } => {
-                if delta.len() > MAX_BYTES {
-                    *delta = "\n\n_(large generated payload omitted)_\n\n".to_string();
-                }
-            }
-            crate::events::EventKind::AgentThoughtDelta { delta } => {
-                if delta.len() > MAX_BYTES {
-                    *delta = "_(large thought payload omitted)_".to_string();
-                }
-            }
-            crate::events::EventKind::UserMessage { images, .. } => {
-                images.retain(|image| image.data.len() <= MAX_BYTES);
-            }
-            crate::events::EventKind::FileChanged { diff, .. } if diff.len() > MAX_BYTES => {
-                *diff = "_(diff too large to display)_".to_string();
-            }
-            _ => {}
+    match &mut event.kind {
+        crate::events::EventKind::ToolCall { raw_input, .. } => cap_value(raw_input, max),
+        crate::events::EventKind::ToolCallUpdate {
+            content, raw_output, ..
+        } => {
+            cap_value(content, max);
+            cap_value(raw_output, max);
         }
+        crate::events::EventKind::AgentMessageDelta { delta } => {
+            if delta.len() > max {
+                *delta = "\n\n_(large generated payload omitted)_\n\n".to_string();
+            }
+        }
+        crate::events::EventKind::AgentThoughtDelta { delta } => {
+            if delta.len() > max {
+                *delta = "_(large thought payload omitted)_".to_string();
+            }
+        }
+        crate::events::EventKind::UserMessage { images, .. } => {
+            images.retain(|image| image.data.len() <= max);
+        }
+        crate::events::EventKind::FileChanged { diff, .. } if diff.len() > max => {
+            *diff = "_(diff too large to display)_".to_string();
+        }
+        _ => {}
     }
 }
 
@@ -401,54 +426,94 @@ pub fn threads_set_pinned(
     Ok(())
 }
 
-/// Deletes a thread; worktree threads get their worktree removed first
-/// (best-effort — the row goes either way, cleanup failures are logged).
+/// Uncommitted state of a thread's worktree (None when it has no worktree).
+#[tauri::command]
+pub async fn threads_worktree_status(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+) -> Result<Option<crate::git::WorktreeDirtyStatus>, PultError> {
+    let thread = runtime.store().get_thread(&thread_id)?;
+    let Some((repo, name)) = thread
+        .main_repo
+        .as_deref()
+        .zip(thread.worktree_name.as_deref())
+    else {
+        return Ok(None);
+    };
+    let path = std::path::Path::new(repo)
+        .join(".pult")
+        .join("worktrees")
+        .join(name);
+    if !path.exists() {
+        return Ok(None);
+    }
+    Ok(Some(crate::git::worktree_dirty_status(&path).await?))
+}
+
+/// Deletes a thread. `worktree_mode`: `"keep"` leaves the worktree on disk,
+/// `"force_remove"` discards its files, omitted/`"safe"` refuses to delete a
+/// dirty worktree (the row is kept so the files stay reachable).
 #[tauri::command]
 pub async fn threads_delete(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
+    worktree_mode: Option<String>,
+) -> Result<(), PultError> {
+    runtime.begin_delete_thread(&thread_id);
+    let result = threads_delete_inner(&runtime, &thread_id, worktree_mode.as_deref()).await;
+    runtime.finish_delete_thread(&thread_id);
+    result
+}
+
+async fn threads_delete_inner(
+    runtime: &Arc<AgentRuntime>,
+    thread_id: &str,
+    worktree_mode: Option<&str>,
 ) -> Result<(), PultError> {
     // Stop a live run and let it release the process before touching the
     // worktree: Windows refuses to remove directories still held open.
-    if let Some(run_id) = runtime.active_run_for(&thread_id) {
+    if let Some(run_id) = runtime.active_run_for(thread_id) {
         let _ = runtime.cancel(&run_id);
         for _ in 0..40 {
-            if runtime.active_run_for(&thread_id).is_none() {
+            if runtime.active_run_for(thread_id).is_none() {
                 break;
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         // Still wedged: take the process down so the worktree can be removed.
-        if runtime.active_run_for(&thread_id).is_some() {
+        if runtime.active_run_for(thread_id).is_some() {
             runtime.kill_run(&run_id);
             for _ in 0..20 {
-                if runtime.active_run_for(&thread_id).is_none() {
+                if runtime.active_run_for(thread_id).is_none() {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         }
     }
-    runtime.pool.invalidate_thread(&thread_id);
+    runtime.pool.invalidate_thread(thread_id);
     // Panel shells are children of pult, not of the agent: without this they
     // keep the worktree open and the directory removal below fails.
-    runtime.ptys().kill_thread(&thread_id);
-    if let Ok(thread) = runtime.store().get_thread(&thread_id) {
-        if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
-            if let Err(err) =
-                crate::git::worktree_remove(std::path::Path::new(main_repo), name, false).await
-            {
-                // Never delete the row while the user's worktree files remain:
-                // the thread is the only handle back to them.
-                if err.code() == "git.worktree_dirty" {
-                    return Err(err);
+    runtime.ptys().kill_thread(thread_id);
+    if worktree_mode != Some("keep") {
+        if let Ok(thread) = runtime.store().get_thread(thread_id) {
+            if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
+                let force = worktree_mode == Some("force_remove");
+                if let Err(err) =
+                    crate::git::worktree_remove(std::path::Path::new(main_repo), name, force).await
+                {
+                    // Never delete the row while the user's worktree files remain:
+                    // the thread is the only handle back to them.
+                    if err.code() == "git.worktree_dirty" {
+                        return Err(err);
+                    }
+                    tracing::warn!(target: "pult::ipc", thread_id = %thread_id,
+                        error = %err, "worktree cleanup failed; deleting thread anyway");
                 }
-                tracing::warn!(target: "pult::ipc", thread_id = %thread_id,
-                    error = %err, "worktree cleanup failed; deleting thread anyway");
             }
         }
     }
-    runtime.store().delete_thread(&thread_id)?;
+    runtime.store().delete_thread(thread_id)?;
     let _ = runtime
         .store()
         .delete_setting(&format!("thread_mode:{thread_id}"));
@@ -553,8 +618,40 @@ pub async fn runs_queue_steer(
 pub async fn runs_cancel(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     run_id: String,
+    force: Option<bool>,
 ) -> Result<(), PultError> {
-    runtime.cancel(&run_id)
+    runtime.cancel_with_force(&run_id, force.unwrap_or(false))
+}
+
+/// Persisted allow_always decisions, for the Settings revoke list.
+#[tauri::command]
+pub fn permissions_remembered_list(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Vec<crate::runtime::RememberedPermission> {
+    runtime.list_remembered_permissions()
+}
+
+/// Revokes remembered permissions; omitted filters clear everything.
+#[tauri::command]
+pub fn permissions_remembered_clear(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    workspace: Option<String>,
+    instance_id: Option<String>,
+    tool_kind: Option<String>,
+) -> Result<(), PultError> {
+    runtime.clear_remembered_permission(
+        workspace.as_deref(),
+        instance_id.as_deref(),
+        tool_kind.as_deref(),
+    )
+}
+
+/// config.toml read/parse failure (None when the file is healthy/missing).
+#[tauri::command]
+pub fn providers_config_status(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Option<String> {
+    runtime.config_error()
 }
 
 #[tauri::command]
@@ -1663,6 +1760,9 @@ mod payload_cap_tests {
 
 #[cfg(test)]
 mod workspace_tree_tests;
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 mod security_regression_tests {

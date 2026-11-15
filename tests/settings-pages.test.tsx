@@ -1,12 +1,25 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 
-const { navigate, routerState, settingsSet, mockWindow } = vi.hoisted(() => ({
+import type { RememberedPermission } from "../src/lib/types";
+
+const {
+  navigate,
+  routerState,
+  settingsSet,
+  permissionsRememberedList,
+  permissionsRememberedClear,
+  mockWindow,
+} = vi.hoisted(() => ({
   navigate: vi.fn(async () => undefined),
   routerState: { pathname: "/settings/general" },
   settingsSet: vi.fn(async () => undefined),
+  permissionsRememberedList: vi.fn(async (): Promise<RememberedPermission[]> => []),
+  permissionsRememberedClear: vi.fn<
+    (filters?: { workspace?: string; instanceId?: string; toolKind?: string }) => Promise<void>
+  >(async () => undefined),
   mockWindow: {
     minimize: vi.fn(async () => undefined),
     toggleMaximize: vi.fn(async () => undefined),
@@ -29,6 +42,8 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
   return {
     ...actual,
     settingsSet,
+    permissionsRememberedList,
+    permissionsRememberedClear,
   };
 });
 
@@ -71,6 +86,8 @@ const ChatSettings = ChatRoute.options.component!;
 describe("settings pages", () => {
   beforeEach(() => {
     settingsSet.mockReset().mockResolvedValue(undefined);
+    permissionsRememberedList.mockReset().mockResolvedValue([]);
+    permissionsRememberedClear.mockReset().mockResolvedValue(undefined);
     routerState.pathname = "/settings/general";
     useSettingsStore.setState({
       confirmDeleteThread: true,
@@ -94,6 +111,45 @@ describe("settings pages", () => {
     fireEvent.click(toggle);
     expect(useSettingsStore.getState().confirmDeleteThread).toBe(true);
     expect(settingsSet).toHaveBeenCalledWith("confirm_delete_thread", true);
+  });
+
+  it("GeneralSettings lists and revokes remembered permissions", async () => {
+    permissionsRememberedList.mockResolvedValue([
+      {
+        workspace: "C:\\work\\alpha",
+        instanceId: "claude",
+        toolKind: "edit",
+        optionId: "allow_always",
+      },
+      {
+        workspace: "C:\\work\\beta",
+        instanceId: "codex",
+        toolKind: "execute",
+        optionId: "allow_always",
+      },
+    ]);
+
+    render(<GeneralSettings />);
+
+    expect(await screen.findByText("Remembered permissions")).toBeInTheDocument();
+    expect(await screen.findByText(/C:\\work\\alpha/)).toBeInTheDocument();
+    expect(screen.getByText(/claude/)).toBeInTheDocument();
+    expect(screen.getByText(/edit/)).toBeInTheDocument();
+
+    const revokeButtons = screen.getAllByRole("button", { name: /revoke/i });
+    fireEvent.click(revokeButtons[0]!);
+    await waitFor(() =>
+      expect(permissionsRememberedClear).toHaveBeenCalledWith({
+        workspace: "C:\\work\\alpha",
+        instanceId: "claude",
+        toolKind: "edit",
+      }),
+    );
+
+    const clearAllButton = screen.getByRole("button", { name: /clear all/i });
+    fireEvent.click(clearAllButton);
+    await waitFor(() => expect(permissionsRememberedClear).toHaveBeenCalledTimes(2));
+    expect(permissionsRememberedClear.mock.calls[1]?.[0]).toBeUndefined();
   });
 
   it("toggles ChatSettings switches and send-key radio and persists via settingsSet", () => {

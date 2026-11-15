@@ -31,6 +31,7 @@ import { Composer } from "../src/components/chat/Composer";
 import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
 import { ImageLightbox } from "../src/components/ui/ImageLightbox";
 import { useRunsStore } from "../src/stores/runs";
+import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
 
 const run = (id: string, status: Run["status"], idx: number): Run => ({
@@ -62,6 +63,10 @@ beforeEach(() => {
     commandsByThread: {},
     queueByThread: {},
     activeElicitation: null,
+  });
+  useThreadsStore.setState({
+    threads: [],
+    activeThreadId: null,
   });
   useUiStore.setState({
     imagePreview: null,
@@ -667,5 +672,70 @@ describe("MessagesTimeline", () => {
 
     fireEvent.scroll(scrollContainer);
     expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
+  });
+
+  it("ApprovalCard displays active provider, workspace, and project-scoped allow_always note", () => {
+    useThreadsStore.setState({
+      threads: [
+        {
+          id: "th",
+          projectId: null,
+          title: "Fix build",
+          status: "working",
+          pinned: false,
+          createdAt: 0,
+          updatedAt: 0,
+          workspace: "C:\\work\\alpha",
+        },
+      ],
+      activeThreadId: "th",
+    });
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instanceByThread: { th: "claude" },
+      instances: [
+        {
+          id: "claude",
+          displayName: "Claude Code",
+          enabled: true,
+          driver: "claude",
+          command: "claude",
+          args: [],
+          env: {},
+          status: "running",
+          promptImage: true,
+          loadSession: true,
+          modes: [],
+          configOptions: [],
+          authMethods: [],
+        },
+      ],
+    });
+    useRunsStore.setState({
+      runsByThread: {
+        th: [{ ...run("r1", "running", 0), instanceId: "claude" }],
+      },
+      viewsByRun: {
+        r1: {
+          items: [{ type: "user", text: "Run build", images: [] }],
+          streaming: true,
+          pendingApproval: {
+            requestId: "req-1",
+            title: "Execute npm test?",
+            options: [
+              { optionId: "o1", name: "Allow once", kind: "allow_once" },
+              { optionId: "o2", name: "Always allow", kind: "allow_always" },
+              { optionId: "o3", name: "Reject", kind: "reject_once" },
+            ],
+          },
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    expect(screen.getByText(/Claude Code/)).toBeInTheDocument();
+    expect(screen.getByText(/C:\\work\\alpha/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /this agent & project/i })).toBeInTheDocument();
   });
 });

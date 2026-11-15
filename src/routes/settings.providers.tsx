@@ -4,6 +4,7 @@ import { Bot, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import {
   ipcErrorMessage,
   providersAuthenticate,
+  providersConfigStatus,
   providersDetectInstalled,
   providersInstancesList,
   providersInstancesSave,
@@ -11,6 +12,7 @@ import {
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { preflightInstances, readCachedChecks } from "../lib/providerChecks";
+import type { CachedCheck } from "../lib/providerChecks";
 import { useUiStore } from "../stores/ui";
 import { ConnectRow } from "../components/settings/AgentConnect";
 import { SignInActions } from "../components/settings/SignInActions";
@@ -59,9 +61,19 @@ function specList(infos: InstanceInfo[], id: string, patch: Partial<InstanceSpec
   );
 }
 
+function relativeTime(at: number): string {
+  const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
 export function statusLine(
   info: InstanceInfo,
-  report: PreflightReport | undefined,
+  check: CachedCheck | undefined,
   checking: boolean,
   authenticating = false,
   authAttempted = false,
@@ -70,16 +82,25 @@ export function statusLine(
   if (authenticating) return { text: "Signing in…", tone: "muted" };
   if (!info.enabled) return { text: "Disabled", tone: "muted" };
   // A fresh report outranks the cached status: Re-check must clear the badge.
+  const report = check?.report;
   if (report?.authRequired ?? info.status === "needs_auth") {
     return { text: authAttempted ? "Still needs sign-in" : "Needs sign-in", tone: "warn" };
   }
   if (info.status === "crashed") return { text: "Crashed on last run", tone: "bad" };
+  if (report && check?.lastError) {
+    // The last probe failed but a previous report still describes the agent.
+    return {
+      text: `Check failed · cached ${relativeTime(check.at)}`,
+      tone: "warn",
+    };
+  }
   if (report) {
     const caps = [report.loadSession ? "resume" : null, report.promptImage ? "images" : null]
       .filter(Boolean)
       .join(" · ");
+    const checked = check?.lastAttemptAt ?? check?.at;
     return {
-      text: `Connected${report.agentVersion ? ` · ${report.agentVersion}` : ""}${caps ? ` · ${caps}` : ""}`,
+      text: `Connected${checked ? ` · checked ${relativeTime(checked)}` : ""}${report.agentVersion ? ` · ${report.agentVersion}` : ""}${caps ? ` · ${caps}` : ""}`,
       tone: "ok",
     };
   }
@@ -114,7 +135,9 @@ function ProvidersSettings() {
   const [detected, setDetected] = useState<DetectedAgent[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [reports, setReports] = useState<Record<string, PreflightReport>>({});
+  const [reports, setReports] = useState<Record<string, CachedCheck>>({});
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [detailOpen, setDetailOpen] = useState(false);
   const [checking, setChecking] = useState<Record<string, boolean>>({});
   const [adding, setAdding] = useState(false);
   const [runtimeDraft, setRuntimeDraft] = useState<DraftRuntime | null>(null);
@@ -139,13 +162,14 @@ function ProvidersSettings() {
 
   useEffect(() => {
     const cached = readCachedChecks();
-    const seeded: Record<string, PreflightReport> = {};
-    for (const [id, check] of Object.entries(cached)) seeded[id] = check.report;
-    if (Object.keys(seeded).length > 0) setReports(seeded);
+    if (Object.keys(cached).length > 0) setReports(cached);
     if (!isTauri()) {
       setLoaded(true);
       return;
     }
+    void providersConfigStatus()
+      .then(setConfigError)
+      .catch(() => {});
     void (async () => {
       try {
         const list = await providersInstancesList();
@@ -160,9 +184,7 @@ function ProvidersSettings() {
         if (enabled.length > 0) {
           setChecking(Object.fromEntries(enabled.map((instance) => [instance.id, true])));
           const results = await preflightInstances(list);
-          setReports(
-            Object.fromEntries(Object.entries(results).map(([id, check]) => [id, check.report])),
-          );
+          setReports(results);
           setChecking({});
           const refreshed = await providersInstancesList();
           setInstances(refreshed);
@@ -199,7 +221,11 @@ function ProvidersSettings() {
     setChecking((m) => ({ ...m, [id]: true }));
     try {
       const report = await providersPreflight(id);
-      setReports((m) => ({ ...m, [id]: report }));
+      const now = Date.now();
+      setReports((m) => ({
+        ...m,
+        [id]: { report, at: now, lastAttemptAt: now, lastError: null },
+      }));
       setCheckError((m) => {
         const { [id]: _dropped, ...rest } = m;
         return rest;
@@ -223,7 +249,11 @@ function ProvidersSettings() {
     try {
       const report = await providersAuthenticate(id, methodId);
       setAuthAttempted((m) => ({ ...m, [id]: report.authRequired }));
-      setReports((m) => ({ ...m, [id]: report }));
+      const now = Date.now();
+      setReports((m) => ({
+        ...m,
+        [id]: { report, at: now, lastAttemptAt: now, lastError: null },
+      }));
       setCheckError((m) => {
         const { [id]: _dropped, ...rest } = m;
         return rest;
@@ -277,289 +307,340 @@ function ProvidersSettings() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1">
-      {/* Provider list (T3-style left column) */}
-      <div className="flex w-72 shrink-0 flex-col border-r border-border-subtle">
-        <div className="flex items-center justify-between px-3 py-2.5">
-          <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-            Providers
-          </p>
+    <div className="flex min-h-0 flex-1 flex-col">
+      {configError && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 border-b border-danger/40 bg-diff-del-bg px-4 py-2 text-xs text-danger"
+        >
+          <span className="min-w-0 flex-1">
+            config.toml could not be read: {configError}. The dev mock is active until the file is
+            fixed.
+          </span>
           <button
-            onClick={() => setAdding((a) => !a)}
-            title="Add provider"
-            aria-label="Add provider"
-            className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            type="button"
+            onClick={() => setConfigError(null)}
+            className="shrink-0 text-text-tertiary transition hover:text-text-secondary"
           >
-            <Plus size={14} />
+            Dismiss
           </button>
         </div>
-        <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
-          {loaded && instances.length === 0 && (
-            <p className="px-2 py-2 text-sm text-text-tertiary">No providers configured.</p>
-          )}
-          {instances.map((info) => {
-            const st = statusLine(info, reports[info.id], checking[info.id]);
-            return (
-              <div
-                key={info.id}
-                className={`w-full rounded-(--radius-md) transition ${
-                  selectedId === info.id ? "bg-active" : "hover:bg-hover"
-                }`}
-              >
-                <div className="flex items-start gap-2 px-3 py-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedId(info.id)}
-                    aria-pressed={selectedId === info.id}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <span
-                      className={`block truncate text-sm ${
-                        info.enabled ? "text-text-primary" : "text-text-tertiary"
-                      }`}
-                    >
-                      {info.displayName}
-                    </span>
-                    <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
-                      {st.text}
-                    </span>
-                  </button>
-                  <Toggle
-                    on={info.enabled}
-                    label={`${info.enabled ? "Disable" : "Enable"} ${info.displayName}`}
-                    onClick={() => toggle(info)}
-                  />
-                </div>
-              </div>
-            );
-          })}
-          {loaded && (
+      )}
+      <div className="flex min-h-0 flex-1">
+        {/* Provider list (T3-style left column) */}
+        <div
+          className={`${detailOpen ? "hidden" : "flex"} w-full shrink-0 flex-col border-r border-border-subtle min-[1120px]:flex min-[1120px]:w-64`}
+        >
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+              Providers
+            </p>
             <button
               onClick={() => setAdding((a) => !a)}
-              className="mt-1 flex w-full items-center gap-2 rounded-(--radius-md) px-3 py-2 text-sm text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+              title="Add provider"
+              aria-label="Add provider"
+              className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              <Plus size={14} /> Add provider
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Detail pane (T3-style right column) */}
-      <div className="relative min-w-0 flex-1 overflow-y-auto p-5">
-        {!loaded && <p className="text-sm text-text-tertiary">Loading providers…</p>}
-        {saveError && (
-          <p className="mb-3 rounded-(--radius-md) border border-danger/40 bg-diff-del-bg px-3 py-2 text-sm text-danger">
-            {saveError}
-          </p>
-        )}
-        {!selected && loaded && instances.length === 0 && (
-          <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center">
-            <Bot size={24} className="text-text-tertiary" aria-hidden />
-            <p className="text-sm font-medium text-text-primary">No providers yet</p>
-            <p className="max-w-xs text-xs text-text-tertiary">
-              Connect a local ACP agent or add any ACP-over-stdio command. pult never stores your
-              keys.
-            </p>
-            <button
-              onClick={() => setAdding(true)}
-              className="mt-1 flex h-8 items-center gap-1.5 rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
-            >
-              <Plus size={13} /> Add provider
+              <Plus size={14} />
             </button>
           </div>
-        )}
-        {!selected && loaded && instances.length > 0 && (
-          <p className="text-sm text-text-tertiary">Pick a provider on the left.</p>
-        )}
-        {selected && (
-          <div className="max-w-xl">
-            <h2 className="text-lg font-medium text-text-primary">{selected.displayName}</h2>
-            {(() => {
-              const st = statusLine(
-                selected,
-                reports[selected.id],
-                checking[selected.id],
-                authenticating[selected.id],
-                authAttempted[selected.id],
-              );
-              const err = checkError[selected.id];
-              const needsAuth = shouldShowSignIn(selected, reports[selected.id]);
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3">
+            {loaded && instances.length === 0 && (
+              <p className="px-2 py-2 text-sm text-text-tertiary">No providers configured.</p>
+            )}
+            {instances.map((info) => {
+              const st = statusLine(info, reports[info.id], checking[info.id]);
               return (
-                <div className="mt-3 rounded-(--radius-md) border border-border-subtle bg-surface p-3">
-                  <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                    Status
-                  </p>
-                  {err ? (
-                    <p className="mt-1 text-sm text-danger" title={err}>
-                      {err}
-                    </p>
-                  ) : (
-                    <>
-                      <p className={`mt-1 text-sm ${TONE_CLASSES[st.tone]}`}>{st.text}</p>
-                    </>
-                  )}
-                  <button
-                    onClick={() => void check(selected.id)}
-                    disabled={checking[selected.id] || !selected.enabled}
-                    className="mt-2 flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover disabled:opacity-40"
-                  >
-                    <RefreshCw size={12} className={checking[selected.id] ? "animate-spin" : ""} />
-                    Check connection
-                  </button>
-                  {needsAuth && selected.enabled && (
-                    <SignInActions
-                      launch={{
-                        command: selected.command,
-                        args: selected.args,
-                        env: selected.env,
+                <div
+                  key={info.id}
+                  className={`w-full rounded-(--radius-md) transition ${
+                    selectedId === info.id ? "bg-active" : "hover:bg-hover"
+                  }`}
+                >
+                  <div className="flex items-start gap-2 px-3 py-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedId(info.id);
+                        setDetailOpen(true);
                       }}
-                      authMethods={reports[selected.id]?.authMethods ?? selected.authMethods ?? []}
-                      authHint={reports[selected.id]?.authHint ?? selected.authHint}
-                      signingIn={authenticating[selected.id] === true}
-                      authAttempted={authAttempted[selected.id] === true}
-                      onSignIn={(methodId) => void signIn(selected.id, methodId)}
-                      onRecheck={() => void check(selected.id)}
+                      aria-pressed={selectedId === info.id}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span
+                        className={`block truncate text-sm ${
+                          info.enabled ? "text-text-primary" : "text-text-tertiary"
+                        }`}
+                      >
+                        {info.displayName}
+                      </span>
+                      <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
+                        {st.text}
+                      </span>
+                    </button>
+                    <Toggle
+                      on={info.enabled}
+                      label={`${info.enabled ? "Disable" : "Enable"} ${info.displayName}`}
+                      onClick={() => toggle(info)}
                     />
-                  )}
+                  </div>
                 </div>
               );
-            })()}
-
-            <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Display name
-            </p>
-            <div className="mt-1.5 flex gap-2">
-              <input
-                value={nameDraft ?? selected.displayName}
-                onChange={(e) => setNameDraft(e.target.value)}
-                className="h-8 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-sm text-text-primary focus:outline-none"
-              />
-              {nameDraft !== null && nameDraft !== selected.displayName && (
-                <button
-                  onClick={saveName}
-                  className="flex h-8 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
-                >
-                  Save
-                </button>
-              )}
-            </div>
-
-            <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Runtime
-            </p>
-            <p className="mt-0.5 text-xs text-text-tertiary">
-              How pult starts the agent (ACP over stdio). Bare names resolve on PATH — `npx`,
-              `opencode`, `claude` all work.
-            </p>
-            <div className="mt-1.5 space-y-2">
-              <input
-                value={runtimeDraft ? runtimeDraft.command : selected.command}
-                onChange={(e) =>
-                  setRuntimeDraft(
-                    runtimeDraft
-                      ? { ...runtimeDraft, command: e.target.value }
-                      : { command: e.target.value, args: selected.args.join(", ") },
-                  )
-                }
-                className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-              />
-              <input
-                value={runtimeDraft ? runtimeDraft.args : selected.args.join(", ")}
-                onChange={(e) =>
-                  setRuntimeDraft(
-                    runtimeDraft
-                      ? { ...runtimeDraft, args: e.target.value }
-                      : { command: selected.command, args: e.target.value },
-                  )
-                }
-                placeholder="Arguments (comma-separated)"
-                className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-              />
-              {runtimeDraft &&
-                (runtimeDraft.command !== selected.command ||
-                  runtimeDraft.args !== selected.args.join(", ")) && (
-                  <div className="flex justify-end gap-2">
-                    <button
-                      onClick={() => setRuntimeDraft(null)}
-                      className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                    >
-                      <X size={12} /> Cancel
-                    </button>
-                    <button
-                      onClick={saveRuntime}
-                      className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
-                    >
-                      Save runtime
-                    </button>
-                  </div>
-                )}
-            </div>
-
-            <div className="mt-6 flex items-center gap-2 border-t border-border-subtle pt-4">
+            })}
+            {loaded && (
               <button
-                onClick={() => void remove(selected.id)}
-                className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
+                onClick={() => setAdding((a) => !a)}
+                className="mt-1 flex w-full items-center gap-2 rounded-(--radius-md) px-3 py-2 text-sm text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
               >
-                <Trash2 size={12} /> Disconnect
+                <Plus size={14} /> Add provider
               </button>
-              <p className="text-xs text-text-tertiary">
-                Removes the provider from <code className="font-mono">~/.pult/config.toml</code>.
+            )}
+          </div>
+        </div>
+
+        {/* Detail pane (T3-style right column) */}
+        <div
+          className={`${detailOpen ? "block" : "hidden"} relative min-w-0 flex-1 overflow-y-auto p-5 min-[1120px]:block`}
+        >
+          {selected && (
+            <button
+              type="button"
+              aria-label="Back to providers"
+              onClick={() => setDetailOpen(false)}
+              className="mb-3 flex items-center gap-1 text-xs text-text-tertiary transition hover:text-text-secondary min-[1120px]:hidden"
+            >
+              ← Providers
+            </button>
+          )}
+          {!loaded && <p className="text-sm text-text-tertiary">Loading providers…</p>}
+          {saveError && (
+            <p className="mb-3 rounded-(--radius-md) border border-danger/40 bg-diff-del-bg px-3 py-2 text-sm text-danger">
+              {saveError}
+            </p>
+          )}
+          {!selected && loaded && instances.length === 0 && (
+            <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center">
+              <Bot size={24} className="text-text-tertiary" aria-hidden />
+              <p className="text-sm font-medium text-text-primary">No providers yet</p>
+              <p className="max-w-xs text-xs text-text-tertiary">
+                Connect a local ACP agent or add any ACP-over-stdio command. pult never stores your
+                keys.
               </p>
-            </div>
-          </div>
-        )}
-
-        {adding && (
-          <div
-            className="fixed inset-0 z-30 bg-black/40"
-            aria-hidden
-            onClick={() => setAdding(false)}
-          />
-        )}
-        {adding && (
-          <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
-            <div className="flex items-center justify-between">
-              <p className="text-sm font-medium text-text-primary">Add provider</p>
               <button
-                onClick={() => setAdding(false)}
-                aria-label="Close"
-                className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                onClick={() => setAdding(true)}
+                className="mt-1 flex h-8 items-center gap-1.5 rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
               >
-                <X size={14} />
+                <Plus size={13} /> Add provider
               </button>
             </div>
-            <p className="mt-1 text-xs text-text-tertiary">
-              One click connects a detected CLI — pult picks the right command and checks the
-              handshake itself.
-            </p>
-            <div className="mt-3 space-y-2">
-              {detected.length === 0 && (
-                <p className="text-sm text-text-tertiary">
-                  No known agent CLIs on PATH. Use "Add custom ACP instance" below for any
-                  ACP-over-stdio command.
-                </p>
-              )}
-              {detected.map((agent) => (
-                <ConnectRow
-                  key={agent.id}
-                  agent={agent}
-                  alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
-                  onAdded={() => void reload()}
-                  onReport={(report) => {
-                    setReports((m) => ({ ...m, [agent.suggestedInstanceId]: report }));
-                    setAuthAttempted((m) => ({
-                      ...m,
-                      [agent.suggestedInstanceId]: report.authRequired,
-                    }));
-                    setSelectedId(agent.suggestedInstanceId);
-                    void reload();
-                  }}
+          )}
+          {!selected && loaded && instances.length > 0 && (
+            <p className="text-sm text-text-tertiary">Pick a provider on the left.</p>
+          )}
+          {selected && (
+            <div className="max-w-xl">
+              <h2 className="text-lg font-medium text-text-primary">{selected.displayName}</h2>
+              {(() => {
+                const st = statusLine(
+                  selected,
+                  reports[selected.id],
+                  checking[selected.id],
+                  authenticating[selected.id],
+                  authAttempted[selected.id],
+                );
+                const err = checkError[selected.id];
+                const needsAuth = shouldShowSignIn(selected, reports[selected.id]?.report);
+                return (
+                  <div className="mt-3 rounded-(--radius-md) border border-border-subtle bg-surface p-3">
+                    <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                      Status
+                    </p>
+                    {err ? (
+                      <p className="mt-1 text-sm text-danger" title={err}>
+                        {err}
+                      </p>
+                    ) : (
+                      <>
+                        <p className={`mt-1 text-sm ${TONE_CLASSES[st.tone]}`}>{st.text}</p>
+                      </>
+                    )}
+                    <button
+                      onClick={() => void check(selected.id)}
+                      disabled={checking[selected.id] || !selected.enabled}
+                      className="mt-2 flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover disabled:opacity-40"
+                    >
+                      <RefreshCw
+                        size={12}
+                        className={checking[selected.id] ? "animate-spin" : ""}
+                      />
+                      Check connection
+                    </button>
+                    {needsAuth && selected.enabled && (
+                      <SignInActions
+                        launch={{
+                          command: selected.command,
+                          args: selected.args,
+                          env: selected.env,
+                        }}
+                        authMethods={
+                          reports[selected.id]?.report.authMethods ?? selected.authMethods ?? []
+                        }
+                        authHint={reports[selected.id]?.report.authHint ?? selected.authHint}
+                        signingIn={authenticating[selected.id] === true}
+                        authAttempted={authAttempted[selected.id] === true}
+                        onSignIn={(methodId) => void signIn(selected.id, methodId)}
+                        onRecheck={() => void check(selected.id)}
+                      />
+                    )}
+                  </div>
+                );
+              })()}
+
+              <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                Display name
+              </p>
+              <div className="mt-1.5 flex gap-2">
+                <input
+                  value={nameDraft ?? selected.displayName}
+                  onChange={(e) => setNameDraft(e.target.value)}
+                  className="h-8 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-sm text-text-primary focus:outline-none"
                 />
-              ))}
-              <AddInstanceForm onAdded={() => void reload()} />
+                {nameDraft !== null && nameDraft !== selected.displayName && (
+                  <button
+                    onClick={saveName}
+                    className="flex h-8 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                  >
+                    Save
+                  </button>
+                )}
+              </div>
+
+              <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                Runtime
+              </p>
+              <p className="mt-0.5 text-xs text-text-tertiary">
+                How pult starts the agent (ACP over stdio). Bare names resolve on PATH — `npx`,
+                `opencode`, `claude` all work.
+              </p>
+              <div className="mt-1.5 space-y-2">
+                <input
+                  value={runtimeDraft ? runtimeDraft.command : selected.command}
+                  onChange={(e) =>
+                    setRuntimeDraft(
+                      runtimeDraft
+                        ? { ...runtimeDraft, command: e.target.value }
+                        : { command: e.target.value, args: selected.args.join(", ") },
+                    )
+                  }
+                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                />
+                <input
+                  value={runtimeDraft ? runtimeDraft.args : selected.args.join(", ")}
+                  onChange={(e) =>
+                    setRuntimeDraft(
+                      runtimeDraft
+                        ? { ...runtimeDraft, args: e.target.value }
+                        : { command: selected.command, args: e.target.value },
+                    )
+                  }
+                  placeholder="Arguments (comma-separated)"
+                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                />
+                {runtimeDraft &&
+                  (runtimeDraft.command !== selected.command ||
+                    runtimeDraft.args !== selected.args.join(", ")) && (
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setRuntimeDraft(null)}
+                        className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                      >
+                        <X size={12} /> Cancel
+                      </button>
+                      <button
+                        onClick={saveRuntime}
+                        className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                      >
+                        Save runtime
+                      </button>
+                    </div>
+                  )}
+              </div>
+
+              <div className="mt-6 flex items-center gap-2 border-t border-border-subtle pt-4">
+                <button
+                  onClick={() => void remove(selected.id)}
+                  className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
+                >
+                  <Trash2 size={12} /> Disconnect
+                </button>
+                <p className="text-xs text-text-tertiary">
+                  Removes the provider from <code className="font-mono">~/.pult/config.toml</code>.
+                </p>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+
+          {adding && (
+            <div
+              className="fixed inset-0 z-30 bg-black/40"
+              aria-hidden
+              onClick={() => setAdding(false)}
+            />
+          )}
+          {adding && (
+            <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-medium text-text-primary">Add provider</p>
+                <button
+                  onClick={() => setAdding(false)}
+                  aria-label="Close"
+                  className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <p className="mt-1 text-xs text-text-tertiary">
+                One click connects a detected CLI — pult picks the right command and checks the
+                handshake itself.
+              </p>
+              <div className="mt-3 space-y-2">
+                {detected.length === 0 && (
+                  <p className="text-sm text-text-tertiary">
+                    No known agent CLIs on PATH. Use "Add custom ACP instance" below for any
+                    ACP-over-stdio command.
+                  </p>
+                )}
+                {detected.map((agent) => (
+                  <ConnectRow
+                    key={agent.id}
+                    agent={agent}
+                    alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
+                    onAdded={() => void reload()}
+                    onReport={(report) => {
+                      const now = Date.now();
+                      setReports((m) => ({
+                        ...m,
+                        [agent.suggestedInstanceId]: {
+                          report,
+                          at: now,
+                          lastAttemptAt: now,
+                          lastError: null,
+                        },
+                      }));
+                      setAuthAttempted((m) => ({
+                        ...m,
+                        [agent.suggestedInstanceId]: report.authRequired,
+                      }));
+                      setSelectedId(agent.suggestedInstanceId);
+                      void reload();
+                    }}
+                  />
+                ))}
+                <AddInstanceForm onAdded={() => void reload()} />
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

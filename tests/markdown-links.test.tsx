@@ -82,6 +82,23 @@ describe("classifyMarkdownHref", () => {
       isDir: false,
     });
   });
+
+  it("classifies POSIX absolute workspace paths and joins with forward slashes", () => {
+    expect(classifyMarkdownHref("/repo/outputs/x.html", "/repo")).toEqual({
+      kind: "workspace",
+      relativePath: "outputs/x.html",
+      fullPath: "/repo/outputs/x.html",
+      isDir: false,
+    });
+    expect(classifyMarkdownHref("/etc/passwd", "/repo")).toEqual({
+      kind: "unsupported",
+      raw: "/etc/passwd",
+    });
+    expect(classifyMarkdownHref("/repo-other/outputs/x.html", "/repo")).toEqual({
+      kind: "unsupported",
+      raw: "/repo-other/outputs/x.html",
+    });
+  });
 });
 
 describe("Markdown links", () => {

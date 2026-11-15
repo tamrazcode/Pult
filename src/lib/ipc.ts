@@ -24,6 +24,7 @@ import type {
   PushOutcome,
   PreflightReport,
   QueueUpdatedPayload,
+  RememberedPermission,
   Run,
   AgentCapsPayload,
   RunEventPayload,
@@ -32,6 +33,7 @@ import type {
   Thread,
   ThreadDetail,
   UsageReport,
+  WorktreeDirtyStatus,
 } from "./types";
 
 /**
@@ -175,8 +177,25 @@ export function threadsSetPinned(threadId: string, pinned: boolean): Promise<voi
   return invokeRequired<void>("threads_set_pinned", { threadId, pinned });
 }
 
-export function threadsDelete(threadId: string): Promise<void> {
-  return invokeRequired<void>("threads_delete", { threadId });
+/**
+ * `keep` leaves the worktree on disk, `force_remove` discards its files,
+ * `safe` (default) refuses to delete a dirty worktree.
+ */
+export function threadsDelete(
+  threadId: string,
+  worktreeMode?: "safe" | "keep" | "force_remove",
+): Promise<void> {
+  return invokeRequired<void>("threads_delete", {
+    threadId,
+    worktreeMode: worktreeMode ?? null,
+  });
+}
+
+/** Dirty/untracked files in the thread's worktree (null when it has none). */
+export function threadsWorktreeStatus(threadId: string): Promise<WorktreeDirtyStatus | null> {
+  return invokeWithFallback<WorktreeDirtyStatus | null>("threads_worktree_status", null, {
+    threadId,
+  });
 }
 
 /** Flattened workspace tree for the Files surface (capped, ignored dirs). */
@@ -271,8 +290,31 @@ export function runsSetConfigOption(
   return invokeRequired<void>("runs_set_config_option", { threadId, configId, value });
 }
 
-export function runsCancel(runId: string): Promise<void> {
-  return invokeRequired<void>("runs_cancel", { runId });
+/** `force` skips the cancel grace period and kills the agent process. */
+export function runsCancel(runId: string, force = false): Promise<void> {
+  return invokeRequired<void>("runs_cancel", { runId, force });
+}
+
+/** Persisted allow_always decisions (Settings ▸ General revoke list). */
+export function permissionsRememberedList(): Promise<RememberedPermission[]> {
+  return invokeWithFallback<RememberedPermission[]>("permissions_remembered_list", []);
+}
+
+export function permissionsRememberedClear(filters?: {
+  workspace?: string;
+  instanceId?: string;
+  toolKind?: string;
+}): Promise<void> {
+  return invokeRequired<void>("permissions_remembered_clear", {
+    workspace: filters?.workspace ?? null,
+    instanceId: filters?.instanceId ?? null,
+    toolKind: filters?.toolKind ?? null,
+  });
+}
+
+/** config.toml read/parse failure shown in Providers (null when healthy). */
+export function providersConfigStatus(): Promise<string | null> {
+  return invokeWithFallback<string | null>("providers_config_status", null);
 }
 
 /** Payload of the "elicitation:request" Tauri event. */
@@ -546,6 +588,13 @@ export function onQueueUpdate(
 /** Payload of the "run:started" Tauri event (backend-created runs). */
 export function onRunStarted(handler: (run: Run) => void): Promise<UnlistenFn> {
   return listenOrNoop<{ run: Run }>("run:started", (payload) => handler(payload.run));
+}
+
+/** Stop was pressed: the UI may offer a force-stop escalation. */
+export function onRunCancelling(handler: (runId: string) => void): Promise<UnlistenFn> {
+  return listenOrNoop<{ runId: string; threadId: string }>("run:cancelling", (payload) =>
+    handler(payload.runId),
+  );
 }
 
 export function onElicitationRequest(

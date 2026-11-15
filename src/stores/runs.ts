@@ -476,6 +476,9 @@ interface RunsState {
   clearElicitation: () => void;
   /** Backend-owned message queue per thread (auto-dispatch on run end). */
   queueByThread: Record<string, QueueItem[]>;
+  /** Runs with Stop pressed; the UI offers force-stop while true. */
+  cancellingByRun: Record<string, boolean>;
+  markCancelling: (runId: string) => void;
   /** User bubbles shown immediately while the run is dispatching. */
   pendingUserByThread: Record<string, UserChatItem | undefined>;
   setPendingUser: (threadId: string, text: string, images: ImageInput[]) => void;
@@ -525,6 +528,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   commandsByThread: {},
   filesByThread: {},
   queueByThread: {},
+  cancellingByRun: {},
   pendingUserByThread: {},
   activeElicitation: null,
   desiredModeByThread: {},
@@ -639,10 +643,19 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           : r,
       );
       const sorted = records.sort((a, b) => a.idx - b.idx);
+      // One pass over the event log instead of a filter per run: 500 runs x
+      // 10k events used to be O(R*E) on every open.
+      const eventsByRun = new Map<string, typeof events>();
+      for (const event of events) {
+        const bucket = eventsByRun.get(event.runId);
+        if (bucket) bucket.push(event);
+        else eventsByRun.set(event.runId, [event]);
+      }
+      for (const bucket of eventsByRun.values()) bucket.sort((a, b) => a.seq - b.seq);
       const viewsByRun = { ...s.viewsByRun };
       const appliedEvents = { ...s.appliedEvents };
       for (const run of sorted) {
-        const runEvents = events.filter((e) => e.runId === run.id).sort((a, b) => a.seq - b.seq);
+        const runEvents = eventsByRun.get(run.id) ?? [];
         let view =
           viewsByRun[run.id] ?? emptyRunView(run.status === "running" || run.status === "queued");
         const applied = new Set(appliedEvents[run.id] ?? []);
@@ -712,7 +725,15 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       let commandsByThread = s.commandsByThread;
       let applied: Set<string> | null = null;
       let viewChanged = false;
+      let cancellingByRun = s.cancellingByRun;
+      let cancellingChanged = false;
       for (const event of events) {
+        if (event.kind === "run_finished" && cancellingByRun[runId]) {
+          const { [runId]: _cleared, ...rest } = cancellingByRun;
+          void _cleared;
+          cancellingByRun = rest;
+          cancellingChanged = true;
+        }
         // Thread-level session state: slash commands and agent-chosen titles.
         if (event.kind === "commands_update") {
           if (!threadId) continue;
@@ -747,16 +768,21 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           }));
         }
       }
-      if (!viewChanged && commandsByThread === s.commandsByThread) return s;
+      if (!viewChanged && !cancellingChanged && commandsByThread === s.commandsByThread) return s;
       return {
         runsByThread,
         viewsByRun: viewChanged ? { ...s.viewsByRun, [runId]: view } : s.viewsByRun,
         appliedEvents: applied ? { ...s.appliedEvents, [runId]: applied } : s.appliedEvents,
         commandsByThread,
+        ...(cancellingChanged ? { cancellingByRun } : {}),
       };
     }),
 
   receiveRunEvent: (runId, event) => get().receiveRunEventsBatch(runId, [event]),
+  markCancelling: (runId) =>
+    set((s) => ({
+      cancellingByRun: { ...s.cancellingByRun, [runId]: true },
+    })),
 
   setQueue: (threadId, items) =>
     set((s) => ({ queueByThread: { ...s.queueByThread, [threadId]: items } })),

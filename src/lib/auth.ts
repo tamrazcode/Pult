@@ -21,22 +21,45 @@ export function splitAuthMethods(methods: AuthMethod[]): {
   };
 }
 
+export type AuthShell = "powershell" | "posix";
+
+/** The terminal the user is most likely to paste into on this OS. */
+export function detectDefaultAuthShell(): AuthShell {
+  if (typeof navigator === "undefined") return "posix";
+  const platform = navigator.platform ?? "";
+  return /win/i.test(platform) ? "powershell" : "posix";
+}
+
 function quote(value: string): string {
   return value === "" || /[\s"']/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value;
 }
 
+function powershellQuote(value: string): string {
+  return `"${value.replace(/`/g, "``").replace(/"/g, '`"')}"`;
+}
+
 /**
  * Copyable terminal-auth invocation: base launch + method args + env overrides
- * (method env wins, neither input is mutated).
+ * (method env wins, neither input is mutated). Power shell needs `$env:`
+ * assignments and `&` for the call operator; POSIX shells use `KEY=value cmd`.
  */
 export function buildTerminalAuthCommand(
   launch: { command: string; args: string[]; env?: Record<string, string> },
   method: AuthMethod,
+  shell: AuthShell = detectDefaultAuthShell(),
 ): string {
   const env = { ...(launch.env ?? {}), ...(method.env ?? {}) };
+  const argv = [launch.command, ...launch.args, ...(method.args ?? [])];
+  if (shell === "powershell") {
+    const assignments = Object.entries(env).map(
+      ([key, value]) => `$env:${key}=${powershellQuote(value)}`,
+    );
+    const call = `& ${argv.map(powershellQuote).join(" ")}`;
+    return assignments.length > 0 ? `${assignments.join("; ")}; ${call}` : call;
+  }
   const envPrefix = Object.entries(env)
     .map(([key, value]) => `${key}=${quote(value)}`)
     .join(" ");
-  const argv = [launch.command, ...launch.args, ...(method.args ?? [])].map(quote).join(" ");
-  return envPrefix ? `${envPrefix} ${argv}` : argv;
+  const call = argv.map(quote).join(" ");
+  return envPrefix ? `${envPrefix} ${call}` : call;
 }

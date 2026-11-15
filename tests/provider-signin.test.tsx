@@ -27,6 +27,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 
 import { ConnectRow } from "../src/components/settings/AgentConnect";
 import { SignInActions } from "../src/components/settings/SignInActions";
+import type { CachedCheck } from "../src/lib/providerChecks";
 import { shouldShowSignIn, statusLine } from "../src/routes/settings.providers";
 import type { InstanceInfo } from "../src/lib/types";
 
@@ -123,8 +124,49 @@ describe("provider sign-in", () => {
     };
     expect(shouldShowSignIn(info, undefined)).toBe(true);
     expect(shouldShowSignIn(info, report({ authRequired: false }))).toBe(false);
-    expect(statusLine(info, report({ authRequired: false }), false).text).toMatch(/Connected/);
+    expect(
+      statusLine(info, { report: report({ authRequired: false }), at: Date.now() }, false).text,
+    ).toMatch(/Connected · checked/);
     expect(statusLine(info, undefined, false).text).toBe("Needs sign-in");
+  });
+
+  it("statusLine distinguishes fresh connected check from failed stale cached check", () => {
+    const info: InstanceInfo = {
+      id: "mock",
+      displayName: "Mock",
+      enabled: true,
+      driver: "mock",
+      command: "node",
+      args: [],
+      env: {},
+      status: "stopped",
+      promptImage: false,
+      loadSession: false,
+      modes: [],
+      configOptions: [],
+      authMethods: [],
+    };
+    const now = Date.now();
+    const freshCheck: CachedCheck = {
+      report: report({ authRequired: false }),
+      at: now,
+      lastAttemptAt: now,
+      lastError: null,
+    };
+    const staleFailedCheck: CachedCheck = {
+      report: report({ authRequired: false }),
+      at: now - 120_000,
+      lastAttemptAt: now,
+      lastError: "spawn failed",
+    };
+
+    const fresh = statusLine(info, freshCheck, false);
+    expect(fresh.tone).toBe("ok");
+    expect(fresh.text).toMatch(/Connected · checked/);
+
+    const stale = statusLine(info, staleFailedCheck, false);
+    expect(stale.tone).toBe("warn");
+    expect(stale.text).toMatch(/Check failed · cached/);
   });
 
   it("terminal method shows a copyable command and never calls authenticate", async () => {

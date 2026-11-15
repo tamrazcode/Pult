@@ -27,8 +27,9 @@ test("shell loads: topbar, sidebar, composer, no console errors", async ({ page 
   await gotoChat(page);
   await expect(page.getByText("New thread").first()).toBeVisible();
   await expect(page.getByText("pult", { exact: true })).toHaveCount(1);
-  // sidebar shelves render with their empty-state copy
-  await expect(page.getByText("New threads start here.")).toBeVisible();
+  // empty-state heading and sidebar thread navigation render
+  await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Threads" })).toBeVisible();
   expect(errors).toEqual([]);
 });
 

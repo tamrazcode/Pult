@@ -9,28 +9,28 @@
 
 ## Finding Verification Summary (against HEAD `7930f0e`)
 
-| ID | Severity | Status | Evidence (`file:line` / function) |
-| --- | --- | --- | --- |
-| C01 | P1 | CONFIRMED | `src-tauri/src/runtime/mod.rs:2549-2597` (`resolve_session` masks `get_session_ref` errors with `_ =>` and emits no user-visible notice when `session/load` fails) |
-| C02 | P1 | CONFIRMED | `src-tauri/src/git/mod.rs:1004-1025` (`worktree_remove` uses `--force` + `remove_dir_all`), `src-tauri/src/ipc/mod.rs:406-443` (`threads_delete`), `src-tauri/src/runtime/mod.rs:2191` (`finalize_run` auto-dispatches queue), `src/components/layout/Sidebar.tsx:467-494` |
-| C03 | P1 | CONFIRMED | `src-tauri/src/store/records.rs:67-74` (`QueueItem` lacks `mode`/`config_options`), `src-tauri/src/ipc/mod.rs:468-475` (`runs_dispatch` mutates live thread settings before `send`), `src-tauri/src/runtime/mod.rs:728-777,2199-2234` |
-| C04 | P1 | CONFIRMED | `src-tauri/src/runtime/terminals.rs:22,159-253` (`output`/`wait_for_exit`/`kill`/`release` skip owner checks; `release_session` keys on raw ACP `session_id`), `src-tauri/src/runtime/mod.rs:2014-2040` |
-| C05 | P1 | CONFIRMED | `src-tauri/src/runtime/mod.rs:2867-2883` (`handle_terminal_create` passes `None` cwd), `src-tauri/src/runtime/terminals.rs:76-78` (falls back to ADE process cwd) |
-| C06 | P2 | CONFIRMED | `src-tauri/src/runtime/terminals.rs:159-171` (`output` reads `guard.exit` without calling `try_wait()`) |
-| C07 | P1 | CONFIRMED | `src-tauri/src/runtime/mod.rs:1267-1293,2726-2736` (`remembered_for` lacks project/workspace scope), `src-tauri/src/runtime/permissions.rs:116-121` (`resolve` overrides `Supervised` and ignores `option.kind`) |
-| C08 | P2 | CONFIRMED | `src-tauri/src/config.rs:55-67,93` (`save_instances` uses non-atomic `fs::write`; `load_instances` returns `Vec::new()` on TOML parse error, triggering mock fallback in `AgentRuntime::new`) |
-| C09 | P2 | CONFIRMED | `src-tauri/src/store/queue.rs:156-190` (`pop_queue_head` deletes row via `DELETE RETURNING` before `dispatch` / `create_run` commits) |
-| C10 | P2 | CONFIRMED | `src-tauri/src/runtime/mod.rs:1145-1165` (`cancel` only spawns `session/cancel` notification with no cancelling state or kill escalation) |
-| C11 | P2 | CONFIRMED | `src-tauri/src/runtime/ptys.rs:115` (`powershell` hardcoded), `src/lib/links.ts:56,81-82` (rejects leading `/` and joins with `\`), `src/lib/auth.ts:37-41` (POSIX `KEY=val` syntax breaks PowerShell) |
-| C12 | P2 | CONFIRMED | `src-tauri/src/ipc/mod.rs:350-355` (`threads_get` loads all thread events), `src/stores/runs.ts:644-666` (`hydrateThread` does O(R*E) `events.filter` per run) |
-| D01 | P1 | CONFIRMED | `src/components/chat/ComposerControls.tsx:771-782` (`ModePill` lacks mode descriptions), `src/components/chat/MessagesTimeline.tsx:848-888` (`ApprovalCard` hides agent/workspace/persistence), `src/components/layout/Sidebar.tsx:467-471`, `src/routes/settings.general.tsx` (no remembered-permissions view/reset) |
-| D02 | P2 | CONFIRMED | `src/routes/settings.tsx:85` (`w-60` nav) + `src/routes/settings.providers.tsx:282` (`w-72` list) leaves cramped detail pane at `1040×680` |
-| D03 | P2 | CONFIRMED | `src/routes/index.tsx:4-6` (redirects `/` -> `/chat`), `src/components/chat/NewChatEmptyState.tsx:6-28` (no missing-agent CTA or dev-mock distinction), `src/components/chat/Composer.tsx:364` (stale `"pick one in the header"` error after typing) |
-| D04 | P2 | CONFIRMED | `src/components/ui/ImageLightbox.tsx:5-51` (lacks initial focus, `Tab` trap, and focus restoration on close) |
-| D05 | P2 | CONFIRMED | `src/components/terminal/TerminalPanel.tsx:74-101` (`create`/`kill`/`list` log to `console.error`; `kill` calls `removeTerminal` even when IPC fails) |
-| D06 | P2 | CONFIRMED | `src/lib/providerChecks.ts:46-58` (preserves old report on failure with no error/stale marker), `src/routes/settings.providers.tsx:62-98,141-169` (`statusLine` drops `at` timestamp and shows indistinguishable `Connected`) |
-| Q01 | P2 | CONFIRMED | `src-tauri/src/drivers/golden.rs:216-219` (hard `200ms` latency assertion inside functional happy-path test), `tests/e2e/smoke.spec.ts:31` (asserts removed `"New threads start here."` text) |
-| Q02 | P2 | CONFIRMED | `README.md:128` (stops at M8, no harness capability matrix), `TODO.md:3,25-40` (claims auth/model/usage missing, stale 86/54 counts), `src-tauri/tauri.conf.json:41` (`releases.pult.local`) |
+| ID  | Severity | Status    | Evidence (`file:line` / function)                                                                                                                                                                                                                                                                                     |
+| --- | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| C01 | P1       | CONFIRMED | `src-tauri/src/runtime/mod.rs:2549-2597` (`resolve_session` masks `get_session_ref` errors with `_ =>` and emits no user-visible notice when `session/load` fails)                                                                                                                                                    |
+| C02 | P1       | CONFIRMED | `src-tauri/src/git/mod.rs:1004-1025` (`worktree_remove` uses `--force` + `remove_dir_all`), `src-tauri/src/ipc/mod.rs:406-443` (`threads_delete`), `src-tauri/src/runtime/mod.rs:2191` (`finalize_run` auto-dispatches queue), `src/components/layout/Sidebar.tsx:467-494`                                            |
+| C03 | P1       | CONFIRMED | `src-tauri/src/store/records.rs:67-74` (`QueueItem` lacks `mode`/`config_options`), `src-tauri/src/ipc/mod.rs:468-475` (`runs_dispatch` mutates live thread settings before `send`), `src-tauri/src/runtime/mod.rs:728-777,2199-2234`                                                                                 |
+| C04 | P1       | CONFIRMED | `src-tauri/src/runtime/terminals.rs:22,159-253` (`output`/`wait_for_exit`/`kill`/`release` skip owner checks; `release_session` keys on raw ACP `session_id`), `src-tauri/src/runtime/mod.rs:2014-2040`                                                                                                               |
+| C05 | P1       | CONFIRMED | `src-tauri/src/runtime/mod.rs:2867-2883` (`handle_terminal_create` passes `None` cwd), `src-tauri/src/runtime/terminals.rs:76-78` (falls back to ADE process cwd)                                                                                                                                                     |
+| C06 | P2       | CONFIRMED | `src-tauri/src/runtime/terminals.rs:159-171` (`output` reads `guard.exit` without calling `try_wait()`)                                                                                                                                                                                                               |
+| C07 | P1       | CONFIRMED | `src-tauri/src/runtime/mod.rs:1267-1293,2726-2736` (`remembered_for` lacks project/workspace scope), `src-tauri/src/runtime/permissions.rs:116-121` (`resolve` overrides `Supervised` and ignores `option.kind`)                                                                                                      |
+| C08 | P2       | CONFIRMED | `src-tauri/src/config.rs:55-67,93` (`save_instances` uses non-atomic `fs::write`; `load_instances` returns `Vec::new()` on TOML parse error, triggering mock fallback in `AgentRuntime::new`)                                                                                                                         |
+| C09 | P2       | CONFIRMED | `src-tauri/src/store/queue.rs:156-190` (`pop_queue_head` deletes row via `DELETE RETURNING` before `dispatch` / `create_run` commits)                                                                                                                                                                                 |
+| C10 | P2       | CONFIRMED | `src-tauri/src/runtime/mod.rs:1145-1165` (`cancel` only spawns `session/cancel` notification with no cancelling state or kill escalation)                                                                                                                                                                             |
+| C11 | P2       | CONFIRMED | `src-tauri/src/runtime/ptys.rs:115` (`powershell` hardcoded), `src/lib/links.ts:56,81-82` (rejects leading `/` and joins with `\`), `src/lib/auth.ts:37-41` (POSIX `KEY=val` syntax breaks PowerShell)                                                                                                                |
+| C12 | P2       | CONFIRMED | `src-tauri/src/ipc/mod.rs:350-355` (`threads_get` loads all thread events), `src/stores/runs.ts:644-666` (`hydrateThread` does O(R*E) `events.filter` per run)                                                                                                                                                        |
+| D01 | P1       | CONFIRMED | `src/components/chat/ComposerControls.tsx:771-782` (`ModePill` lacks mode descriptions), `src/components/chat/MessagesTimeline.tsx:848-888` (`ApprovalCard` hides agent/workspace/persistence), `src/components/layout/Sidebar.tsx:467-471`, `src/routes/settings.general.tsx` (no remembered-permissions view/reset) |
+| D02 | P2       | CONFIRMED | `src/routes/settings.tsx:85` (`w-60` nav) + `src/routes/settings.providers.tsx:282` (`w-72` list) leaves cramped detail pane at `1040×680`                                                                                                                                                                            |
+| D03 | P2       | CONFIRMED | `src/routes/index.tsx:4-6` (redirects `/` -> `/chat`), `src/components/chat/NewChatEmptyState.tsx:6-28` (no missing-agent CTA or dev-mock distinction), `src/components/chat/Composer.tsx:364` (stale `"pick one in the header"` error after typing)                                                                  |
+| D04 | P2       | CONFIRMED | `src/components/ui/ImageLightbox.tsx:5-51` (lacks initial focus, `Tab` trap, and focus restoration on close)                                                                                                                                                                                                          |
+| D05 | P2       | CONFIRMED | `src/components/terminal/TerminalPanel.tsx:74-101` (`create`/`kill`/`list` log to `console.error`; `kill` calls `removeTerminal` even when IPC fails)                                                                                                                                                                 |
+| D06 | P2       | CONFIRMED | `src/lib/providerChecks.ts:46-58` (preserves old report on failure with no error/stale marker), `src/routes/settings.providers.tsx:62-98,141-169` (`statusLine` drops `at` timestamp and shows indistinguishable `Connected`)                                                                                         |
+| Q01 | P2       | CONFIRMED | `src-tauri/src/drivers/golden.rs:216-219` (hard `200ms` latency assertion inside functional happy-path test), `tests/e2e/smoke.spec.ts:31` (asserts removed `"New threads start here."` text)                                                                                                                         |
+| Q02 | P2       | CONFIRMED | `README.md:128` (stops at M8, no harness capability matrix), `TODO.md:3,25-40` (claims auth/model/usage missing, stale 86/54 counts), `src-tauri/tauri.conf.json:41` (`releases.pult.local`)                                                                                                                          |
 
 ---
 
@@ -206,6 +206,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `threads_delete_refuses_dirty_worktree_without_force_and_preserves_thread_row`: creates worktree thread + untracked file, calls delete helper without force, asserts `git.worktree_dirty` error AND thread row + untracked file remain intact; `keep` deletes thread row while preserving worktree dir.
   - `cap_ui_event_payloads_enforces_total_history_budget`: passes 20 × 1.5 MB events and verifies total serialized IPC payload stays below cap.
 - **Verification:** `cargo test --manifest-path src-tauri/Cargo.toml --lib` and `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`.
+- [x] tests authored (green — production already implemented): `threads_delete_refuses_dirty_worktree_without_force_and_preserves_thread_row`, `cap_ui_event_payloads_enforces_total_history_budget`
 
 ### T09 — Platform-aware PTY default shell (C11 backend)
 
@@ -221,6 +222,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Acceptance Tests (`src-tauri/src/runtime/ptys.rs` `#[cfg(test)]`):**
   - `default_shell_matches_target_os`: asserts Windows returns `powershell -NoLogo` and non-Windows resolves `$SHELL` or `/bin/sh`.
 - **Verification:** `cargo test --manifest-path src-tauri/Cargo.toml --lib runtime::ptys`.
+- [x] tests authored (green — production already implemented): `default_shell_matches_target_os`
 
 ### T10 — Cross-platform Markdown workspace links & PowerShell/POSIX terminal auth command (C11 frontend)
 
@@ -238,6 +240,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `tests/auth.test.ts`: `formats PowerShell env assignment and quoted path with spaces` + `formats POSIX env assignment on macOS/Linux`.
   - `tests/markdown-links.test.tsx`: `classifies POSIX absolute workspace paths and joins with forward slashes`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/auth.test.ts tests/markdown-links.test.tsx`.
+- [x] tests authored (red): `formats PowerShell env assignment and quoted path with spaces`, `formats POSIX env assignment on macOS/Linux`, `classifies POSIX absolute workspace paths and joins with forward slashes`
 
 ### T11 — Frontend IPC bindings, single-pass `hydrateThread` & large-chat benchmark (C12, IPC types)
 
@@ -256,6 +259,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `hydrateThread groups 500 runs and 10000 events in single pass`: measures actual elapsed `performance.now()` and asserts correctness of all 500 run views without asserting an arbitrary flaky host threshold (logs measured ms cleanly).
   - `marks run as cancelling on run:cancelling event and clears on finish`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/runs-store.test.ts`.
+- [x] tests authored (green — production already implemented): `hydrateThread groups 500 runs and 10000 events in a single pass`, `marks run as cancelling on run:cancelling event and clears on finish`
 
 ---
 
@@ -275,6 +279,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Acceptance Tests (`tests/thread-delete.test.tsx`):**
   - `shows dirty/untracked worktree warning and preserves files when keep worktree is chosen` (mocks `threadsWorktreeStatus` returning `{ dirty: true, untracked: 1, modified: 0, entries: ["draft.txt"] }`, asserts dialog shows `draft.txt` + workspace path, and clicking "Delete thread & keep worktree" calls `threadsDelete(id, "keep")`).
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/thread-delete.test.tsx tests/sidebar.test.tsx`.
+- [x] tests authored (green — production already implemented in working tree): `shows workspace path and dirty entries, supports keep and force_remove, and cancels without deleting`
 
 ### T13 — Permission mode explanations, approval context, remembered-permissions manager & force-stop button (D01, C10 UI, D03 composer error fix)
 
@@ -297,6 +302,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `tests/composer.test.tsx`: `ModePill shows scope descriptions and Stop button switches to Force stop while cancelling`.
   - `tests/settings-pages.test.tsx`: `GeneralSettings lists and revokes remembered permissions`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/messages-timeline.test.tsx tests/composer.test.tsx tests/settings-pages.test.tsx`.
+- [x] tests authored (red on `ApprovalCard` allow_always button scope label; green on `ModePill`/Force stop and `GeneralSettings` remembered permissions): `ApprovalCard displays active provider, workspace, and project-scoped allow_always note`, `ModePill shows scope descriptions and Stop button switches to Force stop while cancelling`, `GeneralSettings lists and revokes remembered permissions`
 
 ### T14 — Responsive Providers layout, stale/failed probe status & `config.toml` error banner (D02, D06, C08 UI)
 
@@ -316,6 +322,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `tests/provider-signin.test.tsx`: `statusLine distinguishes fresh connected check from failed stale cached check`.
   - `tests/providers-empty.test.tsx`: `renders back-to-list navigation or readable detail layout at 1040px and surfaces config parse errors`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/provider-checks.test.ts tests/provider-signin.test.tsx tests/providers-empty.test.tsx`.
+- [x] tests authored (red on `providers-empty.test.tsx` `"Back to providers"` accessible name; green on `provider-checks.test.ts` and `provider-signin.test.tsx`): `records lastError and lastAttemptAt while retaining prior cached report on probe failure, then clears lastError on success`, `statusLine distinguishes fresh connected check from failed stale cached check`, `surfaces config.toml parse errors and renders Back to providers control at 1040px width after selecting a provider`
 
 ### T15 — Non-blocking first-run / missing-agent guidance & dev-mock label (D03)
 
@@ -331,6 +338,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Acceptance Tests (`tests/new-chat-empty.test.tsx`):**
   - `shows Connect an agent CTA when no enabled providers exist` and `labels built-in dev mock without blocking chat`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/new-chat-empty.test.tsx`.
+- [x] tests authored (green — production already implemented): `shows Connect an agent CTA when no enabled providers exist and navigates to /settings/providers`, `labels built-in dev mock without blocking chat and navigates to /settings/providers`, `renders neither missing-agent CTA nor dev-mock label when a real provider is enabled`
 
 ### T16 — Complete modal focus trap and focus restoration in `ImageLightbox` (D04)
 
@@ -344,6 +352,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Acceptance Tests (`tests/image-lightbox.test.tsx`):**
   - `moves focus to Close button on open, traps Tab/Shift+Tab inside dialog, and restores focus on Escape close`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/image-lightbox.test.tsx tests/markdown-links.test.tsx`.
+- [x] tests authored (green — production already implemented): `moves focus to Close button on mount, traps Tab/Shift+Tab inside dialog, and restores focus on Escape close`, `restores focus to previously focused element on unmount`
 
 ### T17 — Inline error banner & confirmed-only tab removal in `TerminalPanel` (D05)
 
@@ -359,6 +368,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Acceptance Tests (`tests/terminal-panel.test.tsx`):**
   - `surfaces inline error on terminalPtyCreate rejection and preserves tab with error on terminalPtyKill rejection`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/terminal-panel.test.tsx tests/terminals.test.ts`.
+- [x] tests authored (green — production already implemented): `shows an inline alert with the error message when terminalPtyCreate rejects`, `keeps the tab visible and shows an alert when terminalPtyKill rejects, then removes on success`
 
 ---
 
@@ -378,6 +388,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `cargo test --manifest-path src-tauri/Cargo.toml golden_happy_path_streams_expected_events` passes deterministically under load.
   - `pnpm exec playwright test tests/e2e/smoke.spec.ts` passes all 5 smoke specs (runtime acceptance when Playwright Chromium is available).
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test`, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`, `cargo test --manifest-path src-tauri/Cargo.toml`, and `pnpm exec playwright test`.
+- [x] tests authored/updated (green): `golden_happy_path_streams_expected_events`, `golden_first_echo_latency_budget` (`#[ignore]`), `tests/e2e/smoke.spec.ts`, plus test-maintenance updates in `tests/composer.test.tsx`, `tests/run-events.test.ts`, and `tests/thread-actions.test.tsx`
 
 ### T19 — Truthful `README.md` / `TODO.md` refresh & Harness Capability Matrix (Q02)
 
@@ -397,6 +408,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 ## Testability Limits & Manual / Runtime Acceptance
 
 Automated Vitest, Cargo, and Playwright browser smoke tests **cannot** prove the following; keep these explicitly marked as **manual / runtime acceptance**:
+
 1. **Real subscription harnesses** (`claude-code`, `gemini-cli`, `codex`, `opencode`, `antigravity`, `dsh`): real account sign-in (`authenticate` & terminal CLI login), live `session/load` resume across app restart, capability-gated image prompts, tool-call permission prompts, `session/cancel` + force-kill on wedged real CLIs, and two concurrent real chats.
 2. **Real updater & OS installers (`tauri.conf.json`)**: replacing `https://releases.pult.local/...` with a real HTTPS endpoint, Windows Authenticode signing, macOS `codesign` + `notarytool`, and Linux `deb`/`AppImage` bundling.
 3. **Visual / A11y runtime checks**: Dark/Light/Graphite/Liquid themes at `1040×680` and `1440×900`, OS text-scaling (125%+), and Windows Narrator / NVDA screen-reader traversal.

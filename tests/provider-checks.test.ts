@@ -124,18 +124,32 @@ describe("providerChecks", () => {
     expect(typeof cached.claude?.at).toBe("number");
   });
 
-  it("keeps the previous cache entry when a probe rejects", async () => {
+  it("records lastError and lastAttemptAt while retaining prior cached report on probe failure, then clears lastError on success", async () => {
     const previousReport = makeReport("codex", { agentName: "Codex Previous" });
     window.localStorage.setItem(
       CACHE_KEY,
       JSON.stringify({ codex: { report: previousReport, at: 12345 } }),
     );
 
+    const beforeFail = Date.now();
     providersPreflight.mockRejectedValueOnce(new Error("spawn failed"));
 
-    const results = await preflightInstances([makeInstance("codex")]);
+    const failedResults = await preflightInstances([makeInstance("codex")]);
 
-    expect(results.codex).toEqual({ report: previousReport, at: 12345 });
-    expect(readCachedChecks().codex).toEqual({ report: previousReport, at: 12345 });
+    expect(failedResults.codex?.report).toEqual(previousReport);
+    expect(failedResults.codex?.at).toBe(12345);
+    expect(failedResults.codex?.lastError).toBe("spawn failed");
+    expect(failedResults.codex?.lastAttemptAt).toBeGreaterThanOrEqual(beforeFail);
+    expect(readCachedChecks().codex).toEqual(failedResults.codex);
+
+    const freshReport = makeReport("codex", { agentName: "Codex Recovered" });
+    providersPreflight.mockResolvedValueOnce(freshReport);
+
+    const recoveredResults = await preflightInstances([makeInstance("codex")]);
+
+    expect(recoveredResults.codex?.report).toEqual(freshReport);
+    expect(recoveredResults.codex?.at).toBeGreaterThanOrEqual(beforeFail);
+    expect(recoveredResults.codex?.lastError).toBeNull();
+    expect(readCachedChecks().codex).toEqual(recoveredResults.codex);
   });
 });

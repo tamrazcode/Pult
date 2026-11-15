@@ -22,7 +22,11 @@ import type {
   SessionMode,
 } from "../../lib/types";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
-import { PERMISSION_MODE_LABELS, useSettingsStore } from "../../stores/settings";
+import {
+  PERMISSION_MODE_DESCRIPTIONS,
+  PERMISSION_MODE_LABELS,
+  useSettingsStore,
+} from "../../stores/settings";
 import type { PermissionMode } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
 import { ProviderLogo } from "./ProviderLogo";
@@ -772,12 +776,19 @@ export function ModePill({ threadId }: { threadId?: string }) {
               <button
                 key={mode}
                 onClick={() => pick(mode)}
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
+                className="flex w-full items-start gap-2 px-3 py-1.5 text-left transition hover:bg-hover"
               >
-                <span className="truncate">{PERMISSION_MODE_LABELS[mode]}</span>
-                {mode === permissionMode && (
-                  <Check size={12} className="ml-auto shrink-0 text-accent" />
-                )}
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 text-sm text-text-secondary">
+                    {PERMISSION_MODE_LABELS[mode]}
+                    {mode === permissionMode && (
+                      <Check size={12} className="shrink-0 text-accent" />
+                    )}
+                  </span>
+                  <span className="mt-0.5 block text-xs leading-snug text-text-tertiary">
+                    {PERMISSION_MODE_DESCRIPTIONS[mode]}
+                  </span>
+                </span>
               </button>
             ))}
           </div>

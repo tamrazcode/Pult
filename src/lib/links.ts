@@ -19,6 +19,7 @@ function fileUrlToPath(raw: string): string {
 export function classifyMarkdownHref(
   rawHref: string | null | undefined,
   workspaceRoot: string | null | undefined,
+  platform?: "windows" | "posix",
 ): ClassifiedLink {
   const raw = (rawHref ?? "").trim();
   if (!raw) return { kind: "unsupported", raw };
@@ -53,15 +54,19 @@ export function classifyMarkdownHref(
     path = fileUrlToPath(raw);
   }
   path = path.split("#")[0].split("?")[0].replace(/\\/g, "/");
-  if (!path || path.startsWith("/") || path.startsWith("//")) {
-    return { kind: "unsupported", raw };
-  }
+  if (!path) return { kind: "unsupported", raw };
   if (path.split("/").some((part) => part === "..")) {
     return { kind: "unsupported", raw };
   }
 
-  let relative: string;
   const root = workspaceRoot?.replace(/[\\/]+$/, "").replace(/\\/g, "/");
+  // A root that starts with a single slash is a POSIX workspace; Windows
+  // roots are drive-qualified (C:/…). UNC paths are not workspace roots.
+  const posix =
+    platform === "posix" ||
+    (platform !== "windows" && !!root && root.startsWith("/") && !root.startsWith("//"));
+
+  let relative: string;
   if (/^[a-zA-Z]:\//.test(path)) {
     if (!root) return { kind: "unsupported", raw };
     const normalized = path.toLowerCase();
@@ -70,6 +75,13 @@ export function classifyMarkdownHref(
       return { kind: "unsupported", raw };
     }
     relative = path.slice(root.length).replace(/^\/+/, "");
+  } else if (posix && path.startsWith("/")) {
+    if (!root || (path !== root && !path.startsWith(`${root}/`))) {
+      return { kind: "unsupported", raw };
+    }
+    relative = path.slice(root.length).replace(/^\/+/, "");
+  } else if (path.startsWith("/") || path.startsWith("//")) {
+    return { kind: "unsupported", raw };
   } else {
     relative = path.replace(/^\.\//, "");
   }
@@ -78,7 +90,10 @@ export function classifyMarkdownHref(
   const isDir = relative.endsWith("/");
   relative = relative.replace(/\/+$/, "");
   if (!relative) return { kind: "unsupported", raw };
-  const nativeRoot = workspaceRoot?.replace(/[\\/]+$/, "").replace(/\//g, "\\");
-  const fullPath = nativeRoot ? `${nativeRoot}\\${relative.replace(/\//g, "\\")}` : relative;
+  const fullPath = root
+    ? posix
+      ? `${root}/${relative}`
+      : `${root.replace(/\//g, "\\")}\\${relative.replace(/\//g, "\\")}`
+    : relative;
   return { kind: "workspace", relativePath: relative, fullPath, isDir };
 }

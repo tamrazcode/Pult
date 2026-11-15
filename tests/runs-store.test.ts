@@ -576,4 +576,91 @@ describe("runs store", () => {
     const afterEmpty = useRunsStore.getState().desiredConfigByThread["th"];
     expect(afterEmpty === undefined || Object.keys(afterEmpty).length === 0).toBe(true);
   });
+
+  it("hydrateThread groups 500 runs and 10000 events in a single pass", () => {
+    const runCount = 500;
+    const eventsPerRun = 20; // 1 user_message + 18 agent_message_delta + 1 run_finished = 10,000 events
+    const runs: Run[] = Array.from({ length: runCount }, (_, i) => ({
+      ...run(`r-${i}`, "th-perf", "finished", i),
+      stopReason: "end_turn",
+    }));
+
+    const events: AppEvent[] = [];
+    for (let seq = 0; seq < eventsPerRun; seq++) {
+      for (let r = 0; r < runCount; r++) {
+        const runId = `r-${r}`;
+        if (seq === 0) {
+          events.push({
+            id: `${runId}-${seq}`,
+            runId,
+            seq,
+            ts: seq,
+            kind: "user_message",
+            payload: { text: `prompt-${r}`, images: [] },
+          });
+        } else if (seq < eventsPerRun - 1) {
+          events.push({
+            id: `${runId}-${seq}`,
+            runId,
+            seq,
+            ts: seq,
+            kind: "agent_message_delta",
+            payload: { delta: "x" },
+          });
+        } else {
+          events.push({
+            id: `${runId}-${seq}`,
+            runId,
+            seq,
+            ts: seq,
+            kind: "run_finished",
+            payload: { stopReason: "end_turn" },
+          });
+        }
+      }
+    }
+
+    const start = performance.now();
+    useRunsStore.getState().hydrateThread("th-perf", runs, events, [], null);
+    const elapsedMs = performance.now() - start;
+    console.info(`hydrateThread(500 runs, 10000 events) took ${elapsedMs.toFixed(2)}ms`);
+
+    const state = useRunsStore.getState();
+    expect(state.runsByThread["th-perf"]).toHaveLength(runCount);
+    for (let r = 0; r < runCount; r++) {
+      const runId = `r-${r}`;
+      const view = state.viewsByRun[runId];
+      expect(view).toBeDefined();
+      expect(view.streaming).toBe(false);
+      expect(view.stopReason).toBe("end_turn");
+      expect(view.items).toHaveLength(2);
+      expect(view.items[0]).toMatchObject({ type: "user", text: `prompt-${r}` });
+      expect(view.items[1]).toMatchObject({
+        type: "assistant",
+        text: "x".repeat(eventsPerRun - 2),
+        streaming: false,
+      });
+      expect(state.appliedEvents[runId]?.size).toBe(eventsPerRun);
+    }
+  });
+
+  it("marks run as cancelling on run:cancelling event and clears on finish", () => {
+    useRunsStore.setState({ cancellingByRun: {} });
+    useRunsStore.getState().registerRun(run("r-cancel", "th", "running", 0));
+
+    useRunsStore.getState().markCancelling("r-cancel");
+    expect(useRunsStore.getState().cancellingByRun["r-cancel"]).toBe(true);
+
+    useRunsStore.getState().receiveRunEvent("r-cancel", {
+      id: "r-cancel-0",
+      runId: "r-cancel",
+      seq: 0,
+      ts: 1,
+      kind: "run_finished",
+      payload: { stopReason: "cancelled" },
+    });
+
+    expect(useRunsStore.getState().cancellingByRun["r-cancel"]).toBeUndefined();
+    expect(useRunsStore.getState().runsByThread["th"][0].status).toBe("cancelled");
+  });
 });

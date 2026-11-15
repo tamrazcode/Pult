@@ -97,7 +97,10 @@ interface ThreadsState {
     options?: { workspace?: string | null; worktree?: boolean },
   ) => Promise<Thread>;
   renameThread: (threadId: string, title: string) => Promise<void>;
-  deleteThread: (threadId: string) => Promise<void>;
+  deleteThread: (
+    threadId: string,
+    worktreeMode?: "safe" | "keep" | "force_remove",
+  ) => Promise<void>;
   setThreadStatus: (threadId: string, status: ThreadStatus) => Promise<void>;
   setThreadPinned: (threadId: string, pinned: boolean) => Promise<void>;
 }
@@ -194,9 +197,9 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     }
   },
 
-  deleteThread: async (threadId) => {
+  deleteThread: async (threadId, worktreeMode) => {
     try {
-      await threadsDelete(threadId);
+      await threadsDelete(threadId, worktreeMode);
       get().removeThread(threadId);
     } catch (err) {
       useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });

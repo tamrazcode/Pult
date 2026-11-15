@@ -4,6 +4,7 @@ import {
   onPtyExit,
   onPtyOutput,
   onQueueUpdate,
+  onRunCancelling,
   onRunEvent,
   onRunEvents,
   onRunStarted,
@@ -86,6 +87,9 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offStarted = await onRunStarted((run) => {
     useRunsStore.getState().registerRun(run);
   });
+  const offCancelling = await onRunCancelling((runId) => {
+    useRunsStore.getState().markCancelling(runId);
+  });
   const offQueue = await onQueueUpdate(({ threadId, items }) => {
     useRunsStore.getState().setQueue(threadId, items);
   });
@@ -111,6 +115,7 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
     offRunBatch,
     offCaps,
     offStarted,
+    offCancelling,
     offQueue,
     offElicitation,
     offPtyOutput,

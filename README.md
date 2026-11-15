@@ -125,6 +125,38 @@ DEVLOG.md            one entry per milestone: decisions, deviations, known issue
 
 ## Status
 
-Milestones M0–M8 complete; see [DEVLOG.md](DEVLOG.md) and [CHANGELOG.md](CHANGELOG.md).
-Known environment limitations (real Claude Code / Gemini CLI not installed on the dev
-machine) are recorded per milestone in the DEVLOG.
+Beyond the M0–M8 milestones (see [DEVLOG.md](DEVLOG.md) and [CHANGELOG.md](CHANGELOG.md)),
+the current build includes in-app sign-in for terminal auth methods, model / reasoning-effort
+pickers driven by agent-advertised config options, `/usage` token reporting, the built-in
+browser surface, the floating project widget, queue steer / edit / reorder, and the
+Dark / Light / Graphite / Liquid themes.
+
+Verification on this machine (Windows):
+
+```sh
+pnpm typecheck && pnpm lint && pnpm test
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+pnpm tauri build --no-bundle
+```
+
+`pnpm exec playwright test` exercises the UI in a browser without the Tauri IPC bridge.
+
+## Harness capability matrix
+
+Everything below is what the adapter/advertisement path supports. `Last verified` means a
+real signed-in account completed the scenario end-to-end on this machine; `—` means it has
+not been verified yet and must not be assumed from tests alone.
+
+| Agent       | Adapter / command                              | Auth                 | Images | Resume | Cancel | Model & effort | Last verified |
+| ----------- | ---------------------------------------------- | -------------------- | ------ | ------ | ------ | -------------- | ------------- |
+| Mock (dev)  | bundled `fixtures/mock-acp-agent.mjs`          | none                 | yes    | yes    | yes    | yes            | —             |
+| Claude Code | `npx -y @zed-industries/claude-code-acp`       | terminal sign-in     | —      | —      | —      | —              | —             |
+| Gemini CLI  | `npx -y @google/gemini-cli --experimental-acp` | terminal sign-in     | —      | —      | —      | —              | —             |
+| Codex CLI   | `npx -y @agentclientprotocol/codex-acp`        | terminal sign-in     | —      | —      | —      | —              | —             |
+| OpenCode    | `opencode acp`                                 | provider CLI sign-in | —      | —      | —      | —              | —             |
+| dsh         | `dsh --profile acp`                            | provider CLI sign-in | —      | —      | —      | —              | —             |
+
+Windows is the verified platform. macOS/Linux build, signing/notarization, and the updater
+endpoint (`releases.pult.local` placeholder) remain release blockers — see
+[TODO.md](TODO.md).

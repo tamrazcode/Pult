@@ -25,13 +25,15 @@ import {
   providersUpdateCheck,
   providersUpdateInstall,
   runsCancel,
+  threadsWorktreeStatus,
   type ProviderUpdate,
 } from "../../lib/ipc";
 import { useUiStore } from "../../stores/ui";
 import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
+import { useSettingsStore } from "../../stores/settings";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
-import type { Project, Thread } from "../../lib/types";
+import type { Project, Thread, WorktreeDirtyStatus } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { Tooltip } from "../ui/Tooltip";
@@ -269,6 +271,10 @@ export function Sidebar({ width }: { width: number }) {
     project?: Project;
     thread?: Thread;
   } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{
+    thread: Thread;
+    status: WorktreeDirtyStatus;
+  } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
   const failedUpdates = updates.filter((update) => updateErrors[update.instanceId]);
   const updateErrorText = failedUpdates
@@ -305,6 +311,45 @@ export function Sidebar({ width }: { width: number }) {
       window.removeEventListener("keydown", onKey);
     };
   }, [filterOpen]);
+
+  const performDelete = async (threadId: string, mode: "safe" | "keep" | "force_remove") => {
+    const active = activeRunForThread(useRunsStore.getState().runsByThread[threadId]);
+    if (active && (active.status === "running" || active.status === "queued")) {
+      await runsCancel(active.id, mode === "force_remove").catch(() => {});
+    }
+    try {
+      await useThreadsStore.getState().deleteThread(threadId, mode);
+    } catch {
+      return;
+    }
+    useRunsStore.getState().dropThreadState(threadId);
+    const wasActive = useThreadsStore.getState().activeThreadId === threadId;
+    if (wasActive) useThreadsStore.getState().setActiveThread(null);
+    if (pathname === `/thread/${threadId}`) void router.navigate({ to: "/chat" });
+  };
+
+  const requestDelete = async (thread: Thread) => {
+    // A worktree with uncommitted files needs an explicit choice; a plain
+    // thread only asks when the user kept the confirmation setting on.
+    const status = isTauri() ? await threadsWorktreeStatus(thread.id).catch(() => null) : null;
+    if (status?.dirty || useSettingsStore.getState().confirmDeleteThread) {
+      setDeleteTarget({
+        thread,
+        status: status ?? { dirty: false, modified: 0, untracked: 0, entries: [] },
+      });
+      return;
+    }
+    await performDelete(thread.id, "safe");
+  };
+
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDeleteTarget(null);
+    };
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
+  }, [deleteTarget]);
 
   const unreadSet = useMemo(() => new Set(unreadIds), [unreadIds]);
   const groups = useMemo(
@@ -467,30 +512,7 @@ export function Sidebar({ width }: { width: number }) {
         id: "delete",
         label: "Delete",
         danger: true,
-        confirmLabel: "Confirm delete",
-        onSelect: () => {
-          const active = activeRunForThread(useRunsStore.getState().runsByThread[thread.id]);
-          void (async () => {
-            if (active && (active.status === "running" || active.status === "queued")) {
-              await runsCancel(active.id).catch(() => {});
-            }
-            await useThreadsStore
-              .getState()
-              .deleteThread(thread.id)
-              .catch(() => {});
-            if (
-              useThreadsStore.getState().threads.some((candidate) => candidate.id === thread.id)
-            ) {
-              return;
-            }
-            useRunsStore.getState().dropThreadState(thread.id);
-            const wasActive = useThreadsStore.getState().activeThreadId === thread.id;
-            if (wasActive) useThreadsStore.getState().setActiveThread(null);
-            if (pathname === `/thread/${thread.id}`) {
-              void router.navigate({ to: "/chat" });
-            }
-          })();
-        },
+        onSelect: () => void requestDelete(thread),
       },
     ];
   };
@@ -750,6 +772,92 @@ export function Sidebar({ width }: { width: number }) {
           items={menu.project ? projectMenuItems(menu.project) : threadMenuItems(menu.thread!)}
           onClose={() => setMenu(null)}
         />
+      )}
+
+      {deleteTarget && (
+        <div
+          className="fixed inset-0 z-[90] grid place-items-center bg-black/50 p-6"
+          onClick={() => setDeleteTarget(null)}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete thread"
+            onClick={(event) => event.stopPropagation()}
+            className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-4 shadow-2xl"
+          >
+            <h2 className="text-sm font-medium text-text-primary">
+              Delete “{deleteTarget.thread.title}”?
+            </h2>
+            <p className="mt-2 text-xs text-text-secondary">
+              {deleteTarget.status.dirty
+                ? `Its worktree has ${deleteTarget.status.modified} modified and ${deleteTarget.status.untracked} untracked file(s). The branch is kept either way.`
+                : "This removes the transcript. The branch and checkpoints are kept."}
+              {deleteTarget.thread.workspace && (
+                <span className="mt-1 block truncate font-mono text-text-tertiary">
+                  {deleteTarget.thread.workspace}
+                </span>
+              )}
+            </p>
+            {deleteTarget.status.entries.length > 0 && (
+              <ul className="mt-2 max-h-28 overflow-y-auto rounded-(--radius-sm) bg-canvas px-2 py-1 font-mono text-xs text-text-tertiary">
+                {deleteTarget.status.entries.slice(0, 8).map((entry) => (
+                  <li key={entry} className="truncate" title={entry}>
+                    {entry}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex flex-col gap-2">
+              {deleteTarget.status.dirty ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const thread = deleteTarget.thread;
+                      setDeleteTarget(null);
+                      void performDelete(thread.id, "keep");
+                    }}
+                    className="h-8 rounded-(--radius-sm) border border-border-strong bg-surface px-3 text-xs text-text-primary transition hover:bg-hover"
+                  >
+                    Delete thread &amp; keep worktree files
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const thread = deleteTarget.thread;
+                      setDeleteTarget(null);
+                      void performDelete(thread.id, "force_remove");
+                    }}
+                    className="h-8 rounded-(--radius-sm) bg-danger px-3 text-xs font-medium text-white transition hover:brightness-110"
+                  >
+                    Delete thread &amp; discard{" "}
+                    {deleteTarget.status.untracked + deleteTarget.status.modified} file(s)
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const thread = deleteTarget.thread;
+                    setDeleteTarget(null);
+                    void performDelete(thread.id, "safe");
+                  }}
+                  className="h-8 rounded-(--radius-sm) bg-danger px-3 text-xs font-medium text-white transition hover:brightness-110"
+                >
+                  Delete thread
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                className="h-8 rounded-(--radius-sm) px-3 text-xs text-text-tertiary transition hover:text-text-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </aside>
   );

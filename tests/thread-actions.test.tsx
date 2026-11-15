@@ -92,9 +92,10 @@ describe("thread actions", () => {
     render(<ChatHeader title="Old title" threadId="th" />);
     fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Delete thread/ }));
+    expect(screen.getByRole("dialog", { name: "Confirm thread deletion" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
 
-    await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th"));
+    await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th", undefined));
     expect(runsCancel).toHaveBeenCalledWith("r1");
     expect(navigate).toHaveBeenCalledWith({ to: "/chat" });
     expect(useThreadsStore.getState().threads).toHaveLength(0);
@@ -117,8 +118,9 @@ describe("thread actions", () => {
     render(<ChatHeader title="Old title" threadId="th" />);
     fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /Delete thread/ }));
+    expect(screen.getByRole("dialog", { name: "Confirm thread deletion" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Delete" }));
-    await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th"));
+    await waitFor(() => expect(threadsDelete).toHaveBeenCalledWith("th", undefined));
     expect(navigate).not.toHaveBeenCalled();
     expect(useThreadsStore.getState().threads).toHaveLength(1);
   });

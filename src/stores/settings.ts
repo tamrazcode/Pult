@@ -16,6 +16,14 @@ export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   full_access: "Full access",
 };
 
+/** What each mode actually allows; shown next to the mode picker. */
+export const PERMISSION_MODE_DESCRIPTIONS: Record<PermissionMode, string> = {
+  supervised: "Asks before every tool action.",
+  auto_edit: "Files inside the workspace are edited without asking; deletes and outside paths ask.",
+  auto: "Reads and non-destructive tools run; deletes and outside paths ask.",
+  full_access: "Never asks. The agent still runs as you, with your file and network access.",
+};
+
 interface SettingsState {
   theme: ThemeName;
   accentHue: number | null;

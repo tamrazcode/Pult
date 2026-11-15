@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 import type { InstanceInfo, Run, SessionConfigOption } from "../src/lib/types";
 
@@ -155,6 +155,7 @@ describe("composer", () => {
       appliedEvents: {},
       commandsByThread: {},
       queueByThread: {},
+      cancellingByRun: {},
       desiredModeByThread: {},
       desiredConfigByThread: {},
       activeElicitation: null,
@@ -178,7 +179,7 @@ describe("composer", () => {
   it("cancels the active run on Escape", () => {
     render(<Composer threadId="th" />);
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(runsCancel).toHaveBeenCalledWith("r1");
+    expect(runsCancel).toHaveBeenCalledWith("r1", false);
   });
 
   it("does not cancel while the slash menu owns Escape", () => {
@@ -1273,5 +1274,30 @@ describe("composer", () => {
     expect(cardAt40.style.backgroundColor).toContain("color-mix");
     expect(cardAt40.style.backgroundColor).toContain("var(--composer-tint)");
     expect(cardAt40.style.backgroundColor).toContain("40%");
+  });
+
+  it("ModePill shows scope descriptions and Stop button switches to Force stop while cancelling", () => {
+    render(<Composer threadId="th" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Permission mode/i }));
+    expect(screen.getByText(/Asks before every tool action/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Files inside the workspace are edited without asking/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Reads and non-destructive tools run/i)).toBeInTheDocument();
+    expect(screen.getByText(/Never asks/i)).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+
+    act(() => {
+      useRunsStore.getState().markCancelling("r1");
+    });
+
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    const forceStopBtn = screen.getByRole("button", { name: "Force stop" });
+    fireEvent.click(forceStopBtn);
+    expect(runsCancel).toHaveBeenCalledWith("r1", true);
   });
 });
