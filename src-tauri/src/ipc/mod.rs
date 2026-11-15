@@ -317,6 +317,14 @@ fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
                     *delta = "\n\n_(large generated payload omitted)_\n\n".to_string();
                 }
             }
+            crate::events::EventKind::AgentThoughtDelta { delta } => {
+                if delta.len() > MAX_BYTES {
+                    *delta = "_(large thought payload omitted)_".to_string();
+                }
+            }
+            crate::events::EventKind::UserMessage { images, .. } => {
+                images.retain(|image| image.data.len() <= MAX_BYTES);
+            }
             crate::events::EventKind::FileChanged { diff, .. } if diff.len() > MAX_BYTES => {
                 *diff = "_(diff too large to display)_".to_string();
             }

@@ -14,9 +14,15 @@ const { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter } = vi.hoisted((
   return { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter };
 });
 
-vi.mock("shiki", () => ({
-  createHighlighter: mockCreateHighlighter,
+vi.mock("shiki/core", () => ({
+  createHighlighterCore: mockCreateHighlighter,
+}));
+vi.mock("shiki/engine/javascript", () => ({
   createJavaScriptRegexEngine: vi.fn(() => ({})),
+}));
+vi.mock("shiki/langs/ts.mjs", () => ({ default: { name: "ts" } }));
+vi.mock("shiki/themes/github-dark-default.mjs", () => ({
+  default: { name: "github-dark-default" },
 }));
 
 beforeEach(() => {
@@ -68,7 +74,7 @@ describe("Markdown", () => {
       await vi.advanceTimersByTimeAsync(300);
     });
 
-    expect(mockLoadLanguage).toHaveBeenCalledWith("ts");
+    expect(mockLoadLanguage).toHaveBeenCalledWith(expect.objectContaining({ name: "ts" }));
     expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
     expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const x = 1\nconst y = 2");
   });
@@ -120,7 +126,7 @@ describe("Markdown", () => {
     });
 
     expect(mockCreateHighlighter).toHaveBeenCalledTimes(2);
-    expect(mockLoadLanguage).toHaveBeenCalledWith("ts");
+    expect(mockLoadLanguage).toHaveBeenCalledWith(expect.objectContaining({ name: "ts" }));
     expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
     expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const b = 2");
   });

@@ -4,7 +4,9 @@ import { cellBrightness, cellGlyph, type Ripple } from "../../lib/asciiWave";
 const CELL_W = 10;
 const CELL_H = 16;
 const FPS = 24;
+const IDLE_FPS = 12;
 const FRAME_MS = 1000 / FPS;
+const IDLE_FRAME_MS = 1000 / IDLE_FPS;
 
 /**
  * T3-like living ASCII backdrop: theme-colored, brighter than the old static
@@ -75,7 +77,8 @@ export function LivingAscii() {
     const loop = (now: number) => {
       if (stopped) return;
       frame = requestAnimationFrame(loop);
-      if (now - last < FRAME_MS) return;
+      const active = pointerRef.current !== null || pulsesRef.current.length > 0;
+      if (now - last < (active ? FRAME_MS : IDLE_FRAME_MS)) return;
       last = now;
       pulsesRef.current = pulsesRef.current.filter((pulse) => now - pulse.startedAt < 1400);
       draw(now);

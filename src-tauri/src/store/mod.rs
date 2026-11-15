@@ -92,6 +92,8 @@ fn configure(conn: &Connection) -> Result<(), PultError> {
         .map_err(|e| sql("pragma journal_mode", e))?;
     conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;")
         .map_err(|e| sql("pragma foreign_keys/synchronous", e))?;
+    // Keep the WAL from growing across sessions; truncate is cheap on open.
+    let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
     Ok(())
 }
 

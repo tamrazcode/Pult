@@ -3,7 +3,7 @@ import { onAgentProcess, providersInstancesList, settingsGet, settingsSet } from
 import { isTauri } from "../lib/tauri";
 import type { InstanceInfo } from "../lib/types";
 
-export type RightPanelTab = "diff" | "files" | "terminal";
+export type RightPanelTab = "diff" | "files" | "terminal" | "pull-requests";
 
 /**
  * App-level error with a designed recovery path (§8 M7): agent crash,

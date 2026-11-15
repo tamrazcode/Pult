@@ -104,6 +104,8 @@ function chipFromDataUrl(dataUrl: string): ImageChip | null {
 }
 
 function fileToChip(file: File): Promise<ImageChip | null> {
+  // Keep the prompt payload under the IPC cap; larger images stall the WebView.
+  if (file.size > 1_500_000) return Promise.resolve(null);
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () =>

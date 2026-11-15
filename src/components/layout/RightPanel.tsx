@@ -1,9 +1,15 @@
-import { useEffect, useRef, useState } from "react";
-import { ChevronRight, FileDiff, FolderTree, Plus, Terminal } from "lucide-react";
-import { DiffPanel } from "../diff/DiffPanel";
-import { TerminalPanel } from "../terminal/TerminalPanel";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import { ChevronRight, FileDiff, FolderTree, GitPullRequest, Plus, Terminal } from "lucide-react";
+import { PullRequestsList } from "../git/PullRequestsList";
 import { ProjectCard } from "./ProjectCard";
 import { isTauri } from "../../lib/tauri";
+
+const DiffPanel = lazy(() =>
+  import("../diff/DiffPanel").then((module) => ({ default: module.DiffPanel })),
+);
+const TerminalPanel = lazy(() =>
+  import("../terminal/TerminalPanel").then((module) => ({ default: module.TerminalPanel })),
+);
 import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
@@ -13,6 +19,7 @@ const TABS: { id: RightPanelTab; label: string; icon: typeof FileDiff }[] = [
   { id: "diff", label: "Diff", icon: FileDiff },
   { id: "files", label: "Files", icon: FolderTree },
   { id: "terminal", label: "Terminal", icon: Terminal },
+  { id: "pull-requests", label: "Pull requests", icon: GitPullRequest },
 ];
 
 const EMPTY_COPY: Record<RightPanelTab, { title: string; hint: string }> = {
@@ -27,6 +34,10 @@ const EMPTY_COPY: Record<RightPanelTab, { title: string; hint: string }> = {
   terminal: {
     title: "Terminal not started",
     hint: "Shells that agents open will appear here.",
+  },
+  "pull-requests": {
+    title: "No pull requests yet",
+    hint: "Commit, push and create a PR from the diff panel.",
   },
 };
 
@@ -104,14 +115,18 @@ export function RightPanel({ width }: { width: number }) {
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}
+            type="button"
+            aria-label={label}
+            title={label}
+            aria-pressed={tab === id}
             onClick={() => setTab(id)}
-            className={`flex h-7 items-center gap-1.5 rounded-(--radius-sm) px-2.5 text-sm transition-colors duration-150 ${
+            className={`flex h-7 w-7 items-center justify-center rounded-(--radius-sm) transition-colors duration-150 ${
               tab === id
                 ? "border border-accent/40 bg-active text-text-primary"
                 : "border border-transparent text-text-tertiary hover:bg-hover hover:text-text-secondary"
             }`}
           >
-            <Icon size={14} /> {label}
+            <Icon size={14} />
           </button>
         ))}
         <div ref={surfacesRef} className="relative">
@@ -157,28 +172,34 @@ export function RightPanel({ width }: { width: number }) {
       <ProjectCard threadId={activeThreadId} />
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {tab === "diff" ? (
-          <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
-        ) : tab === "terminal" ? (
-          <TerminalPanel threadId={activeThreadId} />
-        ) : tab === "files" && files && files.length > 0 ? (
-          <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
-            {files.map((file) => (
-              <FileRow
-                key={file.path}
-                path={file.path}
-                diff={file.diff}
-                added={file.added}
-                removed={file.removed}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
-            <p className="text-sm text-text-secondary">{EMPTY_COPY[tab].title}</p>
-            <p className="text-xs text-text-tertiary">{EMPTY_COPY[tab].hint}</p>
-          </div>
-        )}
+        <Suspense fallback={<p className="p-3 text-xs text-text-tertiary">Loading surface…</p>}>
+          {tab === "diff" ? (
+            <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
+          ) : tab === "terminal" ? (
+            <TerminalPanel threadId={activeThreadId} />
+          ) : tab === "pull-requests" ? (
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <PullRequestsList />
+            </div>
+          ) : tab === "files" && files && files.length > 0 ? (
+            <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
+              {files.map((file) => (
+                <FileRow
+                  key={file.path}
+                  path={file.path}
+                  diff={file.diff}
+                  added={file.added}
+                  removed={file.removed}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
+              <p className="text-sm text-text-secondary">{EMPTY_COPY[tab].title}</p>
+              <p className="text-xs text-text-tertiary">{EMPTY_COPY[tab].hint}</p>
+            </div>
+          )}
+        </Suspense>
       </div>
     </aside>
   );

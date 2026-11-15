@@ -14,8 +14,9 @@ import type { Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
-import { createHighlighter, createJavaScriptRegexEngine } from "shiki";
-import type { Highlighter } from "shiki";
+import { createHighlighterCore } from "shiki/core";
+import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import type { HighlighterCore } from "shiki/core";
 import { Check, Copy } from "lucide-react";
 import { openExternalUrl, readImageDataUrl } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
@@ -65,6 +66,32 @@ const LANGUAGE_ALIASES: Record<string, string> = {
 
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
 const REHYPE_PLUGINS = [rehypeKatex];
+
+/**
+ * Grammars stay lazy: the root `shiki` import bundles every language (~10 MB),
+ * so only these explicit loaders ship with the app.
+ */
+const SHIKI_LANG_LOADERS: Record<string, () => Promise<{ default: unknown }>> = {
+  ts: () => import("shiki/langs/ts.mjs"),
+  tsx: () => import("shiki/langs/tsx.mjs"),
+  js: () => import("shiki/langs/js.mjs"),
+  jsx: () => import("shiki/langs/jsx.mjs"),
+  json: () => import("shiki/langs/json.mjs"),
+  rust: () => import("shiki/langs/rust.mjs"),
+  python: () => import("shiki/langs/python.mjs"),
+  bash: () => import("shiki/langs/bash.mjs"),
+  md: () => import("shiki/langs/md.mjs"),
+  css: () => import("shiki/langs/css.mjs"),
+  html: () => import("shiki/langs/html.mjs"),
+  yaml: () => import("shiki/langs/yaml.mjs"),
+  toml: () => import("shiki/langs/toml.mjs"),
+  sql: () => import("shiki/langs/sql.mjs"),
+  diff: () => import("shiki/langs/diff.mjs"),
+  go: () => import("shiki/langs/go.mjs"),
+  c: () => import("shiki/langs/c.mjs"),
+  cpp: () => import("shiki/langs/cpp.mjs"),
+  csharp: () => import("shiki/langs/csharp.mjs"),
+};
 // Re-parse markdown at most this often while a message streams.
 const STREAM_PARSE_MS = 120;
 // Highlight at most once per this interval while the code grows during streaming.
@@ -76,12 +103,12 @@ const HIGHLIGHT_LANGS: ReadonlySet<string> = new Set(SHIKI_LANGS);
 // One highlighter for the whole app, created lazily on first code block.
 // Languages load on demand; the 19-language bundle is no longer preloaded.
 // The JS regex engine avoids the WASM pipeline (shiki/wasm is not bundled here).
-let highlighterPromise: Promise<Highlighter> | undefined;
+let highlighterPromise: Promise<HighlighterCore> | undefined;
 const languageLoads = new Map<string, Promise<void>>();
 
-function getHighlighter(): Promise<Highlighter> {
-  highlighterPromise ??= createHighlighter({
-    themes: [SHIKI_THEME],
+function getHighlighter(): Promise<HighlighterCore> {
+  highlighterPromise ??= createHighlighterCore({
+    themes: [import("shiki/themes/github-dark-default.mjs")],
     langs: [],
     engine: createJavaScriptRegexEngine({ forgiving: true }),
   }).catch((err) => {
@@ -93,11 +120,15 @@ function getHighlighter(): Promise<Highlighter> {
 }
 
 /** Loads one grammar once and caches the promise for later blocks. */
-function ensureLanguage(highlighter: Highlighter, lang: string): Promise<void> {
+function ensureLanguage(highlighter: HighlighterCore, lang: string): Promise<void> {
+  const loader = SHIKI_LANG_LOADERS[lang];
+  if (!loader) return Promise.resolve();
   let load = languageLoads.get(lang);
   if (!load) {
-    load = highlighter
-      .loadLanguage(lang as Parameters<Highlighter["loadLanguage"]>[0])
+    load = loader()
+      .then((module) =>
+        highlighter.loadLanguage(module.default as Parameters<HighlighterCore["loadLanguage"]>[0]),
+      )
       .then(() => undefined)
       .catch((err) => {
         languageLoads.delete(lang);

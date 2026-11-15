@@ -6,7 +6,7 @@
 
 ## Execution status (2026-11-15)
 
-**Shipped:** 3 (bundled provider SVGs), 4 (startup bounded-parallel preflight + cache), 7 (Copy / Branch / HH:MM hover; Branch = real new thread + composer prefill), 8 (flat grouped tool/thought rows + “Working for Ns”), 9 (token line removed), 12 (neutral focus/selection/user bubble), 13 (icon-only footer, Search placeholder, hover tooltips foundation), 15 (optimistic user bubble), 17 (right-edge chevrons, tinted project badges), 18 (composer status line removed), 19 (provider tabs, model search, favorites, shortcuts, effort dots), 20 (queue rows + queue send icon), 21 (readable tool details), 22 (outside-click dismissal), 23 (larger app-icon mark), 24 (living theme-colored ASCII), plus 14’s provider pre-warm.
+**Shipped:** 3 (bundled provider SVGs), 4 (startup bounded-parallel preflight + cache), 7 (Copy / Branch / HH:MM hover; Branch = real new thread + composer prefill), 8 (flat grouped tool/thought rows + “Working for Ns”), 9 (token line removed), 12 (neutral focus/selection/user bubble), 13 (icon-only footer, Search placeholder, hover tooltips foundation), 15 (optimistic user bubble), 17 (right-edge chevrons, tinted project badges), 18 (composer status line removed), 19 (provider tabs, model search, favorites, shortcuts, effort dots), 20 (queue rows + queue send icon), 21 (readable tool details), 22 (outside-click dismissal), 23 (larger app-icon mark), 24 (living theme-colored ASCII), 25 (General / Chat / Diffs / Projects settings pages), 26 (performance/size/freeze audit), plus 2’s Pull requests surface and 14’s provider pre-warm.
 
 **Partial:** 1–2 (project card + Files/Diff/Terminal surfaces; project scripts and PR surface pending), 5–6 (ACP image blocks + tool-payload image rendering; live Codex fixture pending), 10 (editable/selection/link + existing thread menus; extended thread items pending), 11 (new empty state + flat composer; permission mode still in overflow), 25 (General/Chat/Projects pages; more real settings pages pending).
 
@@ -878,8 +878,8 @@
 **Files:** `DEVLOG.md`, this plan; production files only as findings require.
 
 **Requirements:**
+
 - Gemini records real measurements on the built app: clean `pnpm build` dist size (total + largest JS chunks), `pult-core.exe` size, cold app start (launch → window responsive), idle and post-imagegen RSS/CPU, SQLite `pult.db` + WAL sizes, top 10 largest event payloads, IPC cap behavior, `pnpm test` duration, Rust test duration, ASCII idle CPU, and warm vs cold first-token latency.
 - Freeze checks: open the historical 8 MB imagegen thread, switch projects/providers repeatedly, open/close the right panel with a large diff, and idle for 5 minutes; record responsiveness and memory growth.
 - Rank findings, implement the safe wins (chunk splitting, unused assets, oversized modules, canvas tuning, safe SQLite checkpoint/VACUUM, redundant IPC), avoid behavior changes for numbers.
 - Record numbers and changes in DEVLOG; re-run all gates and rebuild.
-

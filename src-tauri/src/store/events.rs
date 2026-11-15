@@ -209,8 +209,18 @@ fn decode_event(
     kind: &str,
     payload: &str,
 ) -> Result<Event, PultError> {
-    let payload: serde_json::Value = serde_json::from_str(payload)
-        .map_err(|e| PultError::store(format!("decode event payload (id {id}): {e}")))?;
+    // Multi-megabyte historical rows (imagegen outputs) must not be parsed into
+    // the UI model: replace them with a marker before deserializing.
+    let payload: serde_json::Value = if payload.len() > 2_000_000 {
+        json!({
+            "truncated": true,
+            "bytes": payload.len(),
+            "note": "large historical payload omitted",
+        })
+    } else {
+        serde_json::from_str(payload)
+            .map_err(|e| PultError::store(format!("decode event payload (id {id}): {e}")))?
+    };
     serde_json::from_value(json!({
         "id": id,
         "runId": run_id,

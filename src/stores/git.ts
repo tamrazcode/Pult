@@ -53,6 +53,7 @@ interface GitStore {
   byThread: Record<string, GitThreadState>;
   viewMode: DiffViewMode;
   ghAvailable: boolean;
+  ghLoaded: boolean;
   prHistory: PrRecord[];
   refresh: (threadId: string) => Promise<void>;
   commit: (threadId: string) => Promise<boolean>;
@@ -102,6 +103,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   byThread: {},
   viewMode: "unified",
   ghAvailable: false,
+  ghLoaded: false,
   prHistory: [],
 
   refresh: async (threadId) => {
@@ -375,6 +377,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   setViewMode: (mode) => set({ viewMode: mode }),
 
   loadGhAvailability: async () => {
-    set({ ghAvailable: await gitGhAvailable() });
+    if (get().ghLoaded) return;
+    set({ ghAvailable: await gitGhAvailable(), ghLoaded: true });
   },
 }));

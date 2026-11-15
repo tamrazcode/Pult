@@ -236,7 +236,7 @@ describe("RightPanel ProjectCard & surfaces", () => {
     expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha");
   });
 
-  it("opens '+' surface menu with Files, Diff, Terminal (no dead entries) and switches to Terminal", () => {
+  it("opens '+' surface menu with Files, Diff, Terminal, Pull requests and switches", () => {
     seedAlphaProjectWithThread();
     useUiStore.setState({ rightPanelOpen: false, rightPanelTab: "diff" });
 
@@ -249,13 +249,17 @@ describe("RightPanel ProjectCard & surfaces", () => {
     expect(within(menu).getByText("Files")).toBeInTheDocument();
     expect(within(menu).getByText("Diff")).toBeInTheDocument();
     expect(within(menu).getByText("Terminal")).toBeInTheDocument();
-    expect(within(menu).queryByText(/Pull requests/i)).toBeNull();
+    expect(within(menu).getByText("Pull requests")).toBeInTheDocument();
     expect(within(menu).queryByText(/Browser/i)).toBeNull();
     expect(within(menu).queryByText(/Device/i)).toBeNull();
 
     fireEvent.click(within(menu).getByText("Terminal"));
     expect(useUiStore.getState().rightPanelTab).toBe("terminal");
     expect(useUiStore.getState().rightPanelOpen).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
+    fireEvent.click(within(screen.getByRole("menu")).getByText("Pull requests"));
+    expect(useUiStore.getState().rightPanelTab).toBe("pull-requests");
   });
 
   it("falls back to projectsStore.selectedProjectId when no thread is active on /chat", () => {

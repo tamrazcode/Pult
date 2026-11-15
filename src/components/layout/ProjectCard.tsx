@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useMemo } from "react";
 import { FolderOpen, GitBranch, History, Pencil } from "lucide-react";
 import { openInEditor } from "../../lib/ipc";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
@@ -21,15 +21,10 @@ export function ProjectCard({ threadId }: { threadId?: string | null }) {
     return id ? s.projects.find((p) => p.id === id) : undefined;
   });
   const git = useGitStore((s) => (threadId ? s.byThread[threadId] : undefined));
-  const refresh = useGitStore((s) => s.refresh);
   const runsByThread = useRunsStore((s) => s.runsByThread);
   const threads = useThreadsStore((s) => s.threads);
   const instances = useUiStore((s) => s.instances);
   const setRightPanelTab = useUiStore((s) => s.setRightPanelTab);
-
-  useEffect(() => {
-    if (threadId) void refresh(threadId);
-  }, [threadId, refresh]);
 
   const previousAgents = useMemo(() => {
     if (!project) return { total: 0, failed: 0, names: [] as string[] };
