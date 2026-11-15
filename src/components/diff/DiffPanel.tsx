@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -11,10 +11,12 @@ import {
 } from "lucide-react";
 import { openExternalUrl } from "../../lib/ipc";
 import { useGitStore } from "../../stores/git";
+import type { FilePatchState } from "../../stores/git";
 import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
-import type { DiffFile } from "../../lib/types";
+import type { DiffFileSummary } from "../../lib/types";
 import { SplitLines, UnifiedLines } from "./DiffLines";
+import { useVirtualRows } from "./useVirtualRows";
 
 /** Latest suggested-commit line, cached per run at finish; scans runs only. */
 function useSuggestedCommitMessage(threadId: string | null): string | null {
@@ -46,14 +48,18 @@ const STATUS_LABEL: Record<string, string> = {
 
 function FileCard({
   file,
+  patch,
   viewMode,
   reviewed,
   onToggleReviewed,
+  onLoad,
 }: {
-  file: DiffFile;
+  file: DiffFileSummary;
+  patch: FilePatchState | undefined;
   viewMode: "unified" | "split";
   reviewed: boolean;
   onToggleReviewed: () => void;
+  onLoad: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const statusLabel = STATUS_LABEL[file.status] ?? "";
@@ -61,7 +67,11 @@ function FileCard({
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
       <div className="flex items-center gap-1.5 px-2 py-1.5">
         <button
-          onClick={() => setOpen((o) => !o)}
+          onClick={() => {
+            const next = !open;
+            setOpen(next);
+            if (next) onLoad();
+          }}
           aria-expanded={open}
           title={file.path}
           className="flex min-w-0 flex-1 items-center gap-1 text-left"
@@ -98,7 +108,19 @@ function FileCard({
       </div>
       {open && (
         <div className="border-t border-border-subtle bg-canvas">
-          {viewMode === "split" ? <SplitLines raw={file.raw} /> : <UnifiedLines raw={file.raw} />}
+          {patch?.loading ? (
+            <p className="px-3 py-2 text-xs text-text-tertiary">Loading diff…</p>
+          ) : patch?.error ? (
+            <p className="px-3 py-2 text-xs text-danger">{patch.error}</p>
+          ) : patch?.file ? (
+            viewMode === "split" ? (
+              <SplitLines raw={patch.file.raw} />
+            ) : (
+              <UnifiedLines raw={patch.file.raw} />
+            )
+          ) : (
+            <p className="px-3 py-2 text-xs text-text-tertiary">Loading diff…</p>
+          )}
         </div>
       )}
     </div>
@@ -106,8 +128,8 @@ function FileCard({
 }
 
 /** Groups files by directory; dirs collapse. */
-function groupByDir(files: DiffFile[]): Map<string, DiffFile[]> {
-  const groups = new Map<string, DiffFile[]>();
+function groupByDir(files: DiffFileSummary[]): Map<string, DiffFileSummary[]> {
+  const groups = new Map<string, DiffFileSummary[]>();
   for (const file of files) {
     const idx = file.path.lastIndexOf("/");
     const dir = idx >= 0 ? file.path.slice(0, idx) : "";
@@ -116,6 +138,11 @@ function groupByDir(files: DiffFile[]): Map<string, DiffFile[]> {
     groups.set(dir, list);
   }
   return groups;
+}
+
+/** Large diffs start collapsed so thousands of rows never mount at once. */
+function defaultDirOpen(dirFiles: number, totalFiles: number): boolean {
+  return totalFiles <= 200 && dirFiles <= 100;
 }
 
 function DirRow({
@@ -187,6 +214,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   const createPr = useGitStore((s) => s.createPr);
   const setCommitMessage = useGitStore((s) => s.setCommitMessage);
   const toggleReviewed = useGitStore((s) => s.toggleReviewed);
+  const loadFileDiff = useGitStore((s) => s.loadFileDiff);
   const ghAvailable = useGitStore((s) => s.ghAvailable);
   const loadGhAvailability = useGitStore((s) => s.loadGhAvailability);
   const threadTitle = useThreadsStore((s) =>
@@ -194,6 +222,33 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   );
   const suggested = useSuggestedCommitMessage(threadId);
   const [openDirs, setOpenDirs] = useState<Record<string, boolean>>({});
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const files = useMemo(() => state?.diff?.files ?? [], [state?.diff?.files]);
+  const groups = useMemo(() => groupByDir(files), [files]);
+  const rows = useMemo(() => {
+    const next: Array<
+      | { kind: "dir"; dir: string; count: number; open: boolean }
+      | { kind: "file"; file: DiffFileSummary; nested: boolean }
+    > = [];
+    for (const [dir, dirFiles] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+      const open = openDirs[dir] ?? defaultDirOpen(dirFiles.length, files.length);
+      if (dir) next.push({ kind: "dir", dir, count: dirFiles.length, open });
+      if (dir && !open) continue;
+      for (const file of dirFiles) next.push({ kind: "file", file, nested: dir.length > 0 });
+    }
+    return next;
+  }, [groups, files.length, openDirs]);
+  const { totalHeight, virtualItems, measureElement, onScroll } = useVirtualRows({
+    count: rows.length,
+    getItemKey: (index) => {
+      const row = rows[index];
+      return row.kind === "dir" ? `dir:${row.dir}` : `file:${row.file.path}`;
+    },
+    scrollRef,
+    estimateHeight: (index) => (rows[index].kind === "dir" ? 30 : 38),
+    overscan: 6,
+  });
 
   useEffect(() => {
     void loadGhAvailability();
@@ -228,10 +283,8 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   }
 
   const diff = state.diff;
-  const files = diff?.files ?? [];
-  const groups = groupByDir(files);
-  const totalAdded = files.reduce((acc, f) => acc + f.added, 0);
-  const totalRemoved = files.reduce((acc, f) => acc + f.removed, 0);
+  const totalAdded = diff?.totalAdded ?? files.reduce((acc, file) => acc + file.added, 0);
+  const totalRemoved = diff?.totalRemoved ?? files.reduce((acc, file) => acc + file.removed, 0);
   const reviewedCount = files.filter((f) => state.reviewed[f.path] !== undefined).length;
   const hasChanges = files.length > 0;
   const commitReady = hasChanges && state.commitMessage.trim().length > 0;
@@ -371,41 +424,49 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
         </p>
       )}
 
-      {/* file tree */}
-      <div className="min-h-0 flex-1 space-y-1 overflow-y-auto p-2">
+      {/* virtualized file tree: only rows in the viewport are mounted */}
+      <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto p-2">
         {files.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-text-tertiary">
             Working tree matches {diff?.base ?? "HEAD"}.
           </p>
         ) : (
-          [...groups.entries()]
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([dir, dirFiles]) => {
-              const dirOpen = openDirs[dir] ?? true;
+          <div style={{ height: totalHeight, position: "relative" }}>
+            {virtualItems.map((item) => {
+              const row = rows[item.index];
+              if (!row) return null;
               return (
-                <div key={dir}>
-                  {dir && (
+                <div
+                  key={item.key}
+                  ref={(element) => measureElement(item.key, element)}
+                  data-diff-dir-row={row.kind === "dir" ? "" : undefined}
+                  data-diff-file-row={row.kind === "file" ? "" : undefined}
+                  className={`absolute inset-x-0 ${row.kind === "file" && row.nested ? "pl-3" : ""}`}
+                  style={{ transform: `translateY(${item.offsetTop}px)` }}
+                >
+                  {row.kind === "dir" ? (
                     <DirRow
-                      dir={dir}
-                      count={dirFiles.length}
-                      open={dirOpen}
-                      onToggle={() => setOpenDirs((m) => ({ ...m, [dir]: !dirOpen }))}
+                      dir={row.dir}
+                      count={row.count}
+                      open={row.open}
+                      onToggle={() => setOpenDirs((open) => ({ ...open, [row.dir]: !row.open }))}
+                    />
+                  ) : (
+                    <FileCard
+                      file={row.file}
+                      patch={state.filePatches[row.file.path]}
+                      viewMode={viewMode}
+                      reviewed={state.reviewed[row.file.path] !== undefined}
+                      onToggleReviewed={() =>
+                        toggleReviewed(threadId, row.file.path, row.file.patchHash)
+                      }
+                      onLoad={() => void loadFileDiff(threadId, row.file.path)}
                     />
                   )}
-                  {dirOpen &&
-                    dirFiles.map((file) => (
-                      <div key={file.path} className={dir ? "ml-3" : ""}>
-                        <FileCard
-                          file={file}
-                          viewMode={viewMode}
-                          reviewed={state.reviewed[file.path] !== undefined}
-                          onToggleReviewed={() => toggleReviewed(threadId, file.path, file.raw)}
-                        />
-                      </div>
-                    ))}
                 </div>
               );
-            })
+            })}
+          </div>
         )}
       </div>
     </div>

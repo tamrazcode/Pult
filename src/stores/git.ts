@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import {
   gitCommit,
-  gitDiff,
+  gitDiffFile,
+  gitDiffSummary,
   gitGhAvailable,
   gitPrCreate,
   gitPush,
@@ -9,8 +10,7 @@ import {
   ipcErrorMessage,
   isIpcError,
 } from "../lib/ipc";
-import { diffHash } from "../lib/diffSplit";
-import type { CommitOutcome, GitDiff, GitStatus } from "../lib/types";
+import type { CommitOutcome, DiffFile, GitDiffSummary, GitStatus } from "../lib/types";
 
 export type DiffViewMode = "unified" | "split";
 
@@ -22,9 +22,18 @@ export interface PrRecord {
   createdAt: number;
 }
 
+export interface FilePatchState {
+  loading: boolean;
+  file?: DiffFile;
+  patchHash?: string;
+  error?: string;
+}
+
 export interface GitThreadState {
   status: GitStatus | null;
-  diff: GitDiff | null;
+  diff: GitDiffSummary | null;
+  /** Patch bodies, fetched lazily when a file row expands. */
+  filePatches: Record<string, FilePatchState>;
   /** True when the thread's workspace is not a git repo. */
   notRepo: boolean;
   loading: boolean;
@@ -36,7 +45,7 @@ export interface GitThreadState {
   /** The commit sha known to be on the remote (gates the PR button). */
   pushedSha: string | null;
   prUrl: string | null;
-  /** path → hash of the diff text the user reviewed. */
+  /** path → patch hash of the diff text the user reviewed. */
   reviewed: Record<string, string>;
 }
 
@@ -50,7 +59,8 @@ interface GitStore {
   push: (threadId: string) => Promise<boolean>;
   createPr: (threadId: string, threadTitle: string) => Promise<boolean>;
   setCommitMessage: (threadId: string, message: string) => void;
-  toggleReviewed: (threadId: string, path: string, raw: string) => void;
+  toggleReviewed: (threadId: string, path: string, patchHash: string) => void;
+  loadFileDiff: (threadId: string, path: string) => Promise<void>;
   setViewMode: (mode: DiffViewMode) => void;
   loadGhAvailability: () => Promise<void>;
 }
@@ -59,6 +69,7 @@ function emptyState(): GitThreadState {
   return {
     status: null,
     diff: null,
+    filePatches: {},
     notRepo: false,
     loading: false,
     error: null,
@@ -101,14 +112,18 @@ export const useGitStore = create<GitStore>((set, get) => ({
       },
     }));
     try {
-      const [status, diff] = await Promise.all([gitStatus(threadId), gitDiff(threadId)]);
+      const [status, diff] = await Promise.all([gitStatus(threadId), gitDiffSummary(threadId)]);
       set((s) => {
         const prev = s.byThread[threadId] ?? emptyState();
-        // Reviewed flags reset when a file's diff changed.
+        const hashes = new Map(diff.files.map((file) => [file.path, file.patchHash]));
+        // Reviewed flags and cached patches reset when a file's patch changed.
         const reviewed: Record<string, string> = {};
         for (const [path, hash] of Object.entries(prev.reviewed)) {
-          const file = diff.files.find((f) => f.path === path);
-          if (file && diffHash(file.raw) === hash) reviewed[path] = hash;
+          if (hashes.get(path) === hash) reviewed[path] = hash;
+        }
+        const filePatches: Record<string, FilePatchState> = {};
+        for (const [path, patch] of Object.entries(prev.filePatches)) {
+          if (patch.patchHash && hashes.get(path) === patch.patchHash) filePatches[path] = patch;
         }
         return {
           byThread: {
@@ -117,6 +132,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
               ...prev,
               status,
               diff,
+              filePatches,
               notRepo: false,
               loading: false,
               error: null,
@@ -280,15 +296,73 @@ export const useGitStore = create<GitStore>((set, get) => ({
       },
     })),
 
-  toggleReviewed: (threadId, path, raw) =>
+  loadFileDiff: async (threadId, path) => {
+    const state = get().byThread[threadId];
+    if (!state) return;
+    const existing = state.filePatches[path];
+    if (existing?.loading || existing?.file) return;
+    const summary = state.diff?.files.find((file) => file.path === path);
+    if (!summary) return;
+
     set((s) => {
       const prev = s.byThread[threadId] ?? emptyState();
-      const hash = diffHash(raw);
+      return {
+        byThread: {
+          ...s.byThread,
+          [threadId]: {
+            ...prev,
+            filePatches: { ...prev.filePatches, [path]: { loading: true } },
+          },
+        },
+      };
+    });
+
+    try {
+      const file = await gitDiffFile(threadId, path, state.diff?.base ?? null);
+      set((s) => {
+        const prev = s.byThread[threadId];
+        if (!prev) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...prev,
+              filePatches: {
+                ...prev.filePatches,
+                [path]: { loading: false, file, patchHash: summary.patchHash },
+              },
+            },
+          },
+        };
+      });
+    } catch (err) {
+      set((s) => {
+        const prev = s.byThread[threadId];
+        if (!prev) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...prev,
+              filePatches: {
+                ...prev.filePatches,
+                [path]: { loading: false, error: ipcErrorMessage(err) },
+              },
+            },
+          },
+        };
+      });
+    }
+  },
+
+  toggleReviewed: (threadId, path, patchHash) =>
+    set((s) => {
+      const prev = s.byThread[threadId] ?? emptyState();
       const reviewed = { ...prev.reviewed };
-      if (reviewed[path] === hash) {
+      if (reviewed[path] === patchHash) {
         delete reviewed[path];
       } else {
-        reviewed[path] = hash;
+        reviewed[path] = patchHash;
       }
       return {
         byThread: {

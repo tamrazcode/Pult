@@ -18,6 +18,8 @@ const {
   providersInstancesList,
   gitStatus,
   gitDiff,
+  gitDiffSummary,
+  gitDiffFile,
 } = vi.hoisted(() => ({
   navigate: vi.fn(async () => undefined),
   runsCancel: vi.fn(),
@@ -33,6 +35,8 @@ const {
   providersInstancesList: vi.fn(),
   gitStatus: vi.fn(),
   gitDiff: vi.fn(),
+  gitDiffSummary: vi.fn(),
+  gitDiffFile: vi.fn(),
 }));
 
 vi.mock("../src/lib/ipc", async (importOriginal) => {
@@ -52,6 +56,8 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     providersInstancesList,
     gitStatus,
     gitDiff,
+    gitDiffSummary,
+    gitDiffFile,
     onThreadUpdate: vi.fn(async () => () => {}),
     onAgentProcess: vi.fn(async () => () => {}),
   };
@@ -133,6 +139,10 @@ describe("composer", () => {
       .mockImplementation(async () => useUiStore.getState().instances);
     gitStatus.mockReset().mockResolvedValue({ branch: "main", entries: [] });
     gitDiff.mockReset().mockResolvedValue({ files: [] });
+    gitDiffSummary
+      .mockReset()
+      .mockResolvedValue({ repoRoot: "", base: "HEAD", totalAdded: 0, totalRemoved: 0, files: [] });
+    gitDiffFile.mockReset();
 
     useRunsStore.setState({
       runsByThread: {},

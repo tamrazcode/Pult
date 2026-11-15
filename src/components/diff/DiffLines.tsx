@@ -1,5 +1,8 @@
+import { useEffect, useMemo, useState } from "react";
 import { parseDiffLines, toSplitRows } from "../../lib/diffSplit";
-import type { DiffLine, SplitRow } from "../../lib/diffSplit";
+import type { DiffLine } from "../../lib/diffSplit";
+
+export const MAX_INITIAL_DIFF_LINES = 2000;
 
 const LINE_CLASSES: Record<DiffLine["kind"], string> = {
   add: "bg-diff-add-bg text-diff-add-fg",
@@ -41,11 +44,14 @@ function LineCell({ line, emptyCopy }: { line: DiffLine | null; emptyCopy?: stri
 }
 
 export function UnifiedLines({ raw }: { raw: string }) {
-  const lines = parseDiffLines(raw);
+  const lines = useMemo(() => parseDiffLines(raw), [raw]);
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => setShowAll(false), [raw]);
+  const visible = showAll ? lines : lines.slice(0, MAX_INITIAL_DIFF_LINES);
   return (
     <div className="overflow-x-auto py-1 font-mono text-[13px] leading-[22px]">
-      {lines.map((line, i) => (
-        <div key={i} className={`flex px-2 ${LINE_CLASSES[line.kind]}`}>
+      {visible.map((line, i) => (
+        <div key={i} data-diff-line-row className={`flex px-2 ${LINE_CLASSES[line.kind]}`}>
           {line.kind !== "meta" && line.kind !== "hunk" && (
             <>
               <LineNo n={line.oldNo} />
@@ -60,16 +66,28 @@ export function UnifiedLines({ raw }: { raw: string }) {
           </span>
         </div>
       ))}
+      {!showAll && lines.length > MAX_INITIAL_DIFF_LINES && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="mx-2 my-1 rounded-(--radius-sm) border border-border-subtle px-2 py-1 text-xs text-text-secondary hover:bg-hover"
+        >
+          Show all {lines.length.toLocaleString("en-US")} lines
+        </button>
+      )}
     </div>
   );
 }
 
 export function SplitLines({ raw }: { raw: string }) {
-  const rows: SplitRow[] = toSplitRows(parseDiffLines(raw));
+  const rows = useMemo(() => toSplitRows(parseDiffLines(raw)), [raw]);
+  const [showAll, setShowAll] = useState(false);
+  useEffect(() => setShowAll(false), [raw]);
+  const visible = showAll ? rows : rows.slice(0, MAX_INITIAL_DIFF_LINES);
   return (
     <div className="grid grid-cols-2 divide-x divide-border-subtle overflow-x-auto py-1 font-mono text-[13px] leading-[22px]">
-      {rows.map((row, i) => (
-        <div key={i} className="contents">
+      {visible.map((row, i) => (
+        <div key={i} data-diff-line-row className="contents">
           <div className="flex min-w-0 px-2">
             <LineCell line={row.left} />
           </div>
@@ -78,6 +96,15 @@ export function SplitLines({ raw }: { raw: string }) {
           </div>
         </div>
       ))}
+      {!showAll && rows.length > MAX_INITIAL_DIFF_LINES && (
+        <button
+          type="button"
+          onClick={() => setShowAll(true)}
+          className="col-span-2 mx-2 my-1 rounded-(--radius-sm) border border-border-subtle px-2 py-1 text-xs text-text-secondary hover:bg-hover"
+        >
+          Show all {rows.length.toLocaleString("en-US")} lines
+        </button>
+      )}
     </div>
   );
 }

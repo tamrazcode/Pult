@@ -349,10 +349,7 @@ export function gitDiff(threadId: string, base?: string | null): Promise<GitDiff
   return invokeRequired<GitDiff>("git_diff", { threadId, base });
 }
 
-export function gitDiffSummary(
-  threadId: string,
-  base?: string | null,
-): Promise<GitDiffSummary> {
+export function gitDiffSummary(threadId: string, base?: string | null): Promise<GitDiffSummary> {
   return invokeRequired<GitDiffSummary>("git_diff_summary", { threadId, base });
 }
 
