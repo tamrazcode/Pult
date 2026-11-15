@@ -365,30 +365,44 @@ impl AcpConn {
         params: Value,
         timeout: std::time::Duration,
     ) -> Result<Value, DriverError> {
+        if self.is_dead() {
+            return Err(DriverError::HungUp {
+                method: method.to_string(),
+            });
+        }
         let id = self.next_request_id();
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
             .expect("pending lock poisoned")
             .insert(id.clone(), tx);
-        self.stdin_tx
+        if self
+            .stdin_tx
             .send(Outgoing::Request {
                 id: id.clone(),
                 method: method.to_string(),
                 params,
             })
             .await
-            .map_err(|_| DriverError::HungUp {
+            .is_err()
+        {
+            // Nobody will answer: do not leave the oneshot in the map.
+            self.pending.lock().expect("pending lock poisoned").remove(&id);
+            return Err(DriverError::HungUp {
                 method: method.to_string(),
-            })?;
+            });
+        }
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(result)) => result.map_err(DriverError::Rpc),
             Ok(Err(_recv)) => Err(DriverError::HungUp {
                 method: method.to_string(),
             }),
-            Err(_elapsed) => Err(DriverError::Timeout {
-                method: method.to_string(),
-            }),
+            Err(_elapsed) => {
+                self.pending.lock().expect("pending lock poisoned").remove(&id);
+                Err(DriverError::Timeout {
+                    method: method.to_string(),
+                })
+            }
         }
     }
 
