@@ -65,6 +65,32 @@ pub struct GitDiff {
     pub files: Vec<DiffFile>,
 }
 
+/// Lightweight changed-file row for the diff panel (no patch body).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffFileSummary {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub added: u64,
+    pub removed: u64,
+    pub binary: bool,
+    /// added | deleted | renamed | modified.
+    pub status: String,
+    /// Changes whenever the file's blob pair/status changes (never mtime/size).
+    pub patch_hash: String,
+}
+
+/// Whole-repo diff metadata; patch bodies are fetched per file on expand.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct GitDiffSummary {
+    pub repo_root: String,
+    pub base: String,
+    pub total_added: u64,
+    pub total_removed: u64,
+    pub files: Vec<DiffFileSummary>,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitOutcome {
@@ -223,6 +249,256 @@ async fn drop_temp_index(temp: &Path) {
     let _ = tokio::fs::remove_file(temp).await;
 }
 
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+fn validate_base(base: Option<&str>) -> Result<Option<String>, PultError> {
+    let Some(base) = base.map(str::trim).filter(|base| !base.is_empty() && *base != "worktree")
+    else {
+        return Ok(None);
+    };
+    if base.starts_with('-')
+        || base.contains('\0')
+        || base.chars().any(char::is_whitespace)
+    {
+        return Err(git_err("git.invalid_base", format!("invalid diff base: {base}")));
+    }
+    Ok(Some(base.to_string()))
+}
+
+/// (git argument, value reported to the UI). `worktree` keeps the existing
+/// no-HEAD contract of `diff()`.
+async fn effective_base(
+    repo: &Path,
+    base: Option<&str>,
+) -> Result<(String, String), PultError> {
+    if let Some(base) = validate_base(base)? {
+        return Ok((base.clone(), base));
+    }
+    let head_ok = git(repo, &["rev-parse", "--verify", "-q", "HEAD"], None)
+        .await
+        .is_ok();
+    if head_ok {
+        Ok(("HEAD".to_string(), "HEAD".to_string()))
+    } else {
+        Ok((EMPTY_TREE.to_string(), "worktree".to_string()))
+    }
+}
+
+fn validate_repo_relative_path(repo: &Path, path: &str) -> Result<PathBuf, PultError> {
+    let invalid = || git_err("git.invalid_path", format!("invalid repo-relative path: {path:?}"));
+    if path.is_empty() || path.contains('\0') {
+        return Err(invalid());
+    }
+    let candidate = Path::new(path);
+    if candidate.is_absolute()
+        || path.starts_with('/')
+        || path.starts_with('\\')
+        || (path.len() >= 2 && path.as_bytes()[1] == b':')
+    {
+        return Err(invalid());
+    }
+    if path
+        .split(['/', '\\'])
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        return Err(invalid());
+    }
+    if candidate
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(invalid());
+    }
+
+    let repo_canon = repo
+        .canonicalize()
+        .map_err(|e| internal(format!("repo canonicalize failed: {e}")))?;
+    let joined = repo_canon.join(candidate);
+    let mut existing = joined.clone();
+    while !existing.exists() {
+        if !existing.pop() {
+            break;
+        }
+    }
+    let existing = existing.canonicalize().map_err(|_| invalid())?;
+    if !existing.starts_with(&repo_canon) {
+        return Err(invalid());
+    }
+    Ok(joined)
+}
+
+fn status_word(letter: char) -> &'static str {
+    match letter {
+        'A' => "added",
+        'D' => "deleted",
+        'R' | 'C' => "renamed",
+        _ => "modified",
+    }
+}
+
+/// FNV-1a over the blob pair + status + path. Stable across processes and
+/// changes on same-size edits because the blob SHA changes.
+fn patch_hash(old_sha: &str, new_sha: &str, status: &str, path: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in old_sha
+        .bytes()
+        .chain(*b"|")
+        .chain(new_sha.bytes())
+        .chain(*b"|")
+        .chain(status.bytes())
+        .chain(*b"|")
+        .chain(path.bytes())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+fn parse_summary(
+    repo: &Path,
+    base: &str,
+    numstat: &str,
+    raw: &str,
+) -> Result<GitDiffSummary, PultError> {
+    let mut counts: std::collections::HashMap<String, (u64, u64, bool)> =
+        std::collections::HashMap::new();
+    for record in numstat.split('\0').filter(|record| !record.is_empty()) {
+        let mut fields = record.splitn(3, '\t');
+        let added = fields.next().unwrap_or("0");
+        let removed = fields.next().unwrap_or("0");
+        let Some(path) = fields.next() else {
+            continue;
+        };
+        let binary = added == "-" || removed == "-";
+        counts.insert(
+            path.to_string(),
+            (added.parse().unwrap_or(0), removed.parse().unwrap_or(0), binary),
+        );
+    }
+
+    let mut files = Vec::new();
+    let mut records = raw.split('\0');
+    while let Some(header) = records.next() {
+        if !header.starts_with(':') {
+            continue;
+        }
+        let Some(path) = records.next() else {
+            break;
+        };
+        let fields: Vec<&str> = header[1..].split(' ').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        let old_sha = fields[2];
+        let new_sha = fields[3];
+        let status = status_word(fields[4].chars().next().unwrap_or('M'));
+        let (added, removed, binary) = counts.remove(path).unwrap_or((0, 0, false));
+        files.push(DiffFileSummary {
+            path: path.to_string(),
+            old_path: Some(path.to_string()),
+            added,
+            removed,
+            binary,
+            status: status.to_string(),
+            patch_hash: patch_hash(old_sha, new_sha, status, path),
+        });
+    }
+
+    Ok(GitDiffSummary {
+        repo_root: repo.to_string_lossy().into_owned(),
+        base: base.to_string(),
+        total_added: files.iter().map(|file| file.added).sum(),
+        total_removed: files.iter().map(|file| file.removed).sum(),
+        files,
+    })
+}
+
+/// Metadata-only changed files (no patch bodies). Runs `git add -A` on a
+/// throwaway index so staged, unstaged and untracked files all appear, then
+/// reads `--numstat` and `--raw` blob SHAs only.
+pub async fn diff_summary(
+    dir: &Path,
+    base: Option<&str>,
+) -> Result<GitDiffSummary, PultError> {
+    let repo = resolve_repo(dir).await?;
+    let (base_arg, reported_base) = effective_base(&repo, base).await?;
+    let (temp, _copied) = temp_index_for(&repo).await?;
+    let result = async {
+        git(&repo, &["add", "-A", "."], Some(&temp)).await?;
+        let numstat = git(
+            &repo,
+            &[
+                "diff",
+                "--cached",
+                "--numstat",
+                "--no-renames",
+                "-z",
+                &base_arg,
+            ],
+            Some(&temp),
+        )
+        .await?;
+        let raw = git(
+            &repo,
+            &[
+                "diff",
+                "--cached",
+                "--raw",
+                "--no-abbrev",
+                "--no-renames",
+                "-z",
+                &base_arg,
+            ],
+            Some(&temp),
+        )
+        .await?;
+        parse_summary(&repo, &reported_base, &numstat, &raw)
+    }
+    .await;
+    drop_temp_index(&temp).await;
+    result
+}
+
+/// One file's byte-exact patch, fetched lazily when its row is expanded.
+pub async fn diff_file(
+    dir: &Path,
+    path: &str,
+    base: Option<&str>,
+) -> Result<DiffFile, PultError> {
+    let repo = resolve_repo(dir).await?;
+    let repo_rel = validate_repo_relative_path(&repo, path)?;
+    let path_arg = path.to_string();
+    let (base_arg, _reported_base) = effective_base(&repo, base).await?;
+    let (temp, _copied) = temp_index_for(&repo).await?;
+    let result = async {
+        if repo_rel.exists() {
+            git(&repo, &["add", "-N", "--", &path_arg], Some(&temp)).await?;
+        }
+        let raw = git(
+            &repo,
+            &[
+                "diff",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-renames",
+                &base_arg,
+                "--",
+                &path_arg,
+            ],
+            Some(&temp),
+        )
+        .await?;
+        parse_diff_files(&raw)
+            .into_iter()
+            .next()
+            .ok_or_else(|| git_err("git.not_found", format!("no diff for {path}")))
+    }
+    .await;
+    drop_temp_index(&temp).await;
+    result
+}
+
 /// Worktree-vs-HEAD diff rendered by git itself through a scratch index, so
 /// untracked files appear and the bytes match `git diff` exactly.
 pub async fn diff(dir: &Path, base: Option<&str>) -> Result<GitDiff, PultError> {
@@ -264,6 +540,94 @@ async fn diff_with_temp_index(
     })
 }
 
+/// Git C-quotes paths containing spaces/non-ASCII; decode them back to UTF-8.
+fn unquote_git_path(value: &str) -> String {
+    if !(value.starts_with('"') && value.ends_with('"') && value.len() >= 2) {
+        return value.to_string();
+    }
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 1;
+    while i + 1 < bytes.len() {
+        if bytes[i] != b'\\' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        i += 1;
+        if i + 1 > bytes.len() {
+            break;
+        }
+        match bytes[i] {
+            b'n' => out.push(b'\n'),
+            b't' => out.push(b'\t'),
+            b'r' => out.push(b'\r'),
+            b'"' => out.push(b'"'),
+            b'\\' => out.push(b'\\'),
+            b'0'..=b'7' => {
+                let mut value = 0u32;
+                let mut digits = 0;
+                while digits < 3 && i < bytes.len() && matches!(bytes[i], b'0'..=b'7') {
+                    value = value * 8 + u32::from(bytes[i] - b'0');
+                    digits += 1;
+                    i += 1;
+                }
+                out.push(value as u8);
+                continue;
+            }
+            other => out.push(other),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Reads one (possibly quoted) path token and returns the remaining input.
+fn next_path_token(input: &str) -> Option<(String, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+    if !input.starts_with('"') {
+        let end = input.find(' ').unwrap_or(input.len());
+        return Some((input[..end].to_string(), input[end..].trim_start()));
+    }
+    let mut escaped = false;
+    let mut close = None;
+    for (index, ch) in input.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+        } else if ch == '\\' {
+            escaped = true;
+        } else if ch == '"' {
+            close = Some(index);
+            break;
+        }
+    }
+    let close = close?;
+    Some((
+        unquote_git_path(&input[..=close]),
+        input[close + 1..].trim_start(),
+    ))
+}
+
+fn header_paths(rest: &str) -> Option<(String, String)> {
+    let (old, rest) = next_path_token(rest)?;
+    let (new, _) = next_path_token(rest)?;
+    Some((
+        old.strip_prefix("a/").unwrap_or(&old).to_string(),
+        new.strip_prefix("b/").unwrap_or(&new).to_string(),
+    ))
+}
+
+fn side_path(rest: &str, prefix: &str) -> Option<String> {
+    let value = unquote_git_path(rest.trim());
+    if value == "/dev/null" {
+        return None;
+    }
+    Some(value.strip_prefix(prefix).unwrap_or(&value).to_string())
+}
+
 /// Splits raw `git diff` output into per-file verbatim slices.
 fn parse_diff_files(raw: &str) -> Vec<DiffFile> {
     let mut files: Vec<DiffFile> = Vec::new();
@@ -286,11 +650,11 @@ fn parse_diff_files(raw: &str) -> Vec<DiffFile> {
                 binary: false,
                 status: "modified".to_string(),
             };
-            if let Some(paths) = trimmed.strip_prefix("diff --git a/") {
+            if let Some(paths) = trimmed.strip_prefix("diff --git ") {
                 // Fallback identity; refined by ---/+++ lines below.
-                if let Some((a, b)) = paths.split_once(" b/") {
-                    file.path = b.to_string();
-                    file.old_path = Some(a.to_string());
+                if let Some((a, b)) = header_paths(paths) {
+                    file.path = b;
+                    file.old_path = Some(a);
                 }
             }
             current = Some(file);
@@ -299,23 +663,26 @@ fn parse_diff_files(raw: &str) -> Vec<DiffFile> {
             continue;
         };
         file.raw.push_str(line);
-        if let Some(rest) = trimmed.strip_prefix("+++ b/") {
-            if rest != "/dev/null" {
-                file.path = rest.to_string();
+        if !in_hunks {
+            if let Some(rest) = trimmed.strip_prefix("+++ ") {
+                if let Some(path) = side_path(rest, "b/") {
+                    file.path = path;
+                }
+            } else if let Some(rest) = trimmed.strip_prefix("--- ") {
+                if let Some(path) = side_path(rest, "a/") {
+                    file.old_path = Some(path);
+                }
             }
-        } else if let Some(rest) = trimmed.strip_prefix("--- a/") {
-            if rest != "/dev/null" {
-                file.old_path = Some(rest.to_string());
-            }
-        } else if trimmed.starts_with("new file mode") {
+        }
+        if trimmed.starts_with("new file mode") {
             file.status = "added".to_string();
         } else if trimmed.starts_with("deleted file mode") {
             file.status = "deleted".to_string();
         } else if let Some(rest) = trimmed.strip_prefix("rename from ") {
-            file.old_path = Some(rest.to_string());
+            file.old_path = Some(unquote_git_path(rest));
             file.status = "renamed".to_string();
         } else if let Some(rest) = trimmed.strip_prefix("rename to ") {
-            file.path = rest.to_string();
+            file.path = unquote_git_path(rest);
         } else if trimmed.starts_with("Binary files ") || trimmed.starts_with("GIT binary patch") {
             file.binary = true;
         } else if trimmed.starts_with("@@") {

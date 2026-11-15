@@ -644,6 +644,29 @@ pub async fn git_diff(
     crate::git::diff(&dir, base.as_deref()).await
 }
 
+/// Metadata-only diff rows for the panel (patch bodies load per file).
+#[tauri::command]
+pub async fn git_diff_summary(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    base: Option<String>,
+) -> Result<crate::git::GitDiffSummary, PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::diff_summary(&dir, base.as_deref()).await
+}
+
+/// One file's byte-exact patch, fetched when its row expands.
+#[tauri::command]
+pub async fn git_diff_file(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    path: String,
+    base: Option<String>,
+) -> Result<crate::git::DiffFile, PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::diff_file(&dir, &path, base.as_deref()).await
+}
+
 #[tauri::command]
 pub async fn git_commit(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,

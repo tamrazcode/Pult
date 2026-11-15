@@ -378,6 +378,26 @@ export interface GitDiff {
   files: DiffFile[];
 }
 
+/** One changed file without its patch body (diff panel row). */
+export interface DiffFileSummary {
+  path: string;
+  oldPath?: string | null;
+  added: number;
+  removed: number;
+  binary: boolean;
+  status: string;
+  /** Changes when the file's blobs/status change. */
+  patchHash: string;
+}
+
+export interface GitDiffSummary {
+  repoRoot: string;
+  base: string;
+  totalAdded: number;
+  totalRemoved: number;
+  files: DiffFileSummary[];
+}
+
 export interface CommitOutcome {
   sha: string;
   filesCommitted: number;

@@ -296,3 +296,179 @@ async fn slugify_strips_unusable_names() {
     assert_eq!(super::slugify("###"), "");
     assert_eq!(super::slugify("уже-было"), "");
 }
+
+#[tokio::test]
+async fn diff_summary_matches_diff_counts_and_changes_patch_hash_on_edit() {
+    use std::collections::HashMap;
+
+    let fx = fixture_repo().await;
+    // Stage one edit, leave one unstaged edit, and add one untracked file.
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nSTAGED\nline3\n").unwrap();
+    git_sync(fx.path(), &["add", "tracked.txt"]);
+    std::fs::write(fx.path().join("sub").join("nested.txt"), "alpha\nUNSTAGED\n").unwrap();
+    std::fs::write(fx.path().join("untracked.txt"), "u1\nu2\n").unwrap();
+
+    let full = diff(fx.path(), None).await.unwrap();
+    let summary: GitDiffSummary = diff_summary(fx.path(), None).await.unwrap();
+
+    assert_eq!(summary.repo_root, full.repo_root);
+    assert_eq!(summary.base, full.base);
+    assert_eq!(summary.files.len(), full.files.len());
+
+    let expected_added: u64 = full.files.iter().map(|f| f.added).sum();
+    let expected_removed: u64 = full.files.iter().map(|f| f.removed).sum();
+    assert_eq!(summary.total_added, expected_added);
+    assert_eq!(summary.total_removed, expected_removed);
+
+    let mut hashes: HashMap<String, String> = HashMap::new();
+    for f in &full.files {
+        let s: &DiffFileSummary = summary
+            .files
+            .iter()
+            .find(|sf| sf.path == f.path)
+            .expect("summary missing file from diff()");
+        assert_eq!(s.old_path, f.old_path);
+        assert_eq!(s.added, f.added);
+        assert_eq!(s.removed, f.removed);
+        assert_eq!(s.binary, f.binary);
+        assert_eq!(s.status, f.status);
+        assert!(!s.patch_hash.is_empty(), "patch_hash must be populated");
+        hashes.insert(s.path.clone(), s.patch_hash.clone());
+    }
+
+    // Same-byte-length edit to tracked.txt ("STAGED" -> "STAGE2").
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nSTAGE2\nline3\n").unwrap();
+    let summary2 = diff_summary(fx.path(), None).await.unwrap();
+    assert_eq!(summary2.files.len(), 3);
+
+    for s in &summary2.files {
+        let prev = hashes.get(&s.path).expect("unexpected path after edit");
+        if s.path == "tracked.txt" {
+            assert_ne!(&s.patch_hash, prev, "patch_hash must change on same-size edit");
+        } else {
+            assert_eq!(&s.patch_hash, prev, "untouched file patch_hash must not change");
+        }
+    }
+}
+
+#[tokio::test]
+async fn diff_summary_works_on_no_head_repo() {
+    let fx = fixture_root();
+    git_sync(fx.path(), &["init", "-q", "-b", "main"]);
+    git_sync(fx.path(), &["config", "user.email", "t@t"]);
+    git_sync(fx.path(), &["config", "user.name", "t"]);
+    git_sync(fx.path(), &["config", "core.autocrlf", "false"]);
+
+    std::fs::write(fx.path().join("staged.txt"), "one\ntwo\n").unwrap();
+    git_sync(fx.path(), &["add", "staged.txt"]);
+    std::fs::write(fx.path().join("untracked.txt"), "three\n").unwrap();
+
+    let summary = diff_summary(fx.path(), None).await.unwrap();
+    assert_eq!(summary.base, "worktree");
+    assert_eq!(summary.files.len(), 2);
+    assert_eq!(summary.total_added, 3);
+    assert_eq!(summary.total_removed, 0);
+
+    let staged = summary.files.iter().find(|f| f.path == "staged.txt").unwrap();
+    assert_eq!(staged.added, 2);
+    assert_eq!(staged.removed, 0);
+    assert_eq!(staged.status, "added");
+    assert!(!staged.patch_hash.is_empty());
+
+    let untracked = summary.files.iter().find(|f| f.path == "untracked.txt").unwrap();
+    assert_eq!(untracked.added, 1);
+    assert_eq!(untracked.removed, 0);
+    assert_eq!(untracked.status, "added");
+    assert!(!untracked.patch_hash.is_empty());
+}
+
+#[tokio::test]
+async fn diff_file_matches_full_diff_slice_byte_exact() {
+    let fx = fixture_repo().await;
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nCHANGED\nline3\n").unwrap();
+    let notes = fx.path().join("notes");
+    std::fs::create_dir_all(&notes).unwrap();
+    std::fs::write(notes.join("new.txt"), "brand new\nsecond line\nthird\n").unwrap();
+
+    let full = diff(fx.path(), None).await.unwrap();
+    for path in ["tracked.txt", "notes/new.txt"] {
+        let one = diff_file(fx.path(), path, None).await.unwrap();
+        let expected = full.files.iter().find(|f| f.path == path).unwrap();
+        assert_eq!(one.raw, expected.raw);
+        assert_eq!(one.added, expected.added);
+        assert_eq!(one.removed, expected.removed);
+        assert_eq!(one.status, expected.status);
+    }
+}
+
+#[tokio::test]
+async fn diff_file_rejects_absolute_parent_and_outside_paths() {
+    let fx = fixture_repo().await;
+    for bad_path in [
+        "/etc/passwd",
+        "C:\\Windows\\win.ini",
+        "../outside.txt",
+        "sub/../../outside.txt",
+        "bad\0path",
+    ] {
+        let err = diff_file(fx.path(), bad_path, None).await.unwrap_err();
+        assert_eq!(
+            err_code(&err),
+            "git.invalid_path",
+            "expected git.invalid_path for {bad_path:?}"
+        );
+    }
+
+    let err = diff_file(fx.path(), "tracked.txt", Some("--ext-diff"))
+        .await
+        .unwrap_err();
+    assert_eq!(err_code(&err), "git.invalid_base");
+}
+
+#[tokio::test]
+async fn diff_file_rejects_symlink_escape_when_supported() {
+    let fx = fixture_repo().await;
+    let outside = fixture_root();
+    let outside_file = outside.path().join("secret.txt");
+    std::fs::write(&outside_file, "secret\n").unwrap();
+    let link_path = fx.path().join("escape.txt");
+
+    #[cfg(unix)]
+    let link_res = std::os::unix::fs::symlink(&outside_file, &link_path);
+    #[cfg(windows)]
+    let link_res = std::os::windows::fs::symlink_file(&outside_file, &link_path);
+
+    if link_res.is_err() {
+        return;
+    }
+
+    let err = diff_file(fx.path(), "escape.txt", None).await.unwrap_err();
+    assert_eq!(err_code(&err), "git.invalid_path");
+}
+
+#[tokio::test]
+async fn diff_file_handles_spaces_and_unicode_paths() {
+    let fx = fixture_repo().await;
+    let rel = "dir with spaces/café résumé.txt";
+    let dir = fx.path().join("dir with spaces");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("café résumé.txt"), "bonjour\nmonde\n").unwrap();
+
+    let full = diff(fx.path(), None).await.unwrap();
+    assert_eq!(full.files.len(), 1);
+
+    let summary = diff_summary(fx.path(), None).await.unwrap();
+    let sf = summary
+        .files
+        .iter()
+        .find(|f| f.path == rel)
+        .expect("summary must return unquoted spaces/unicode path");
+    assert_eq!(sf.added, 2);
+    assert_eq!(sf.removed, 0);
+    assert_eq!(sf.status, "added");
+
+    let one = diff_file(fx.path(), rel, None).await.unwrap();
+    assert_eq!(one.path, rel);
+    assert_eq!(one.raw, full.files[0].raw);
+}
+

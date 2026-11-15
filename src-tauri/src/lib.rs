@@ -154,6 +154,8 @@ pub fn run() {
             ipc::providers_instances_list,
             ipc::git_status,
             ipc::git_diff,
+            ipc::git_diff_summary,
+            ipc::git_diff_file,
             ipc::git_commit,
             ipc::git_push,
             ipc::git_pr_create,

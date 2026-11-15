@@ -8,7 +8,9 @@ import type {
   CommitOutcome,
   ConfigOptionValue,
   DetectedAgent,
+  DiffFile,
   GitDiff,
+  GitDiffSummary,
   GitStatus,
   ImageInput,
   InstanceInfo,
@@ -345,6 +347,21 @@ export function gitStatus(threadId: string): Promise<GitStatus> {
 
 export function gitDiff(threadId: string, base?: string | null): Promise<GitDiff> {
   return invokeRequired<GitDiff>("git_diff", { threadId, base });
+}
+
+export function gitDiffSummary(
+  threadId: string,
+  base?: string | null,
+): Promise<GitDiffSummary> {
+  return invokeRequired<GitDiffSummary>("git_diff_summary", { threadId, base });
+}
+
+export function gitDiffFile(
+  threadId: string,
+  path: string,
+  base?: string | null,
+): Promise<DiffFile> {
+  return invokeRequired<DiffFile>("git_diff_file", { threadId, path, base });
 }
 
 export function gitCommit(threadId: string, message: string): Promise<CommitOutcome> {
