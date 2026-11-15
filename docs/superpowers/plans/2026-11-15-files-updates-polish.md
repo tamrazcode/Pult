@@ -267,4 +267,5 @@
 - `workspace_tree` returns `{ entries, truncated }`; truncation requires a real non-ignored file under the cut, so exact-cap, empty, and ignored subtrees do not raise a false notice.
 - Files refresh uses a request counter, so stale responses cannot overwrite a newer tree, and it never clears `filePreview`.
 - Sidebar install progress names the provider; failures stay in the update list with an inline `data-update-error` message and retry dot; the post-loop check result is merged with failures.
-- Verification: 276/276 TS, 160/160 Rust, typecheck/lint/clippy clean, `pnpm tauri build --no-bundle` pass.
+- The cut-subtree probe is iterative with a 512-directory budget; `src-tauri/src/ipc/workspace_tree_tests.rs` (Gemini-authored) covers the conservative budget case.
+- Verification: 276/276 TS, 161/161 Rust, typecheck/lint/clippy clean, `pnpm tauri build --no-bundle` pass.
