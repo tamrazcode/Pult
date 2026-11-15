@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 
 vi.mock("../src/lib/tauri", () => ({
@@ -40,11 +40,11 @@ const EXPECTED_SURFACES = [
   { label: "Side chat", shortcut: "S", enabled: false, tab: "side-chat" },
 ] as const;
 
-describe("RightPanel Open a surface menu", () => {
+describe("RightPanel surfaces", () => {
   beforeEach(() => {
     useUiStore.setState({
       rightPanelOpen: true,
-      rightPanelTab: "diff",
+      rightPanelTab: "none",
       instances: [],
       selectedInstanceId: null,
     });
@@ -52,61 +52,17 @@ describe("RightPanel Open a surface menu", () => {
     useThreadsStore.setState({ threads: [], activeThreadId: null, unreadIds: [], loaded: true });
   });
 
-  it("lists all 8 surfaces with shortcut badges, enabling the first four and disabling the rest with reasons", () => {
-    render(<RightPanel width={420} />);
+  it("omits the top tab-icon strip and + menu button when tab is 'none' and shows the centered surface list", () => {
+    const { container } = render(<RightPanel width={420} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    const menu = screen.getByRole("menu", { name: "Open a surface" });
-    const items = within(menu).getAllByRole("menuitem");
-    expect(items).toHaveLength(8);
+    expect(screen.queryByRole("button", { name: "Open a surface" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Back to surfaces" })).toBeNull();
+    expect(screen.queryByRole("tablist")).toBeNull();
+    expect(screen.queryByRole("tab")).toBeNull();
+    expect(screen.queryByRole("menu")).toBeNull();
 
-    items.forEach((item, index) => {
-      const spec = EXPECTED_SURFACES[index]!;
-      expect(item).toHaveTextContent(spec.label);
-      expect(item).toHaveTextContent(spec.shortcut);
-      if (spec.enabled) {
-        expect(item).not.toBeDisabled();
-      } else {
-        expect(item).toBeDisabled();
-        const reason = item.textContent?.replace(spec.label, "").replace(spec.shortcut, "").trim();
-        expect(reason?.length).toBeGreaterThan(0);
-      }
-    });
-  });
-
-  it("switches to enabled surfaces on click and keyboard shortcut letters while menu is open", () => {
-    useUiStore.setState({ rightPanelOpen: false, rightPanelTab: "diff" });
-    render(<RightPanel width={420} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    fireEvent.keyDown(window, { key: "b" });
-    expect(useUiStore.getState().rightPanelTab).toBe("browser");
-    expect(useUiStore.getState().rightPanelOpen).toBe(true);
-    expect(screen.queryByRole("menu", { name: "Open a surface" })).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    fireEvent.keyDown(window, { key: "T" });
-    expect(useUiStore.getState().rightPanelTab).toBe("terminal");
-
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    fireEvent.keyDown(window, { key: "f" });
-    expect(useUiStore.getState().rightPanelTab).toBe("files");
-
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    fireEvent.keyDown(window, { key: "d" });
-    expect(useUiStore.getState().rightPanelTab).toBe("diff");
-
-    // Disabled shortcut letters must not switch away from diff
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    for (const key of ["p", "l", "m", "s"]) {
-      fireEvent.keyDown(window, { key });
-      expect(useUiStore.getState().rightPanelTab).toBe("diff");
-    }
-  });
-
-  it("shows the centered 'Open a surface' list when rightPanelTab is 'none' and switches on selection", () => {
-    useUiStore.setState({ rightPanelOpen: true, rightPanelTab: "none" });
-    render(<RightPanel width={420} />);
+    const header = container.querySelector("aside > div") as HTMLElement;
+    expect(within(header).queryAllByRole("button")).toHaveLength(0);
 
     const heading = screen.getByText("Open a surface");
     expect(heading).toBeVisible();
@@ -115,15 +71,41 @@ describe("RightPanel Open a surface menu", () => {
 
     for (const spec of EXPECTED_SURFACES) {
       const btn = within(list).getByRole("button", { name: new RegExp(`^${spec.label}`, "i") });
+      expect(btn).toHaveTextContent(spec.shortcut);
       if (spec.enabled) {
         expect(btn).not.toBeDisabled();
       } else {
         expect(btn).toBeDisabled();
+        expect(btn.getAttribute("title")?.length).toBeGreaterThan(0);
       }
     }
+  });
 
-    fireEvent.click(within(list).getByRole("button", { name: /Files/i }));
-    expect(useUiStore.getState().rightPanelTab).toBe("files");
-    expect(screen.queryByText("Open a surface")).toBeNull();
+  it("opens Diff from the centered list without top tab-icon buttons and returns via 'Back to surfaces'", async () => {
+    const { container } = render(<RightPanel width={420} />);
+
+    const list = screen.getByText("Open a surface").parentElement as HTMLElement;
+    fireEvent.click(within(list).getByRole("button", { name: /^Diff/i }));
+
+    expect(useUiStore.getState().rightPanelTab).toBe("diff");
+    await waitFor(() => {
+      expect(screen.queryByText("Open a surface")).toBeNull();
+    });
+
+    const header = container.querySelector("aside > div") as HTMLElement;
+    const headerButtons = within(header).getAllByRole("button");
+    expect(headerButtons).toHaveLength(1);
+    const backBtn = within(header).getByRole("button", { name: "Back to surfaces" });
+    expect(headerButtons[0]).toBe(backBtn);
+
+    expect(within(header).queryByRole("button", { name: "Open a surface" })).toBeNull();
+    for (const label of ["Browser", "Terminal", "Files", "Diff"]) {
+      expect(within(header).queryByRole("button", { name: new RegExp(label, "i") })).toBeNull();
+    }
+
+    fireEvent.click(backBtn);
+    expect(useUiStore.getState().rightPanelTab).toBe("none");
+    expect(screen.getByText("Open a surface")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Back to surfaces" })).toBeNull();
   });
 });

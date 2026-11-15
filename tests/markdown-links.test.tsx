@@ -166,6 +166,40 @@ describe("Markdown links", () => {
     expect(useUiStore.getState().filePreview).toBeNull();
   });
 
+  it("preserves C:/ drive hrefs via urlTransform and opens the browser panel for workspace HTML files", () => {
+    const absHref = "C:/Users/borch/Desktop/manimaDocs/outputs/sandbox.html";
+    useThreadsStore.setState({
+      threads: [
+        {
+          id: "t1",
+          projectId: "p1",
+          title: "Links",
+          workspace: "C:\\Users\\borch\\Desktop\\manimaDocs",
+          status: "draft",
+          pinned: false,
+          createdAt: 100,
+          updatedAt: 100,
+        },
+      ],
+      activeThreadId: "t1",
+      unreadIds: [],
+      loaded: true,
+    });
+
+    const openInBrowserPanelSpy = vi.spyOn(useUiStore.getState(), "openInBrowserPanel");
+    const { getByRole } = render(<Markdown text={`[x](${absHref})`} />);
+    const link = getByRole("link", { name: "x" });
+    expect(link).toHaveAttribute("href", absHref);
+
+    const event = createEvent.click(link);
+    fireEvent(link, event);
+    expect(event.defaultPrevented).toBe(true);
+    expect(openInBrowserPanelSpy).toHaveBeenCalledWith("outputs/sandbox.html");
+    expect(useUiStore.getState().browserTarget).toBe("outputs/sandbox.html");
+    expect(useUiStore.getState().rightPanelTab).toBe("browser");
+    expect(useUiStore.getState().rightPanelOpen).toBe(true);
+  });
+
   it("classifies an absolute path inside project root as workspace when active thread has workspace:null", () => {
     useProjectsStore.setState({
       projects: [
@@ -271,6 +305,34 @@ describe("Markdown links", () => {
 
     const dialog = screen.getByRole("dialog", { name: "Image preview" });
     expect(dialog.querySelector("img")).toHaveAttribute("src", "https://example.com/diagram.png");
+    expect(openExternalUrl).not.toHaveBeenCalled();
+  });
+
+  it("opens a Markdown image nested inside a link in the image preview dialog without calling openExternalUrl", () => {
+    function MarkdownWithLightbox() {
+      const imagePreview = useUiStore((s) => s.imagePreview);
+      const closeImagePreview = useUiStore((s) => s.closeImagePreview);
+      return (
+        <>
+          <Markdown text={"[![alt](img.png)](https://example.com)"} />
+          {imagePreview && (
+            <ImageLightbox
+              src={imagePreview.src}
+              alt={imagePreview.alt}
+              onClose={closeImagePreview}
+            />
+          )}
+        </>
+      );
+    }
+
+    render(<MarkdownWithLightbox />);
+    expect(screen.getByRole("link")).toHaveAttribute("href", "https://example.com");
+
+    fireEvent.click(screen.getByAltText("alt"));
+
+    const dialog = screen.getByRole("dialog", { name: "Image preview" });
+    expect(dialog.querySelector("img")).toHaveAttribute("src", "img.png");
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 });

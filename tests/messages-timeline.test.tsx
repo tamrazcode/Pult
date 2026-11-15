@@ -1,13 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
-import { ImageLightbox } from "../src/components/ui/ImageLightbox";
-import { useRunsStore } from "../src/stores/runs";
-import { useUiStore } from "../src/stores/ui";
+import type * as IpcModule from "../src/lib/ipc";
 import type { AppEvent, Run } from "../src/lib/types";
 
-const { markdownRenderCounts } = vi.hoisted(() => ({
+const { markdownRenderCounts, runsCancel } = vi.hoisted(() => ({
   markdownRenderCounts: new Map<string, number>(),
+  runsCancel: vi.fn(async () => undefined),
+}));
+
+vi.mock("../src/lib/ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof IpcModule>();
+  return {
+    ...actual,
+    runsCancel,
+  };
+});
+
+vi.mock("@tanstack/react-router", () => ({
+  useRouter: () => ({ navigate: vi.fn(async () => undefined) }),
 }));
 
 vi.mock("../src/components/chat/Markdown", () => ({
@@ -16,6 +26,12 @@ vi.mock("../src/components/chat/Markdown", () => ({
     return <div>{text}</div>;
   },
 }));
+
+import { Composer } from "../src/components/chat/Composer";
+import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
+import { ImageLightbox } from "../src/components/ui/ImageLightbox";
+import { useRunsStore } from "../src/stores/runs";
+import { useUiStore } from "../src/stores/ui";
 
 const run = (id: string, status: Run["status"], idx: number): Run => ({
   id,
@@ -37,6 +53,7 @@ const deltaEvent = (runId: string, seq: number, text: string): AppEvent => ({
 
 beforeEach(() => {
   markdownRenderCounts.clear();
+  runsCancel.mockReset().mockResolvedValue(undefined);
   Element.prototype.scrollIntoView = vi.fn();
   useRunsStore.setState({
     runsByThread: {},
@@ -44,8 +61,15 @@ beforeEach(() => {
     appliedEvents: {},
     commandsByThread: {},
     queueByThread: {},
+    activeElicitation: null,
   });
-  useUiStore.setState({ imagePreview: null });
+  useUiStore.setState({
+    imagePreview: null,
+    paletteOpen: false,
+    instances: [],
+    selectedInstanceId: null,
+    instanceByThread: {},
+  });
 });
 
 describe("MessagesTimeline", () => {
@@ -546,5 +570,98 @@ describe("MessagesTimeline", () => {
 
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+  });
+
+  it("closes user image preview on Escape during an active run without calling runsCancel", () => {
+    function TimelineWithComposerAndLightbox() {
+      const imagePreview = useUiStore((s) => s.imagePreview);
+      const closeImagePreview = useUiStore((s) => s.closeImagePreview);
+      return (
+        <>
+          <MessagesTimeline threadId="th" />
+          <Composer threadId="th" />
+          {imagePreview && (
+            <ImageLightbox
+              src={imagePreview.src}
+              alt={imagePreview.alt}
+              onClose={closeImagePreview}
+            />
+          )}
+        </>
+      );
+    }
+
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "running", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "user",
+              text: "Look at this",
+              images: [{ data: "USERIMG", mimeType: "image/png" }],
+            },
+          ],
+          streaming: true,
+        },
+      },
+    });
+
+    render(<TimelineWithComposerAndLightbox />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Open image" }));
+    expect(screen.getByRole("dialog", { name: "Image preview" })).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+    expect(runsCancel).not.toHaveBeenCalled();
+  });
+
+  it("shows 'Scroll to end' only when scrolled away from bottom and scrolls bottom sentinel into view on click", () => {
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "prompt", images: [] },
+            { type: "assistant", text: "answer", streaming: false },
+          ],
+          streaming: false,
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    const scrollContainer = container.querySelector("div.flex-1.overflow-y-auto") as HTMLElement;
+    expect(scrollContainer).not.toBeNull();
+
+    expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
+
+    Object.defineProperty(scrollContainer, "scrollHeight", { value: 1000, configurable: true });
+    Object.defineProperty(scrollContainer, "clientHeight", { value: 400, configurable: true });
+    Object.defineProperty(scrollContainer, "scrollTop", {
+      value: 100,
+      writable: true,
+      configurable: true,
+    });
+
+    fireEvent.scroll(scrollContainer);
+    const scrollBtn = screen.getByRole("button", { name: "Scroll to end" });
+    expect(scrollBtn).toBeVisible();
+
+    scrollContainer.scrollTop = 580;
+    fireEvent.scroll(scrollContainer);
+    expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
+
+    scrollContainer.scrollTop = 100;
+    fireEvent.scroll(scrollContainer);
+    scrollIntoView.mockClear();
+
+    fireEvent.click(screen.getByRole("button", { name: "Scroll to end" }));
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "smooth" });
+    expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
   });
 });

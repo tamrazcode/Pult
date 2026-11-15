@@ -1,5 +1,5 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { FileDiff, FolderTree, Globe2, Plus, Terminal } from "lucide-react";
+import { Suspense, lazy, useEffect } from "react";
+import { ChevronLeft, FileDiff, FolderTree, Globe2, Terminal } from "lucide-react";
 import { FilesPanel } from "../files/FilesPanel";
 import { BrowserPanel } from "../browser/BrowserPanel";
 import { PullRequestsList } from "../git/PullRequestsList";
@@ -42,43 +42,11 @@ export function RightPanel({ width }: { width: number }) {
   const tab = useUiStore((s) => s.rightPanelTab);
   const setTab = useUiStore((s) => s.setRightPanelTab);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
-  const [surfacesOpen, setSurfacesOpen] = useState(false);
-  const surfacesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // A file preview belongs to the thread it was opened from.
     useUiStore.setState({ filePreview: null });
   }, [activeThreadId]);
-
-  useEffect(() => {
-    if (!surfacesOpen) return;
-    const onPointer = (event: MouseEvent) => {
-      if (!surfacesRef.current?.contains(event.target as Node)) setSurfacesOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSurfacesOpen(false);
-    };
-    window.addEventListener("mousedown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("mousedown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [surfacesOpen]);
-
-  useEffect(() => {
-    if (!surfacesOpen) return;
-    const onKey = (event: KeyboardEvent) => {
-      const target = { b: "browser", t: "terminal", f: "files", d: "diff" } as const;
-      const tab = target[event.key.toLowerCase() as keyof typeof target];
-      if (!tab) return;
-      event.preventDefault();
-      setTab(tab);
-      setSurfacesOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [surfacesOpen, setTab]);
 
   return (
     <aside
@@ -86,82 +54,19 @@ export function RightPanel({ width }: { width: number }) {
       className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
       <div
-        className={`flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
+        className={`flex h-10 shrink-0 items-center border-b border-border-subtle pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
       >
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button
-            key={id}
-            type="button"
-            aria-label={label}
-            title={label}
-            aria-pressed={tab === id}
-            onClick={() => setTab(id)}
-            className={`flex h-7 w-7 items-center justify-center rounded-(--radius-sm) transition-colors duration-150 ${
-              tab === id
-                ? "border border-accent/40 bg-active text-text-primary"
-                : "border border-transparent text-text-tertiary hover:bg-hover hover:text-text-secondary"
-            }`}
-          >
-            <Icon size={14} />
-          </button>
-        ))}
-        <div ref={surfacesRef} className="relative">
+        {tab !== "none" && (
           <button
             type="button"
-            aria-label="Open a surface"
-            title="Open a surface"
-            aria-haspopup="menu"
-            aria-expanded={surfacesOpen}
-            onClick={() => setSurfacesOpen((open) => !open)}
+            aria-label="Back to surfaces"
+            title="Back to surfaces"
+            onClick={() => setTab("none")}
             className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
           >
-            <Plus size={14} />
+            <ChevronLeft size={16} />
           </button>
-          {surfacesOpen && (
-            <div
-              role="menu"
-              aria-label="Open a surface"
-              title="Open a surface"
-              className="absolute top-full right-0 z-40 mt-1 w-64 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
-            >
-              {TABS.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setTab(id);
-                    setSurfacesOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-hover ${
-                    tab === id ? "text-text-primary" : "text-text-secondary"
-                  }`}
-                >
-                  <Icon size={13} /> {label}
-                  <kbd className="ml-auto rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
-                    {SHORTCUTS[id]}
-                  </kbd>
-                </button>
-              ))}
-              {DISABLED_SURFACES.map((surface) => (
-                <button
-                  key={surface.label}
-                  type="button"
-                  role="menuitem"
-                  disabled
-                  title={surface.reason}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-tertiary opacity-60"
-                >
-                  {surface.label}
-                  <kbd className="ml-auto rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
-                    {surface.shortcut}
-                  </kbd>
-                  <span className="text-xs">{surface.reason}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        )}
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">

@@ -317,7 +317,11 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
       <button
         type="button"
         aria-label="Open image"
-        onClick={() => useUiStore.getState().openImagePreview(src ?? "", alt)}
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          useUiStore.getState().openImagePreview(src ?? "", alt);
+        }}
         className="my-2 block cursor-zoom-in"
       >
         <img
@@ -344,7 +348,11 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
       type="button"
       aria-label="Open image"
       title={alt || src}
-      onClick={() => useUiStore.getState().openImagePreview(dataUrl, alt)}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        useUiStore.getState().openImagePreview(dataUrl, alt);
+      }}
       className="my-2 block cursor-zoom-in"
     >
       <img
@@ -469,6 +477,7 @@ export function Markdown({
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
           components={COMPONENTS}
+          urlTransform={(url) => (/^(javascript|data|vbscript):/i.test(url) ? "" : url)}
         >
           {rendered}
         </ReactMarkdown>

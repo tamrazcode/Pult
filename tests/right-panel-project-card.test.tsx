@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 
 const {
@@ -120,33 +120,24 @@ describe("RightPanel surfaces", () => {
     useSettingsStore.setState({ preferredEditor: "zed" });
   });
 
-  it("opens '+' surface menu with Browser, Terminal, Files, Diff and keeps Pull request disabled", () => {
+  it("renders centered surface list with Browser, Terminal, Files, Diff, keeps Pull request disabled, and switches to Terminal", () => {
     seedAlphaProjectWithThread();
-    useUiStore.setState({ rightPanelOpen: false, rightPanelTab: "diff" });
+    useUiStore.setState({ rightPanelOpen: true, rightPanelTab: "none" });
 
     render(<RightPanel width={360} />);
 
-    const addBtn = screen.getByRole("button", { name: "Open a surface" });
-    fireEvent.click(addBtn);
+    expect(screen.getByText("Open a surface")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Browser/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Terminal/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Files/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Diff/i })).toBeInTheDocument();
 
-    const menu = screen.getByRole("menu", { name: "Open a surface" });
-    expect(within(menu).getByText("Browser")).toBeInTheDocument();
-    expect(within(menu).getByText("Terminal")).toBeInTheDocument();
-    expect(within(menu).getByText("Files")).toBeInTheDocument();
-    expect(within(menu).getByText("Diff")).toBeInTheDocument();
-    expect(within(menu).getByText("Pull request")).toBeInTheDocument();
-
-    const pullRequestItem = within(menu).getByRole("menuitem", { name: /^Pull request/i });
+    const pullRequestItem = screen.getByRole("button", { name: /^Pull request/i });
     expect(pullRequestItem).toBeDisabled();
+    fireEvent.click(pullRequestItem);
+    expect(useUiStore.getState().rightPanelTab).toBe("none");
 
-    fireEvent.click(within(menu).getByText("Terminal"));
-    expect(useUiStore.getState().rightPanelTab).toBe("terminal");
-
-    fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    const reopenedMenu = screen.getByRole("menu", { name: "Open a surface" });
-    const reopenedPrItem = within(reopenedMenu).getByRole("menuitem", { name: /^Pull request/i });
-    expect(reopenedPrItem).toBeDisabled();
-    fireEvent.click(reopenedPrItem);
+    fireEvent.click(screen.getByRole("button", { name: /^Terminal/i }));
     expect(useUiStore.getState().rightPanelTab).toBe("terminal");
   });
 });

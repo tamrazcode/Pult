@@ -417,3 +417,8 @@ T3 Code uses Electron `<webview>` with isolated `partition` profiles (`HostedBro
 - [ ] Spacing pass matching the attached T3 sidebar: 4/8/12/16/24 rhythm, sidebar header/search/nav/footer, project/thread rows, section labels, chat transcript/composer, right-panel header/content, settings nav/content, dialogs.
 - [x] Verify: typecheck, lint, all TS/Rust tests, release build, then a fresh Gemini review.
 - [x] Project monogram badges: reduce the sidebar/chat-header project icons from 24/22px to about 16px (roughly 1.5Г—) while keeping the two-letter initials readable and the existing color styling.
+- [x] Sidebar row backgrounds: thread selected/hover background spans the full row width with the standard project inset; project hover spans the full row; thread text uses its own pl-9 instead of an indented wrapper.
+- [x] Sidebar "No project" is a project-shaped row (dashed icon + label + count), and the New thread (+) action is back on the project line.
+- [x] Right panel: remove the top surface icon strip and + menu; keep only the centered surface list and a "Back to surfaces" control so surfaces remain reachable (also added Show browser/files/Open a surface commands with shortcuts).
+- [x] Chat: floating "Scroll to end" button above the composer when the transcript is scrolled away from the bottom.
+- [x] React Markdown keeps Windows absolute hrefs (`C:/...`); left click opens the built-in browser and right click shows the file actions (the previous urlTransform stripped the scheme as unsafe).

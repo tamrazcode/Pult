@@ -13,13 +13,13 @@ export function ImageLightbox({
 }) {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onClose();
-      }
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      onClose();
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, { capture: true });
+    return () => window.removeEventListener("keydown", onKey, { capture: true });
   }, [onClose]);
 
   return (
@@ -28,6 +28,7 @@ export function ImageLightbox({
       aria-modal="true"
       aria-label="Image preview"
       data-image-preview
+      data-escape-layer
       className="fixed inset-0 z-[100] grid place-items-center bg-black/85 p-6 backdrop-blur-sm"
       onClick={onClose}
     >

@@ -317,13 +317,14 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: /new thread with workspace/i })).toBeNull();
   });
 
-  it("renders project rows with colored initials badge, one star button, and right-aligned chevron", () => {
+  it("renders project rows with hover surface, colored initials badge, star, thread count, '+' new thread button, and right-aligned chevron", () => {
     render(<Sidebar width={288} />);
 
     const alphaName = screen.getByText("Alpha");
     expect(alphaName).toBeVisible();
     const row = alphaName.closest<HTMLElement>("[data-project-row]");
     expect(row).not.toBeNull();
+    expect(row).toHaveClass("hover:bg-hover");
 
     const badge = row!.querySelector<HTMLElement>("[data-project-badge]");
     expect(badge).not.toBeNull();
@@ -342,9 +343,14 @@ describe("Sidebar", () => {
 
     const starButtons = within(row!).getAllByRole("button", { name: /^(?:un)?star project$/i });
     expect(starButtons).toHaveLength(1);
-    expect(within(row!).queryByRole("button", { name: /new thread/i })).toBeNull();
+
+    const newThreadBtn = within(row!).getByRole("button", { name: "New thread in project" });
+    expect(newThreadBtn).toBeInTheDocument();
     expect(
       nameToggle!.compareDocumentPosition(starButtons[0]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+    expect(
+      starButtons[0]!.compareDocumentPosition(newThreadBtn) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 
     const chevronBtn = row!.querySelector<HTMLButtonElement>(
@@ -357,8 +363,37 @@ describe("Sidebar", () => {
     ).not.toBeNull();
     expect(row!.lastElementChild).toBe(chevronBtn);
     expect(
-      starButtons[0]!.compareDocumentPosition(chevronBtn!) & Node.DOCUMENT_POSITION_FOLLOWING,
+      newThreadBtn.compareDocumentPosition(chevronBtn!) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    fireEvent.click(newThreadBtn);
+    expect(useProjectsStore.getState().selectedProjectId).toBe(alpha.id);
+    expect(navigate).toHaveBeenCalledWith({ to: "/chat" });
+  });
+
+  it("renders 'No project' row in project shape and applies pl-9 on thread links rather than a wrapping container", () => {
+    useThreadsStore.setState({ activeThreadId: "t1" });
+    render(<Sidebar width={288} />);
+
+    const noProjectLabel = screen.getByText("No project");
+    expect(noProjectLabel).toHaveClass("font-medium");
+    const noProjectRow = noProjectLabel.parentElement as HTMLElement;
+    expect(noProjectRow).toHaveClass("flex", "items-center", "px-2", "py-1.5");
+    expect(noProjectRow.querySelector("svg.lucide-square-dashed")).not.toBeNull();
+    expect(within(noProjectRow).getByText("1")).toBeInTheDocument();
+
+    const activeLink = screen.getByText("Fix login bug").closest("a") as HTMLElement;
+    expect(activeLink).toHaveClass("pl-9");
+    const activeThreadRow = activeLink.parentElement as HTMLElement;
+    expect(activeThreadRow).toHaveClass("bg-active");
+    expect(activeThreadRow).not.toHaveClass("pl-9");
+    const threadList = activeThreadRow.parentElement as HTMLElement;
+    expect(threadList).not.toHaveClass("pl-9");
+
+    const inactiveLink = screen.getByText("Refactor sidebar").closest("a") as HTMLElement;
+    expect(inactiveLink).toHaveClass("pl-9");
+    expect(inactiveLink.parentElement).toHaveClass("hover:bg-hover");
+    expect(inactiveLink.parentElement).not.toHaveClass("pl-9");
   });
 
   it("collapsing a project hides its nested threads", async () => {

@@ -4,6 +4,7 @@ import {
   ArrowRightLeft,
   Brain,
   Check,
+  ChevronDown,
   ChevronRight,
   Copy,
   Eye,
@@ -99,6 +100,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
   const [activeHistoryKey, setActiveHistoryKey] = useState<string | null>(null);
+  const [showScrollToEnd, setShowScrollToEnd] = useState(false);
   const followStreaming = useSettingsStore((s) => s.followStreaming);
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
@@ -108,6 +110,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   useEffect(() => {
     setWindowSize(TRANSCRIPT_WINDOW);
     setActiveHistoryKey(null);
+    setShowScrollToEnd(false);
     isAtBottomRef.current = true;
   }, [threadId]);
 
@@ -180,6 +183,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (!container) return;
     isAtBottomRef.current =
       container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+    setShowScrollToEnd(!isAtBottomRef.current);
     const top = container.getBoundingClientRect().top;
     let current: string | null = null;
     for (const row of container.querySelectorAll<HTMLElement>("[data-history-user]")) {
@@ -252,6 +256,20 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           <div ref={bottomRef} />
         </div>
       </div>
+      {showScrollToEnd && (
+        <button
+          type="button"
+          aria-label="Scroll to end"
+          onClick={() => {
+            isAtBottomRef.current = true;
+            setShowScrollToEnd(false);
+            bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+          }}
+          className="absolute bottom-28 left-1/2 z-30 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-surface-raised/95 px-3 text-xs text-text-secondary shadow-(--shadow-composer) transition hover:bg-surface-raised hover:text-text-primary"
+        >
+          <ChevronDown size={13} /> Scroll to end
+        </button>
+      )}
       <HistoryTicks ticks={historyTicks} activeKey={activeHistoryKey} onJump={jumpToTick} />
     </div>
   );

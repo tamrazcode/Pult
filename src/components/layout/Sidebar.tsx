@@ -9,10 +9,12 @@ import {
   FolderPlus,
   GitPullRequest,
   Loader2,
+  Plus,
   RefreshCw,
   Search,
   Settings,
   SlidersHorizontal,
+  SquareDashed,
   SquarePen,
   Star,
 } from "lucide-react";
@@ -118,7 +120,7 @@ function ThreadRow({
             e.preventDefault();
             onNavigate();
           }}
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-1.5 text-sm"
+          className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-9 text-sm"
         >
           {unread ? (
             <span
@@ -157,13 +159,17 @@ function ThreadRow({
 function ProjectRow({
   project,
   collapsed,
+  threadCount,
   onToggle,
+  onNewThread,
   onStar,
   onContextMenu,
 }: {
   project: Project;
   collapsed: boolean;
+  threadCount: number;
   onToggle: () => void;
+  onNewThread: () => void;
   onStar: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
@@ -173,13 +179,13 @@ function ProjectRow({
     <div
       data-project-row
       onContextMenu={onContextMenu}
-      className="group flex items-center gap-1 px-1 py-1"
+      className="group flex items-center gap-1 rounded-(--radius-sm) px-2 py-1.5 transition hover:bg-hover"
     >
       <button
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        className="flex min-w-0 shrink items-center gap-2 rounded-(--radius-sm) px-1 py-1 text-left transition hover:bg-hover"
+        className="flex min-w-0 shrink items-center gap-2 rounded-(--radius-sm) py-0.5 pr-1 pl-1 text-left"
       >
         <span
           data-project-badge
@@ -206,6 +212,16 @@ function ProjectRow({
         <Star size={10} fill={project.pinned ? "currentColor" : "none"} />
       </button>
       <span className="flex-1" />
+      <span className="tnum text-xs text-text-tertiary">{threadCount}</span>
+      <button
+        type="button"
+        aria-label="New thread in project"
+        title="New thread in project"
+        onClick={onNewThread}
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary focus-visible:opacity-100 group-hover:opacity-100"
+      >
+        <Plus size={12} />
+      </button>
       <button
         type="button"
         onClick={onToggle}
@@ -597,7 +613,9 @@ export function Sidebar({ width }: { width: number }) {
                 <ProjectRow
                   project={group.project}
                   collapsed={isCollapsed}
+                  threadCount={group.threads.length}
                   onToggle={() => useUiStore.getState().toggleProjectCollapsed(group.project!.id)}
+                  onNewThread={() => newThread(group.project)}
                   onStar={() => void useProjectsStore.getState().togglePin(group.project!.id)}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -605,12 +623,17 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                 />
               ) : (
-                <div className="px-2 pb-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                  No project
+                <div className="flex items-center gap-2 rounded-(--radius-sm) px-2 py-1.5">
+                  <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-tertiary">
+                    <SquareDashed size={14} />
+                  </span>
+                  <span className="text-sm font-medium text-text-primary">No project</span>
+                  <span className="flex-1" />
+                  <span className="tnum text-xs text-text-tertiary">{group.threads.length}</span>
                 </div>
               )}
               {!isCollapsed && (
-                <div className="space-y-1 pl-9">
+                <div className="space-y-1">
                   {group.threads.map((thread) => (
                     <ThreadRow
                       key={thread.id}

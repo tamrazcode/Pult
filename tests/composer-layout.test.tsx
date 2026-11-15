@@ -100,7 +100,7 @@ describe("Composer and ChatColumn layout invariants", () => {
     expect(outer).not.toHaveClass("sm:px-6");
   });
 
-  it("pins spacing rhythm: sidebar header px-4, nav px-2, thread lists pl-9, and composer px-6", () => {
+  it("pins spacing rhythm: sidebar header px-4, nav px-2, thread links pl-9, and composer px-6", () => {
     useProjectsStore.setState({
       projects: [
         {
@@ -152,10 +152,10 @@ describe("Composer and ChatColumn layout invariants", () => {
     const nav = screen.getByRole("navigation", { name: "Threads" });
     expect(nav).toHaveClass("px-2");
 
-    const threadLists = nav.querySelectorAll<HTMLElement>("section > div.space-y-1");
-    expect(threadLists.length).toBeGreaterThanOrEqual(2);
-    for (const list of threadLists) {
-      expect(list).toHaveClass("pl-9");
+    const threadLinks = nav.querySelectorAll<HTMLElement>("section a[href^='/thread/']");
+    expect(threadLinks.length).toBeGreaterThanOrEqual(2);
+    for (const link of threadLinks) {
+      expect(link).toHaveClass("pl-9");
     }
     sidebarRender.unmount();
 

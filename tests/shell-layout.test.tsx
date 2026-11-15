@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import type * as IpcModule from "../src/lib/ipc";
 import type { Project, Thread, UsageReport } from "../src/lib/types";
 
@@ -144,24 +143,6 @@ import { useRunsStore } from "../src/stores/runs";
 import { useTerminalsStore } from "../src/stores/terminals";
 import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
-
-function classTokens(element: Element): string[] {
-  return element.className.split(/\s+/).filter(Boolean);
-}
-
-function hasActiveTabAccentClass(element: Element): boolean {
-  return classTokens(element).some((token) =>
-    /(?:^|:)(?:text|border(?:-[trblxy])?|bg)-(?:\(--accent\)|accent)(?:$|\/)/.test(token),
-  );
-}
-
-function hasAnyActiveTabIndicator(element: Element): boolean {
-  return classTokens(element).some(
-    (token) =>
-      token === "bg-active" ||
-      /(?:^|:)(?:text|border(?:-[trblxy])?|bg)-(?:\(--accent\)|accent)(?:$|\/)/.test(token),
-  );
-}
 
 describe("shell layout polish", () => {
   beforeEach(() => {
@@ -334,23 +315,5 @@ describe("shell layout polish", () => {
     const controls = close.parentElement!;
     expect(controls).toHaveClass("fixed", "top-0", "right-0");
     expect(header.className).toContain("pr-[136px]");
-  });
-
-  it("applies pill/underline active accent styling on the selected RightPanel tab", async () => {
-    render(<RightPanel width={420} />);
-
-    const diffTab = screen.getByRole("button", { name: /diff/i });
-    const filesTab = screen.getByRole("button", { name: /files/i });
-    const terminalTab = screen.getByRole("button", { name: /terminal/i });
-
-    expect(hasActiveTabAccentClass(diffTab)).toBe(true);
-    expect(hasAnyActiveTabIndicator(filesTab)).toBe(false);
-    expect(hasAnyActiveTabIndicator(terminalTab)).toBe(false);
-
-    await userEvent.click(filesTab);
-
-    expect(hasActiveTabAccentClass(filesTab)).toBe(true);
-    expect(hasAnyActiveTabIndicator(diffTab)).toBe(false);
-    expect(hasAnyActiveTabIndicator(terminalTab)).toBe(false);
   });
 });
