@@ -1119,77 +1119,114 @@ fn npm_command(args: &[&str]) -> std::process::Command {
     }
 }
 
-fn instance_uses_package(instance: &crate::config::InstanceSpec, package: &str) -> bool {
-    let package = package.to_ascii_lowercase();
-    let command = instance.command.to_ascii_lowercase().replace('\\', "/");
-    if command == package || command.ends_with(&format!("/{package}")) {
-        return true;
+/// Which self-updater a configured agent has (no package replacement).
+fn update_kind(instance: &crate::config::InstanceSpec) -> Option<&'static str> {
+    let haystack = format!("{} {} {}", instance.id, instance.display_name, instance.command)
+        .to_ascii_lowercase();
+    if haystack.contains("codex") {
+        Some("codex")
+    } else if haystack.contains("opencode") {
+        Some("opencode")
+    } else {
+        None
     }
-    instance.args.iter().any(|arg| {
-        let arg = arg.to_ascii_lowercase().replace('\\', "/");
-        arg == package
-            || arg.contains(&format!("/{package}/"))
-            || arg.contains(&format!("/{package}@"))
-    })
 }
 
-fn npm_outdated() -> std::collections::BTreeMap<String, (Option<String>, Option<String>)> {
-    let Ok(output) = npm_command(&["outdated", "-g", "--json"]).output() else {
-        return Default::default();
+fn run_cli(program: &str, args: &[&str]) -> Result<std::process::Output, String> {
+    let Some(resolved) = crate::config::resolve_command(program) else {
+        return Err(format!("{program} not found on PATH"));
     };
-    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
-        return Default::default();
+    #[cfg(windows)]
+    let mut command = {
+        use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/d", "/c"]).arg(&resolved).args(args);
+        command.creation_flags(0x0800_0000);
+        command
     };
-    let mut map = std::collections::BTreeMap::new();
-    if let Some(entries) = value.as_object() {
-        for (package, info) in entries {
-            let current = info.get("current").and_then(|v| v.as_str()).map(str::to_string);
-            let latest = info.get("latest").and_then(|v| v.as_str()).map(str::to_string);
-            if current != latest {
-                map.insert(package.clone(), (current, latest));
-            }
-        }
-    }
-    map
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = std::process::Command::new(&resolved);
+        command.args(args);
+        command
+    };
+    command
+        .output()
+        .map_err(|e| format!("{program} failed: {e}"))
 }
 
-fn match_updates(
-    instances: &[crate::config::InstanceSpec],
-    outdated: &std::collections::BTreeMap<String, (Option<String>, Option<String>)>,
-) -> Vec<ProviderUpdate> {
-    instances
-        .iter()
-        .map(|instance| {
-            let package = outdated
-                .keys()
-                .find(|package| instance_uses_package(instance, package))
-                .cloned();
-            let found = package.as_ref().and_then(|pkg| outdated.get(pkg));
-            ProviderUpdate {
-                instance_id: instance.id.clone(),
-                display_name: instance.display_name.clone(),
-                package,
-                current: found.and_then(|(current, _)| current.clone()),
-                latest: found.and_then(|(_, latest)| latest.clone()),
-                managed: found.is_some(),
-            }
-        })
-        .filter(|update| update.managed)
-        .collect()
+fn cli_version(program: &str) -> Option<String> {
+    let output = run_cli(program, &["--version"]).ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_whitespace()
+        .last()
+        .map(|value| value.trim_start_matches('v').to_string())
 }
 
-/// Checks installed global npm packages for updates matching configured agents.
+fn npm_latest(package: &str) -> Option<String> {
+    let output = npm_command(&["view", package, "version"]).output().ok()?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!text.is_empty()).then_some(text)
+}
+
+fn opencode_latest() -> Option<String> {
+    let output = std::process::Command::new("curl")
+        .args([
+            "-L",
+            "-s",
+            "-H",
+            "User-Agent: pult",
+            "https://api.github.com/repos/sst/opencode/releases/latest",
+        ])
+        .output()
+        .ok()?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    value
+        .get("tag_name")?
+        .as_str()
+        .map(|tag| tag.trim_start_matches('v').to_string())
+}
+
+/// Checks the CLI's own update source; never reinstalls packages.
 #[tauri::command]
 pub async fn providers_update_check(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
 ) -> Result<Vec<ProviderUpdate>, PultError> {
     let instances = runtime.instances_spec();
-    tokio::task::spawn_blocking(move || Ok(match_updates(&instances, &npm_outdated())))
-        .await
-        .map_err(|e| PultError::internal(format!("update check failed: {e}")))?
+    tokio::task::spawn_blocking(move || {
+        let mut updates = Vec::new();
+        for instance in instances {
+            let Some(kind) = update_kind(&instance) else {
+                continue;
+            };
+            let (current, latest, package) = match kind {
+                "codex" => (
+                    cli_version("codex"),
+                    npm_latest("@openai/codex"),
+                    "@openai/codex",
+                ),
+                "opencode" => (cli_version("opencode"), opencode_latest(), "opencode"),
+                _ => continue,
+            };
+            if latest.is_none() || current == latest {
+                continue;
+            }
+            updates.push(ProviderUpdate {
+                instance_id: instance.id,
+                display_name: instance.display_name,
+                package: Some(package.to_string()),
+                current,
+                latest,
+                managed: true,
+            });
+        }
+        Ok(updates)
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("update check failed: {e}")))?
 }
 
-/// Installs the verified latest version of one agent's npm package.
+/// Runs the provider's own updater (`codex update` / `opencode upgrade`).
 #[tauri::command]
 pub async fn providers_update_install(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
@@ -1202,25 +1239,18 @@ pub async fn providers_update_install(
         .ok_or_else(|| PultError::internal("unknown instance"))?
         .clone();
     tokio::task::spawn_blocking(move || {
-        let outdated = npm_outdated();
-        let package = outdated
-            .keys()
-            .find(|package| instance_uses_package(&instance, package))
-            .cloned()
-            .ok_or_else(|| PultError::internal("no managed update for this provider"))?;
-        if !package
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '.' | '-' | '_'))
-        {
-            return Err(PultError::internal("unsafe package name"));
-        }
-        let install = format!("{package}@latest");
-        let output = npm_command(&["install", "-g", &install])
-            .output()
-            .map_err(|e| PultError::internal(format!("npm install failed: {e}")))?;
+        let kind = update_kind(&instance)
+            .ok_or_else(|| PultError::internal("this provider is managed externally"))?;
+        let args: &[&str] = match kind {
+            "codex" => &["update"],
+            "opencode" => &["upgrade"],
+            _ => return Err(PultError::internal("this provider is managed externally")),
+        };
+        let output = run_cli(kind, args).map_err(PultError::internal)?;
         if !output.status.success() {
             return Err(PultError::internal(format!(
-                "npm install failed: {}",
+                "{} update failed: {}",
+                kind,
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
@@ -1306,30 +1336,18 @@ mod external_url_tests {
 
 #[cfg(test)]
 mod update_tests {
-    use super::match_updates;
+    use super::update_kind;
     use crate::config::InstanceSpec;
-    use std::collections::BTreeMap;
+
+    fn spec(id: &str, name: &str, command: &str) -> InstanceSpec {
+        InstanceSpec { id: id.into(), display_name: name.into(), driver: "acp".into(), command: command.into(), args: Vec::new(), env: Default::default(), enabled: true }
+    }
 
     #[test]
-    fn matches_instances_to_outdated_npm_packages() {
-        let mut outdated = BTreeMap::new();
-        outdated.insert(
-            "@scope/agent".to_string(),
-            (Some("1.0.0".to_string()), Some("1.1.0".to_string())),
-        );
-        let instances = vec![InstanceSpec {
-            id: "agent".to_string(),
-            display_name: "Agent".to_string(),
-            driver: "acp".to_string(),
-            command: "node".to_string(),
-            args: vec!["/npm/@scope/agent/cli.js".to_string()],
-            env: Default::default(),
-            enabled: true,
-        }];
-        let updates = match_updates(&instances, &outdated);
-        assert_eq!(updates[0].package.as_deref(), Some("@scope/agent"));
-        assert_eq!(updates[0].latest.as_deref(), Some("1.1.0"));
-        assert!(updates[0].managed);
+    fn detects_self_updating_clis() {
+        assert_eq!(update_kind(&spec("codex", "Codex", "codex")), Some("codex"));
+        assert_eq!(update_kind(&spec("opencode", "OpenCode", "opencode")), Some("opencode"));
+        assert_eq!(update_kind(&spec("mock", "Mock", "node")), None);
     }
 }
 
@@ -1359,3 +1377,5 @@ mod payload_cap_tests {
         }
     }
 }
+
+
