@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
 >
-> **Authorship & Execution Split:** **Gemini** authors the failing tests for each task (Step 1) and verifies failure (Step 2) before **DeepSeek** implements the production changes (Step 3) and runs verification (Step 4).
+> **Authorship & Execution Split:** **Gemini** authors the failing tests for each task (Step 1) and verifies failure (Step 2) before **DeepSeek** implements the production changes (Step 3) and runs verification (Step 4). **User-mandated execution protocol:** the plan is written first; then work proceeds one item at a time. Every item (including Tasks 17–24 and every later addition) is marked done only after Gemini has authored/updated its tests and those tests pass. Commit after each item, then continue without asking.
 
 **Goal:** Bring `pult` substantially closer to T3 Code in daily ergonomics, visual polish, and responsiveness without rewriting the Tauri 2 + ACP architecture: add a T3-style Right Panel project card and `+` surface switcher, replace hand-drawn provider logos with real bundled SVG brand marks, run bounded-parallel startup provider preflight with cached instant display and warm reuse, project/persist/render agent-generated images (including Codex imagegen), add message hover Copy / Branch / `HH:MM` timestamps, flatten thinking/tool rows into grouped inline lines with live `"Working for Ns"`, strip the transcript token usage footer while keeping `/usage`, replace WebView default context menus app-wide with real custom menus, streamline the empty state and composer controls, neutralize loud focus/selection/bubble accents, convert sidebar footer + icon-only buttons to tooltipped compact controls, and pre-warm sessions + optimistic sends so warm first-token latency hits `<= 2s`.
 
@@ -754,7 +754,7 @@
 
 ## Addendum — user additions (2026-11-15, execute with this plan)
 
-> These five tasks were requested after the main plan was written. They supersede the conflicting parts of Task 11 (composer controls) and extend Task 8 (tool rows). Execute them in the same TDD rhythm.
+> These tasks were requested after the main plan was written. They supersede the conflicting parts of Task 11 (composer controls) and extend Task 8 (tool rows). Execute them with the same test-first rhythm; Gemini writes the failing tests before each implementation step.
 
 ### Task 17: Project rows — chevron on the right, tinted project badge
 
