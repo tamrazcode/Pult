@@ -1,5 +1,6 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { ChevronRight, FileDiff, FolderTree, GitPullRequest, Plus, Terminal } from "lucide-react";
+import { FileDiff, FolderTree, GitPullRequest, Plus, Terminal } from "lucide-react";
+import { FilesPanel } from "../files/FilesPanel";
 import { PullRequestsList } from "../git/PullRequestsList";
 import { ProjectCard } from "./ProjectCard";
 import { isTauri } from "../../lib/tauri";
@@ -10,7 +11,6 @@ const DiffPanel = lazy(() =>
 const TerminalPanel = lazy(() =>
   import("../terminal/TerminalPanel").then((module) => ({ default: module.TerminalPanel })),
 );
-import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
 import type { RightPanelTab } from "../../stores/ui";
@@ -22,69 +22,10 @@ const TABS: { id: RightPanelTab; label: string; icon: typeof FileDiff }[] = [
   { id: "pull-requests", label: "Pull requests", icon: GitPullRequest },
 ];
 
-const EMPTY_COPY: Record<RightPanelTab, { title: string; hint: string }> = {
-  diff: {
-    title: "No diff yet",
-    hint: "Changes an agent makes to your files will appear here.",
-  },
-  files: {
-    title: "No files",
-    hint: "Files changed in this thread will appear here.",
-  },
-  terminal: {
-    title: "Terminal not started",
-    hint: "Shells that agents open will appear here.",
-  },
-  "pull-requests": {
-    title: "No pull requests yet",
-    hint: "Commit, push and create a PR from the diff panel.",
-  },
-};
-
-/** One changed file: diffstat line, click expands the unified diff. */
-function FileRow({
-  path,
-  diff,
-  added,
-  removed,
-}: {
-  path: string;
-  diff: string;
-  added: number;
-  removed: number;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left"
-      >
-        <ChevronRight
-          size={12}
-          className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
-        />
-        <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
-          {path}
-        </span>
-        <span className="tnum shrink-0 text-xs text-success">+{added}</span>
-        <span className="tnum shrink-0 text-xs text-danger">-{removed}</span>
-      </button>
-      {open && (
-        <pre className="overflow-x-auto border-t border-border-subtle px-2.5 py-2 font-mono text-xs whitespace-pre text-text-tertiary">
-          {diff}
-        </pre>
-      )}
-    </div>
-  );
-}
-
 export function RightPanel({ width }: { width: number }) {
   const tab = useUiStore((s) => s.rightPanelTab);
   const setTab = useUiStore((s) => s.setRightPanelTab);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
-  const files = useRunsStore((s) => (activeThreadId ? s.filesByThread[activeThreadId] : undefined));
   const [surfacesOpen, setSurfacesOpen] = useState(false);
   const surfacesRef = useRef<HTMLDivElement>(null);
 
@@ -181,23 +122,8 @@ export function RightPanel({ width }: { width: number }) {
             <div className="min-h-0 flex-1 overflow-y-auto">
               <PullRequestsList />
             </div>
-          ) : tab === "files" && files && files.length > 0 ? (
-            <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
-              {files.map((file) => (
-                <FileRow
-                  key={file.path}
-                  path={file.path}
-                  diff={file.diff}
-                  added={file.added}
-                  removed={file.removed}
-                />
-              ))}
-            </div>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
-              <p className="text-sm text-text-secondary">{EMPTY_COPY[tab].title}</p>
-              <p className="text-xs text-text-tertiary">{EMPTY_COPY[tab].hint}</p>
-            </div>
+            <FilesPanel threadId={activeThreadId} />
           )}
         </Suspense>
       </div>

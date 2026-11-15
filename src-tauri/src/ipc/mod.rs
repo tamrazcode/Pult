@@ -912,7 +912,7 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
 /// OS file manager. The path is canonicalized and passed as one argv element,
 /// never through a shell. UNC paths are rejected before any SMB lookup.
 #[tauri::command]
-pub fn open_in_editor(path: String) -> Result<(), PultError> {
+pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultError> {
     let raw = path.trim();
     if raw.is_empty() {
         return Err(PultError::internal("empty editor path"));
@@ -925,8 +925,17 @@ pub fn open_in_editor(path: String) -> Result<(), PultError> {
         .map_err(|e| PultError::internal(format!("editor path not found: {e}")))?;
     let target = crate::runtime::clean_verbatim(target);
 
-    for editor in ["zed", "code", "cursor"] {
-        let Some(command) = crate::config::resolve_command(editor) else {
+    // Allowlisted editors only; no user-provided executable names.
+    let requested = editor.as_deref().unwrap_or("").to_ascii_lowercase();
+    let editors: &[&str] = match requested.as_str() {
+        "zed" => &["zed"],
+        "vscode" => &["code", "cursor"],
+        "antigravity" => &["antigravity", "agy"],
+        "explorer" => &[],
+        _ => &["zed", "code", "cursor"],
+    };
+    for name in editors {
+        let Some(command) = crate::config::resolve_command(name) else {
             continue;
         };
         if std::process::Command::new(command).arg(&target).spawn().is_ok() {
@@ -956,6 +965,125 @@ pub fn open_in_editor(path: String) -> Result<(), PultError> {
         .spawn()
         .map_err(|e| PultError::internal(format!("could not open the editor: {e}")))?;
     Ok(())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceEntry {
+    pub path: String,
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+}
+
+const TREE_IGNORE: &[&str] = &[
+    "node_modules",
+    ".git",
+    "target",
+    "dist",
+    ".next",
+    ".cache",
+    ".superpowers",
+];
+
+fn walk_workspace(root: &std::path::Path) -> Result<Vec<WorkspaceEntry>, PultError> {
+    let mut out = Vec::new();
+    fn visit(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        depth: usize,
+        out: &mut Vec<WorkspaceEntry>,
+    ) {
+        if depth > 6 || out.len() >= 2000 {
+            return;
+        }
+        let Ok(read) = std::fs::read_dir(dir) else {
+            return;
+        };
+        let mut entries: Vec<_> = read.flatten().collect();
+        entries.sort_by_key(|entry| {
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            (!is_dir, entry.file_name().to_string_lossy().to_lowercase())
+        });
+        for entry in entries {
+            if out.len() >= 2000 {
+                return;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if TREE_IGNORE.contains(&name.as_str()) {
+                continue;
+            }
+            let path = entry.path();
+            let rel = path.strip_prefix(root).unwrap_or(&path);
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            out.push(WorkspaceEntry {
+                path: rel,
+                name,
+                is_dir,
+                size,
+            });
+            if is_dir {
+                visit(root, &path, depth + 1, out);
+            }
+        }
+    }
+    visit(root, root, 1, &mut out);
+    Ok(out)
+}
+
+/// Lists a thread workspace (flattened, ignored build dirs, capped).
+#[tauri::command]
+pub async fn workspace_tree(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+) -> Result<Vec<WorkspaceEntry>, PultError> {
+    let runtime = runtime.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let thread = runtime.store().get_thread(&thread_id)?;
+        let root = runtime.workspace_root_for(&thread)?;
+        walk_workspace(&root)
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("workspace tree failed: {e}")))?
+}
+
+/// Reads a UTF-8 text file from the thread workspace for the Files preview.
+#[tauri::command]
+pub async fn workspace_read_text(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    path: String,
+) -> Result<String, PultError> {
+    let runtime = runtime.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let thread = runtime.store().get_thread(&thread_id)?;
+        let root = runtime.workspace_root_for(&thread)?;
+        let base = root
+            .canonicalize()
+            .map_err(|e| PultError::internal(format!("workspace: {e}")))?;
+        let target = base.join(&path);
+        let target = target
+            .canonicalize()
+            .map_err(|e| PultError::internal(format!("file not found: {e}")))?;
+        if !target.starts_with(&base) || !target.is_file() {
+            return Err(PultError::internal("path escapes workspace"));
+        }
+        let meta = std::fs::metadata(&target)
+            .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
+        if meta.len() > 512 * 1024 {
+            return Err(PultError::internal("file is too large to preview (max 512 KB)"));
+        }
+        let bytes = std::fs::read(&target)
+            .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
+        if bytes.contains(&0) {
+            return Err(PultError::internal("binary file cannot be previewed as text"));
+        }
+        Ok(String::from_utf8_lossy(&bytes).into_owned())
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("read text failed: {e}")))?
 }
 
 /// Reads a local raster image the agent referenced and returns a data URL.

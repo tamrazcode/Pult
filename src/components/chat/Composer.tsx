@@ -581,6 +581,11 @@ export function Composer({ threadId }: { threadId?: string }) {
         setMentionIndex((i) => (i - 1 + mentionFiles.length) % mentionFiles.length);
         return;
       }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        pickMention(mentionFiles[mentionIndex] ?? mentionFiles[0]);
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
         e.preventDefault();
         pickMention(mentionFiles[mentionIndex] ?? mentionFiles[0]);
@@ -602,6 +607,11 @@ export function Composer({ threadId }: { threadId?: string }) {
       if (e.key === "ArrowUp") {
         e.preventDefault();
         setSlashIndex((i) => (i - 1 + slashMatches.length) % slashMatches.length);
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        pickSlash(slashMatches[slashIndex] ?? slashMatches[0]);
         return;
       }
       if (e.key === "Enter" && !e.shiftKey && !e.metaKey && !e.ctrlKey) {

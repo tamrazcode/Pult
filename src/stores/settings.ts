@@ -29,6 +29,8 @@ interface SettingsState {
   followStreaming: boolean;
   /** Default diff presentation (persisted; also seeds the git store). */
   diffViewMode: "unified" | "split";
+  /** Editor used by Files/Project card "Open in editor". */
+  preferredEditor: "zed" | "vscode" | "antigravity" | "explorer";
   /** Rebindable keyboard shortcuts (§6.7): command id → binding string. */
   keybindings: Record<string, string>;
   /** Starred model ids per provider instance (composer picker). */
@@ -41,6 +43,7 @@ interface SettingsState {
   setShowTimestamps: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
+  setPreferredEditor: (editor: "zed" | "vscode" | "antigravity" | "explorer") => void;
   setKeybinding: (commandId: string, binding: string) => void;
   toggleFavoriteModel: (instanceId: string, modelId: string) => void;
   /** Loads persisted appearance + permission settings once at boot. */
@@ -59,6 +62,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   showTimestamps: true,
   followStreaming: true,
   diffViewMode: "unified",
+  preferredEditor: "zed",
   keybindings: {},
   favoriteModels: {},
   setTheme: (theme) => {
@@ -96,6 +100,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     useGitStore.setState({ viewMode: diffViewMode });
     if (isTauri()) void settingsSet("diff_view_mode", diffViewMode).catch(() => {});
   },
+  setPreferredEditor: (preferredEditor) => {
+    set({ preferredEditor });
+    if (isTauri()) void settingsSet("preferred_editor", preferredEditor).catch(() => {});
+  },
   setKeybinding: (commandId, binding) => {
     // A binding ending in a bare modifier ("Mod+Control") matches the
     // modifier's own keydown and hijacks the keyboard — refuse it.
@@ -127,6 +135,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       showTimestamps,
       followStreaming,
       diffViewMode,
+      preferredEditor,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -138,6 +147,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("show_timestamps").catch(() => null),
       settingsGet("follow_streaming").catch(() => null),
       settingsGet("diff_view_mode").catch(() => null),
+      settingsGet("preferred_editor").catch(() => null),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "dark";
     const resolvedHue =
@@ -158,6 +168,12 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       showTimestamps: showTimestamps !== false,
       followStreaming: followStreaming !== false,
       diffViewMode: diffViewMode === "split" ? "split" : "unified",
+      preferredEditor:
+        preferredEditor === "vscode" ||
+        preferredEditor === "antigravity" ||
+        preferredEditor === "explorer"
+          ? preferredEditor
+          : "zed",
       keybindings:
         keybindings && typeof keybindings === "object"
           ? (keybindings as Record<string, string>)

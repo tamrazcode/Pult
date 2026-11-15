@@ -179,6 +179,23 @@ export function threadsDelete(threadId: string): Promise<void> {
   return invokeRequired<void>("threads_delete", { threadId });
 }
 
+/** Flattened workspace tree for the Files surface (capped, ignored dirs). */
+export interface WorkspaceEntry {
+  path: string;
+  name: string;
+  isDir: boolean;
+  size: number;
+}
+
+export function workspaceTree(threadId: string): Promise<WorkspaceEntry[]> {
+  return invokeRequired<WorkspaceEntry[]>("workspace_tree", { threadId });
+}
+
+/** UTF-8 text preview from a thread workspace (max 512 KB). */
+export function workspaceReadText(threadId: string, path: string): Promise<string> {
+  return invokeRequired<string>("workspace_read_text", { threadId, path });
+}
+
 /**
  * Workspace-relative files for composer `@` mentions (build/VCS dirs are
  * skipped server-side). Empty outside Tauri.
@@ -318,9 +335,9 @@ export function diagnosticsFrames(instanceId: string): Promise<string[]> {
   return invokeRequired<string[]>("diagnostics_frames", { instanceId });
 }
 
-/** Opens a project folder in the user's editor (Zed/VS Code/Cursor) or file manager. */
-export function openInEditor(path: string): Promise<void> {
-  return invokeRequired<void>("open_in_editor", { path });
+/** Opens a project folder/file in the chosen editor or the OS file manager. */
+export function openInEditor(path: string, editor?: string | null): Promise<void> {
+  return invokeRequired<void>("open_in_editor", { path, editor });
 }
 
 /** Opens an http(s) link in the system browser (external, never a shell). */

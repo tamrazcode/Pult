@@ -44,6 +44,8 @@ interface UiState {
   paletteOpen: boolean;
   /** One-shot text handed to the composer (Branch from a message). */
   composerPrefill: string | null;
+  /** Workspace-relative file the Files surface should preview. */
+  filePreview: string | null;
   /** Thread the UI should open after a Branch action. */
   pendingThreadId: string | null;
   /** Diagnostics ring: last process events per instance (M6). */
@@ -58,6 +60,7 @@ interface UiState {
   setRightPanelTab: (tab: RightPanelTab) => void;
   setPaletteOpen: (open: boolean) => void;
   setComposerPrefill: (text: string | null) => void;
+  openFilePreview: (path: string | null) => void;
   setPendingThread: (threadId: string | null) => void;
   setSidebarWidth: (width: number, persist?: boolean) => void;
   setRightPanelWidth: (width: number, persist?: boolean) => void;
@@ -147,6 +150,7 @@ export const useUiStore = create<UiState>((set) => ({
   instanceByThread: {},
   paletteOpen: false,
   composerPrefill: null,
+  filePreview: null,
   pendingThreadId: null,
   processEvents: {},
   globalError: null,
@@ -180,6 +184,13 @@ export const useUiStore = create<UiState>((set) => ({
     })),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
+  openFilePreview: (filePreview) =>
+    set((s) => ({
+      filePreview,
+      rightPanelTab: "files",
+      rightPanelOpen: true,
+      sidebarOpen: isNarrowViewport() ? false : s.sidebarOpen,
+    })),
   setPendingThread: (pendingThreadId) => set({ pendingThreadId }),
   setSidebarWidth: (width, persist = false) => {
     const sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));

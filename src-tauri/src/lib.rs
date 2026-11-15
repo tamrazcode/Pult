@@ -169,6 +169,8 @@ pub fn run() {
             ipc::providers_detect_installed,
             ipc::providers_instances_save,
             ipc::workspace_files,
+            ipc::workspace_tree,
+            ipc::workspace_read_text,
             ipc::open_external_url,
             ipc::open_in_editor,
             ipc::read_image_data_url,

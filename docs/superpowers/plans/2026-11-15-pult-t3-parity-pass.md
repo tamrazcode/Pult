@@ -883,3 +883,433 @@
 - Freeze checks: open the historical 8 MB imagegen thread, switch projects/providers repeatedly, open/close the right panel with a large diff, and idle for 5 minutes; record responsiveness and memory growth.
 - Rank findings, implement the safe wins (chunk splitting, unused assets, oversized modules, canvas tuning, safe SQLite checkpoint/VACUUM, redundant IPC), avoid behavior changes for numbers.
 - Record numbers and changes in DEVLOG; re-run all gates and rebuild.
+
+---
+
+## Addendum — T3 Files Surface, Editor Preference, Icon Centering & Provider Updates (2026-11-15)
+
+> Follow the same strict TDD split: **Gemini** authors failing tests (Step 1) and verifies failure (Step 2) before **DeepSeek** implements production code (Step 3), passes all gates (Step 4), and commits cleanly per task (Step 5).
+>
+> **Explicit Assumptions & Detection Rules:**
+>
+> 1. **Workspace root resolution:** In-app file browsing and link resolution prefer `activeThread.workspace` -> `selectedProject.rootPath` -> `runtime.global_workspace_root()`. Relative markdown links resolve against that root; absolute `file://` or OS paths must still pass canonical workspace confinement before reading.
+> 2. **Editor detection order (Task 28):** Default `preferredEditor` resolves dynamically via `detect_editors` in order: `zed` (PATH or `%LOCALAPPDATA%\Programs\Zed\Zed.exe`) -> `vscode` (`code` on PATH or `%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe`) -> `explorer` (always available). `"antigravity"` is detected via `which("antigravity")` or `%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe` (shown disabled/unavailable if absent, never guessed).
+> 3. **Icon generation pipeline (Task 29):** `src-tauri/icons/*` was generated from `pult-icon.svg` via `pnpm tauri icon pult-icon.svg` (whereas `scripts/gen-icon.mjs` contains an older chevron+caret PNG generator). Keep `pult-icon.svg` as the canonical icon source and align/retire `scripts/gen-icon.mjs` so re-running icon generation cannot revert to the old mark.
+> 4. **Provider CLI updates (Task 30):** Package mappings are derived by inspecting each configured instance's `command`/`args` and detecting installed package managers rather than guessing:
+>    - `@zed-industries/claude-code-acp` (for `claude-code` `npx` adapter) and/or `@anthropic-ai/claude-code` (when `claude` CLI is npm-installed).
+>    - `@agentclientprotocol/codex-acp` (for `codex` `npx` adapter) and/or `@openai/codex` (when `codex` CLI is npm-installed).
+>    - `@google/gemini-cli` (for `gemini-cli`).
+>    - `opencode-ai` (npm package assumption for `opencode`, used **only** if `npm list -g opencode-ai --depth=0 --json` confirms npm installation; otherwise mark `opencode` as `externally_managed` with `currentVersion` from `opencode --version`).
+>    - `antigravity` (`agy_acp_server.exe` in `%LOCALAPPDATA%\pult\antigravity` or PATH): no standalone updater CLI or npm package is shipped/documented in the repo, so detect `--version` if supported and mark `externally_managed` unless an official updater binary/flag is detected.
+>    - `mock`, `dsh`, and custom/unknown instances are always marked `externally_managed` and never updated.
+
+---
+
+### Task 27: Files surface + workspace tree, text/image preview, and in-chat file/folder hyperlinks
+
+**Design Decision:** Replace the agent-changed-only `FileRow` list in `RightPanel.tsx` (`tab === "files"`) with a dedicated lazy-loaded `<FilesPanel />` that browses the real project/thread workspace while preserving `Diff`, `Terminal`, and `Pull requests` surfaces intact. Add shared workspace-path confinement (`confine_workspace_path`, matching `safe_path` in `src-tauri/src/runtime/mod.rs`) in `src-tauri/src/workspace.rs` so `workspace_list_dir`, `workspace_read_file`, and `read_image_data_url` (extended with optional `thread_id` and `workspace`) all reject UNC paths, `..` traversal, and symlink escapes. In `Markdown.tsx`, intercept local relative paths and `file://` links (including optional `#L123` line anchors) via a `MarkdownOpenLocalContext` / callback to open the in-app Files surface instead of navigating or shelling out to the OS, while `http(s)://` links stay external via `openExternalUrl`.
+
+**Files:**
+
+- Modify: `src-tauri/src/workspace.rs`, `src-tauri/src/ipc/mod.rs`, `src-tauri/src/lib.rs`
+- Modify: `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/ui.ts`, `src/lib/commands.ts`
+- Create: `src/components/files/FilesPanel.tsx`
+- Modify: `src/components/layout/RightPanel.tsx`, `src/components/chat/Markdown.tsx`, `src/components/chat/MessagesTimeline.tsx`
+- Create/Modify tests: `tests/files-panel.test.tsx`, `tests/markdown-links.test.tsx`, `tests/markdown.test.tsx`, `tests/right-panel-project-card.test.tsx`
+
+**Interfaces:**
+
+- `src-tauri/src/workspace.rs`:
+  ```rust
+  #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+  #[serde(rename_all = "camelCase")]
+  pub struct WorkspaceDirEntry {
+      pub name: String,
+      pub path: String,        // workspace-relative POSIX path
+      pub kind: String,        // "dir" | "file"
+      pub size: Option<u64>,
+  }
+
+  #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+  #[serde(rename_all = "camelCase")]
+  pub struct WorkspaceFilePreview {
+      pub path: String,        // workspace-relative POSIX path
+      pub content: String,     // UTF-8 lossy decoded (empty when is_binary == true)
+      pub truncated: bool,
+      pub total_bytes: u64,
+      pub is_binary: bool,
+  }
+
+  pub const MAX_DIR_ENTRIES: usize = 500;
+  pub const MAX_TEXT_PREVIEW_BYTES: usize = 256 * 1024;
+
+  /// Confines `raw` (relative POSIX/OS path or absolute path inside `root`) to canonical `root`.
+  /// Rejects empty paths, UNC (`\\` / `//`), `..` ParentDir escapes, and out-of-root symlinks.
+  pub fn confine_workspace_path(root: &Path, raw: &str) -> Result<PathBuf, PultError>;
+  pub fn list_workspace_dir(root: &Path, rel_dir: Option<&str>, limit: usize) -> Result<Vec<WorkspaceDirEntry>, PultError>;
+  pub fn read_workspace_file_preview(root: &Path, raw_path: &str, max_bytes: usize) -> Result<WorkspaceFilePreview, PultError>;
+  ```
+- `src-tauri/src/ipc/mod.rs` (registered in `src-tauri/src/lib.rs`):
+  ```rust
+  #[tauri::command]
+  pub async fn workspace_list_dir(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      thread_id: Option<String>,
+      workspace: Option<String>,
+      path: Option<String>,
+  ) -> Result<Vec<crate::workspace::WorkspaceDirEntry>, PultError>;
+
+  #[tauri::command]
+  pub async fn workspace_read_file(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      thread_id: Option<String>,
+      workspace: Option<String>,
+      path: String,
+  ) -> Result<crate::workspace::WorkspaceFilePreview, PultError>;
+
+  #[tauri::command]
+  pub async fn read_image_data_url(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      path: String,
+      thread_id: Option<String>,
+      workspace: Option<String>,
+  ) -> Result<String, PultError>;
+  ```
+- `src/stores/ui.ts`:
+  ```ts
+  selectedFilePath: string | null;
+  selectedFileLine: number | null;
+  openWorkspaceFile: (path: string, line?: number | null) => void;
+  ```
+  - Calling `openWorkspaceFile(path, line)` opens the `"files"` surface (`rightPanelTab = "files"`, `rightPanelOpen = true`) and stores the normalized target path/line so `FilesPanel` expands parent directories and selects/previews the target (or navigates into that folder if `path` resolves to a directory).
+- `src/components/chat/Markdown.tsx`:
+  ```ts
+  export type ClassifiedHref =
+    | { kind: "external"; href: string }
+    | { kind: "local"; path: string; line?: number }
+    | { kind: "other"; href: string };
+
+  export function classifyMarkdownHref(href?: string): ClassifiedHref;
+  ```
+  - Accept optional `onOpenLocalPath?: (path: string, line?: number) => void` and `workspaceThreadId?: string | null` on `<Markdown />` (defaulting `onOpenLocalPath` to `useUiStore.getState().openWorkspaceFile` and passing `threadId` from `MessagesTimeline.tsx`).
+  - `LocalImage` treats both relative paths and `file://`/OS paths inside the workspace as local via `readImageDataUrl(path, { threadId, workspace })`.
+- `src/components/files/FilesPanel.tsx`:
+  - **Breadcrumb:** `<projectName> > seg1 > seg2` where clicking the project root or any folder segment focuses/navigates to that folder.
+  - **Search filter:** `"Filter files…"` input; when empty renders expandable directory tree (`workspace_list_dir`); when non-empty queries `workspace_files` for matching workspace-relative paths.
+  - **Changed-file badges:** Cheap O(1) lookup against `useGitStore.byThread[threadId]?.diff?.files` and `useRunsStore.filesByThread[threadId]` showing subtle `M` / `A` / `D` or dot indicators next to matching files.
+  - **Preview pane:**
+    - Text/code files: monospace numbered lines (`1..N`), highlights/scrolls to `selectedFileLine` when provided, truncation notice when `truncated === true`, binary notice when `isBinary === true`.
+    - Image files (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`): calls `readImageDataUrl(path, { threadId, workspace })`, renders zoom toolbar with **Fit**, **`-`**, **`+`**, zoom percentage (`100%`), and pixel size (`{naturalWidth}×{naturalHeight}px`) updated on `onLoad`.
+  - **Toolbar:** includes the editor split-button + editor dropdown (wired with Task 28's `preferredEditor`).
+- `src/lib/commands.ts`: add `"view.panel.files"` (`defaultBinding: "Mod+Alt+F"`, `"Show files panel"`).
+
+**Steps:**
+
+- [ ] **Step 1: Write failing tests (Gemini)**
+  - In `src-tauri/src/workspace.rs` (`mod tests`):
+    1. `confine_workspace_path_rejects_traversal_unc_and_outside_paths` — asserts `../secret.txt`, `a/../../evil`, `\\server\share\x`, `//server/share/x`, and an absolute path outside `root` return `Err`, while relative paths (`src/main.rs`) and in-root absolute paths resolve inside `root`.
+    2. `list_workspace_dir_sorts_dirs_first_skips_ignored_and_caps` — creates `node_modules`, `.git`, `target`, `src/`, `README.md`, `app.ts`; asserts dirs come before files (`src` before `app.ts`, `README.md`), ignored dirs are omitted, and `limit` caps entries.
+    3. `read_workspace_file_preview_caps_size_lossy_utf8_and_flags_binary` — tests small UTF-8 file, invalid UTF-8 bytes (lossy replacement without error), file larger than cap (`truncated == true`), and NUL-containing binary file (`is_binary == true`).
+  - In `src-tauri/src/ipc/mod.rs` (`mod image_tests`): test relative image path confinement (`assets/chart.png` passes inside root, `../outside.png` fails).
+  - Create `tests/files-panel.test.tsx`:
+    1. Renders `<FilesPanel />` with mocked `workspaceListDir` / `workspaceReadFile` / `readImageDataUrl`, verifies breadcrumb (`Alpha > src`), dirs-first tree order, search filter invoking `workspaceFiles`, and changed-file badge on a dirty file.
+    2. Clicking a text file renders line-numbered content; clicking a `.png` file renders image preview with **Fit**, **`-`**, **`+`** zoom controls and pixel dimensions (`640×480px`).
+    3. Clicking `"Files"` in `RightPanel` `+` menu opens the workspace tree (and `Diff` / `Terminal` / `Pull requests` still render when selected).
+  - In `tests/markdown-links.test.tsx`:
+    1. Asserts relative links (`[ipc](src/lib/ipc.ts#L42)`), folder links (`[dir](src/components/)`), and `file://` links (`[main](file:///C:/work/alpha/src/main.rs)`) call `openWorkspaceFile` (and `preventDefault`) rather than `openExternalUrl`.
+    2. Keeps `https://example.com/a` calling `openExternalUrl`.
+  - In `tests/markdown.test.tsx`: asserts relative markdown image `![chart](out/chart.png)` resolves via `readImageDataUrl("out/chart.png", ...)`.
+- [ ] **Step 2: Run tests to verify failure (Gemini)**
+  - Run `cargo test --manifest-path src-tauri/Cargo.toml --lib workspace` and `pnpm test tests/files-panel.test.tsx tests/markdown-links.test.tsx tests/markdown.test.tsx` → FAIL.
+- [ ] **Step 3: Implement backend workspace dir/file IPCs, `FilesPanel`, `RightPanel` integration, and Markdown local-link interception (DeepSeek)**
+  - Implement `confine_workspace_path`, `list_workspace_dir`, `read_workspace_file_preview` in `src-tauri/src/workspace.rs`; add `workspace_list_dir`, `workspace_read_file`, and relative-root support on `read_image_data_url` in `src-tauri/src/ipc/mod.rs`; register in `src-tauri/src/lib.rs`.
+  - Update `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/ui.ts`, `src/lib/commands.ts`.
+  - Create `src/components/files/FilesPanel.tsx`, wire into `src/components/layout/RightPanel.tsx`, and update `src/components/chat/Markdown.tsx` + `src/components/chat/MessagesTimeline.tsx`.
+- [ ] **Step 4: Run verification**
+  - Run `pnpm typecheck && pnpm lint && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
+- [ ] **Step 5: Commit**
+  - `feat(files): add workspace Files surface with tree, text/image preview, and in-chat file links`
+
+**Acceptance Criteria:**
+
+- Clicking any local relative or `file://` link in chat opens the right-panel `Files` surface on that file/folder without invoking the OS opener; `http(s)://` links still open externally.
+- `Files` tab shows the real workspace tree (dirs first, `node_modules`/`.git`/`target` hidden by default, search filter, changed-file badges, breadcrumb) and is reachable from both the `+` menu and in-chat links; `Diff`, `Terminal`, and `Pull requests` remain functional.
+- Text previews cap size with UTF-8 lossy decoding and show line numbers; image previews support Fit / `+` / `-` zoom and show pixel dimensions.
+- All path confinement tests reject `..`, UNC, and out-of-workspace escapes.
+
+---
+
+### Task 28: File context menu, persisted `preferredEditor` setting, and `Ctrl+O` shortcut
+
+**Design Decision:** Store `preferredEditor: EditorId | null` (`"zed" | "vscode" | "antigravity" | "explorer" | null`) in SQLite `settings` under `"preferred_editor"` via `useSettingsStore` (`null` means auto-select: **Zed if installed, else VS Code, else File Explorer**). Extend `open_in_editor` in `src-tauri/src/ipc/mod.rs` to validate paths (supporting workspace-relative paths when `thread_id`/`workspace` is passed) and accept an allowlisted `editor` id (`zed` | `vscode` | `antigravity` | `explorer`), rejecting unknown ids and never using shell interpolation. Add `editors_detect` and `reveal_in_explorer` IPC commands so dropdowns reflect actually installed editors and `"Reveal in File Explorer"` selects files cleanly in the OS file manager. Wire right-click `ContextMenu` on every file/folder row and preview header in `FilesPanel`, add an editor dropdown to both `FilesPanel` toolbar and `ProjectCard`, and register `Mod+O` (`Ctrl+O`) to open the selected file (or workspace) in the preferred editor.
+
+**Files:**
+
+- Modify: `src-tauri/src/config.rs`, `src-tauri/src/ipc/mod.rs`, `src-tauri/src/lib.rs`
+- Modify: `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/settings.ts`, `src/lib/commands.ts`
+- Modify: `src/components/files/FilesPanel.tsx`, `src/components/layout/ProjectCard.tsx`
+- Create/Modify tests: `tests/file-context-menu.test.tsx`, `tests/right-panel-project-card.test.tsx`, `tests/settings-pages.test.tsx`
+
+**Interfaces:**
+
+- `src-tauri/src/config.rs`:
+  ```rust
+  #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+  #[serde(rename_all = "camelCase")]
+  pub struct DetectedEditor {
+      pub id: &'static str,       // "zed" | "vscode" | "antigravity" | "explorer"
+      pub label: &'static str,    // "Zed" | "VS Code" | "Antigravity" | "File Explorer"
+      pub available: bool,
+  }
+
+  pub fn detect_editors() -> Vec<DetectedEditor>;
+  pub fn default_editor_id(detected: &[DetectedEditor]) -> &'static str; // zed -> vscode -> explorer
+  ```
+- `src-tauri/src/ipc/mod.rs` (registered in `src-tauri/src/lib.rs`):
+  ```rust
+  #[tauri::command]
+  pub fn editors_detect() -> Result<Vec<crate::config::DetectedEditor>, PultError>;
+
+  #[tauri::command]
+  pub fn open_in_editor(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      path: String,
+      editor: Option<String>,
+      thread_id: Option<String>,
+      workspace: Option<String>,
+  ) -> Result<(), PultError>;
+
+  #[tauri::command]
+  pub fn reveal_in_explorer(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      path: String,
+      thread_id: Option<String>,
+      workspace: Option<String>,
+  ) -> Result<(), PultError>;
+  ```
+  - `validate_editor_id(editor: Option<&str>) -> Result<Option<&'static str>, PultError>` accepts only `"zed"`, `"vscode"` (plus `"code"` alias normalized to `"vscode"`), `"antigravity"`, `"explorer"` and rejects arbitrary strings/commands.
+  - On Windows, `reveal_in_explorer` runs `explorer.exe /select,<canonical_path>` when `target.is_file()` (or `explorer.exe <canonical_path>` for dirs); `open -R` on macOS; `xdg-open <parent_or_dir>` on Linux.
+- `src/lib/types.ts` & `src/stores/settings.ts`:
+  ```ts
+  export type EditorId = "zed" | "vscode" | "antigravity" | "explorer";
+  export interface DetectedEditor {
+    id: EditorId;
+    label: string;
+    available: boolean;
+  }
+  // In SettingsState:
+  preferredEditor: EditorId | null;
+  setPreferredEditor: (editor: EditorId | null) => void;
+  ```
+- `src/components/files/FilesPanel.tsx` & `src/components/layout/ProjectCard.tsx`:
+  - `FilesPanel` right-click menu on any tree row or preview header (`e.preventDefault(); e.stopPropagation();`) renders:
+    1. `Open in <editor>` (`shortcut: "Ctrl+O"` / `"⌘O"`)
+    2. `Reveal in File Explorer`
+    3. `"separator"`
+    4. `Copy relative path`
+    5. `Copy full path`
+  - Both `FilesPanel` toolbar and `ProjectCard` include a split button / editor picker dropdown listing `VS Code`, `Zed`, `Antigravity`, `File Explorer` (highlighting unavailable ones as disabled with `"(not found)"` if not installed, while keeping the active choice persisted via `setPreferredEditor`).
+- `src/lib/commands.ts`:
+  - Add `"files.openInEditor"` (`defaultBinding: "Mod+O"`, title `"Open file in editor"`): opens `useUiStore.getState().selectedFilePath` (or active workspace root) via `openInEditor(..., preferredEditor)`.
+
+**Steps:**
+
+- [ ] **Step 1: Write failing tests (Gemini)**
+  - In `src-tauri/src/ipc/mod.rs` (`mod open_editor_tests`):
+    1. Test `validate_editor_id` accepts `"zed"`, `"vscode"`, `"antigravity"`, `"explorer"` and rejects `"powershell"`, `"cmd"`, `"sh -c evil"`.
+    2. Test `default_editor_id` picks `"zed"` when Zed+VS Code are available, `"vscode"` when only VS Code is available, and `"explorer"` when neither is available.
+    3. Test `validate_editor_target` (existing + relative confinement) rejects empty, UNC, and `..` escape paths.
+  - Create `tests/file-context-menu.test.tsx`:
+    1. Right-clicking a file row in `FilesPanel` opens `ContextMenu` with `"Open in Zed"` (or resolved preferred editor), `"Reveal in File Explorer"`, `"Copy relative path"`, and `"Copy full path"`; clicking each calls `openInEditor`, `revealInExplorer`, and `navigator.clipboard.writeText` with relative vs full path.
+    2. Changing the editor dropdown in `FilesPanel` calls `settingsSet("preferred_editor", "vscode")` and updates the `"Open in VS Code"` menu label; pressing `Ctrl+O` opens the selected file in the preferred editor.
+  - In `tests/right-panel-project-card.test.tsx`:
+    1. Update/extend `"Open in editor"` test (explicitly documenting the new optional `editor` arg or keeping `undefined` -> default behavior) and add test for changing the `ProjectCard` editor dropdown persisting `"preferred_editor"` and invoking `openInEditor(workspace, "antigravity")`.
+  - In `tests/settings-pages.test.tsx`: add round-trip hydration test for `preferred_editor` in `useSettingsStore`.
+- [ ] **Step 2: Run tests to verify failure (Gemini)**
+  - Run `cargo test --manifest-path src-tauri/Cargo.toml --lib open_editor_tests` and `pnpm test tests/file-context-menu.test.tsx tests/right-panel-project-card.test.tsx tests/settings-pages.test.tsx` → FAIL.
+- [ ] **Step 3: Implement editor detection, `open_in_editor(editor)`, `reveal_in_explorer`, `preferredEditor` setting, context menus, and `Mod+O` (DeepSeek)**
+  - Implement `detect_editors` / `default_editor_id` in `src-tauri/src/config.rs` and extend `open_in_editor` + add `editors_detect` / `reveal_in_explorer` in `src-tauri/src/ipc/mod.rs` + `src-tauri/src/lib.rs`.
+  - Update `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/settings.ts`, `src/lib/commands.ts`.
+  - Add file/preview context menu and editor dropdown to `src/components/files/FilesPanel.tsx` and `src/components/layout/ProjectCard.tsx`.
+- [ ] **Step 4: Run verification**
+  - Run `pnpm typecheck && pnpm lint && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
+- [ ] **Step 5: Commit**
+  - `feat(files): add file context menu, persisted preferredEditor setting, and Ctrl+O open`
+
+**Acceptance Criteria:**
+
+- Right-clicking any file/folder in `FilesPanel` or its preview opens a custom menu with `Open in <editor>`, `Reveal in File Explorer`, `Copy relative path`, and `Copy full path`.
+- `preferredEditor` persists across restarts, defaults to `Zed -> VS Code -> File Explorer`, and can be switched from both the `Files` toolbar and `ProjectCard`.
+- `Ctrl+O` opens the selected file (or workspace) in the preferred editor; backend strictly allowlists editor ids with zero shell interpolation.
+
+---
+
+### Task 29: Center the pult app icon optically with safe margins across all icon sizes
+
+**Design Decision:** Inspection of `pult-icon.svg` and `src-tauri/icons/128x128.png` shows why the regenerated mark was clipped/off-center: inside `<g transform="translate(22 0) skewX(-12)">`, the four blocks occupy `x ∈ [66.47, 223.51]` (`center = 144.99`, `width = 157.03`) and `y ∈ [87, 233]` (`center = 160`, `height = 146`). The current `transform="translate(-156 -112) scale(2.3)"` places `x_min` at `-3.12px` (clipped at the left edge!) and shifts the mark far left of `256`. Recompute the outer transform in `pult-icon.svg` to `scale(1.95)` (~`306×285px`, leaving `>= 100px` / `~19.5%` safe margin on every side of the `512×512` `rx="112"` tile for Windows taskbar & squircle masking) with optical centering (`tx = -24, ty = -53`, putting the mark in `x ∈ [105.6, 411.8]`, `y ∈ [116.6, 401.3]`). Regenerate all platform icons (`src-tauri/icons/*`) via `pnpm tauri icon pult-icon.svg` and align `scripts/gen-icon.mjs` so it does not contain the obsolete chevron+caret icon.
+
+**Files:**
+
+- Modify: `pult-icon.svg`, `scripts/gen-icon.mjs`
+- Regenerate: `src-tauri/icons/*` (all PNGs, `icon.ico`, `icon.icns`, Windows Square logos)
+- Create tests: `tests/app-icon.test.ts`
+
+**Interfaces:**
+
+- `pult-icon.svg`:
+  - `viewBox="0 0 512 512"`, `<rect width="512" height="512" rx="112" fill="#0B0B0B"/>`
+  - Outer mark `<g transform="translate(-24 -53) scale(1.95)">` (exact optical centering inside the `512×512` tile with `~19–22%` margins on all 4 sides).
+- `scripts/gen-icon.mjs`:
+  - Update to spawn/wrap `pnpm tauri icon pult-icon.svg` (or render/verify `pult-icon.svg` -> `src-tauri/icons/*`) so no stale chevron+caret icon generator remains in `scripts/`.
+
+**Steps:**
+
+- [ ] **Step 1: Write failing test (Gemini)**
+  - Create `tests/app-icon.test.ts`:
+    1. Parses `pult-icon.svg` transform (`translate(tx ty) scale(s)`) and computes the exact transformed corners of all 4 skewed `<rect>`s; asserts `x_min >= 85`, `x_max <= 427`, `y_min >= 85`, `y_max <= 427`, `|(x_min + x_max)/2 - 256| <= 8`, and `|(y_min + y_max)/2 - 256| <= 8`.
+    2. Decodes `src-tauri/icons/32x32.png` and `src-tauri/icons/128x128.png` (pure Node `zlib.inflateSync` PNG scanline reader) and checks the bounding box of light mark pixels (`r > 180 && g > 180 && b > 180`): asserts non-zero safe margin (`>= 15%` of dimension) on left, right, top, and bottom, and `|leftMargin - rightMargin| <= Math.ceil(size * 0.06)`, `|topMargin - bottomMargin| <= Math.ceil(size * 0.06)`.
+    3. Asserts `src-tauri/icons/icon.ico` contains multi-size entries covering `16`, `32`, `48`, and `128`/`256` px (parsing the ICO directory header bytes).
+- [ ] **Step 2: Run test to verify failure (Gemini)**
+  - Run `pnpm test tests/app-icon.test.ts` → FAIL (`pult-icon.svg` has `x_min = -3.12` and `32x32.png` / `128x128.png` touch the left edge with 0 margin).
+- [ ] **Step 3: Fix `pult-icon.svg`, align `scripts/gen-icon.mjs`, and regenerate all icons (DeepSeek)**
+  - Update `pult-icon.svg` outer `<g>` transform to `translate(-24 -53) scale(1.95)`.
+  - Run `pnpm tauri icon pult-icon.svg` to regenerate `src-tauri/icons/*`.
+  - Update `scripts/gen-icon.mjs` to invoke `tauri icon pult-icon.svg` and print generated icon verification summary.
+  - Visually inspect generated PNGs at `16/32/48/128 px` (including ICO extraction or `32x32.png` / `64x64.png` / `128x128.png`).
+- [ ] **Step 4: Run verification**
+  - Run `pnpm typecheck && pnpm lint && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
+- [ ] **Step 5: Commit**
+  - `fix(icons): optically center pult icon mark with safe margins and regenerate all sizes`
+
+**Acceptance Criteria:**
+
+- The 4-block pult mark is optically centered inside the `512×512` tile with zero edge clipping and `>= 18%` safe margins on all four sides.
+- All `src-tauri/icons/*` assets (including `16/32/48/128 px` ICO/PNGs) are regenerated and pass both pixel-margin assertions and visual inspection.
+
+---
+
+### Task 30: Provider CLI update checks & background install from the single sidebar refresh button
+
+**Design Decision:** Keep one and only one refresh button in the left sidebar footer (rightmost footer control). Clicking it refreshes projects/threads/instances and runs `providers_check_updates` asynchronously in the background (never blocking the UI). When one or more providers have newer versions available, the button displays a download badge; clicking it when updates are ready runs `providers_install_all_updates` in the background while rendering an SVG circular progress ring around the button (`0..100%`). All update commands use a strict hardcoded allowlist in `src-tauri/src/updates.rs` (`npm view` / `npm install -g <pkg>@latest` for npm-distributed agents only, `CREATE_NO_WINDOW` on Windows, zero shell interpolation, `instance_id` validated against `runtime.instances()`, and unsupported/native tools like `antigravity` / `mock` / `dsh` marked `"externally_managed"` unless an official updater is explicitly detected). Per-provider rows in `src/routes/settings.providers.tsx` display current vs available version, `"Managed externally"` when unsupported, and per-provider update action + progress bar/ring.
+
+**Files:**
+
+- Create: `src-tauri/src/updates.rs`
+- Modify: `src-tauri/src/lib.rs`, `src-tauri/src/ipc/mod.rs`
+- Modify: `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/ui.ts`
+- Modify: `src/components/layout/Sidebar.tsx`, `src/routes/settings.providers.tsx`
+- Create/Modify tests: `tests/provider-updates.test.tsx`, `tests/sidebar.test.tsx`
+
+**Interfaces:**
+
+- `src-tauri/src/updates.rs`:
+  ```rust
+  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+  #[serde(rename_all = "camelCase")]
+  pub enum UpdateSupport {
+      Npm,
+      ExternallyManaged,
+  }
+
+  #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+  #[serde(rename_all = "camelCase")]
+  pub struct ProviderUpdateInfo {
+      pub instance_id: String,
+      pub support: UpdateSupport,
+      pub package_name: Option<String>,
+      pub current_version: Option<String>,
+      pub latest_version: Option<String>,
+      pub update_available: bool,
+      pub status: String, // "idle" | "checking" | "up_to_date" | "update_available" | "updating" | "updated" | "externally_managed" | "error"
+      pub progress: u8,   // 0..=100
+      pub message: Option<String>,
+  }
+
+  /// Pure classifier: maps an InstanceSpec onto an allowlisted npm package (or ExternallyManaged).
+  /// Never accepts user-supplied commands or shell strings.
+  pub fn resolve_update_target(spec: &crate::config::InstanceSpec, npm_installed_pkgs: Option<&std::collections::HashSet<String>>) -> UpdateTarget;
+  pub fn parse_semver_version(raw: &str) -> Option<(u64, u64, u64)>;
+  pub fn is_newer_version(current: Option<&str>, latest: Option<&str>) -> bool;
+  ```
+  - Hardcoded allowlist `UpdateTarget`:
+    - `args` containing `@zed-industries/claude-code-acp` -> `Npm { package: "@zed-industries/claude-code-acp" }` (or if `command == "claude"` and `@anthropic-ai/claude-code` is detected in global npm list -> `@anthropic-ai/claude-code`).
+    - `args` containing `@agentclientprotocol/codex-acp` -> `Npm { package: "@agentclientprotocol/codex-acp" }` (or if `command == "codex"` and `@openai/codex` is detected in global npm list -> `@openai/codex`).
+    - `args` containing `@google/gemini-cli` -> `Npm { package: "@google/gemini-cli" }`.
+    - `id == "opencode"` / `command` basename `"opencode"` -> `Npm { package: "opencode-ai" }` **only when** `npm list -g opencode-ai --depth=0 --json` confirms it is npm-managed; otherwise `ExternallyManaged`.
+    - `antigravity`, `dsh`, `mock`, and any custom binary -> `ExternallyManaged` (`message: "Managed externally"`).
+  - Emits Tauri event `"provider:update"` with `ProviderUpdateInfo` on check completion and during `npm install -g <pkg>@latest` progress phases (`10%` -> `35%` -> `70%` -> `95%` -> `100%`).
+- `src-tauri/src/ipc/mod.rs` (registered in `src-tauri/src/lib.rs`):
+  ```rust
+  #[tauri::command]
+  pub async fn providers_check_updates(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+  ) -> Result<Vec<crate::updates::ProviderUpdateInfo>, PultError>;
+
+  #[tauri::command]
+  pub async fn providers_install_update(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+      instance_id: String,
+  ) -> Result<crate::updates::ProviderUpdateInfo, PultError>;
+
+  #[tauri::command]
+  pub async fn providers_install_all_updates(
+      runtime: tauri::State<'_, Arc<AgentRuntime>>,
+  ) -> Result<Vec<crate::updates::ProviderUpdateInfo>, PultError>;
+  ```
+  - Validates `instance_id` exists in `runtime.instances()`, prevents concurrent installs for the same `instance_id`, resolves `which("npm")`, and spawns `npm` directly without a shell (`CREATE_NO_WINDOW` on Windows).
+- `src/stores/ui.ts`:
+  ```ts
+  providerUpdates: Record<string, ProviderUpdateInfo>;
+  checkingUpdates: boolean;
+  installingUpdates: boolean;
+  checkProviderUpdates: () => Promise<void>;
+  installProviderUpdate: (instanceId: string) => Promise<void>;
+  installAllProviderUpdates: () => Promise<void>;
+  ```
+  - Subscribes once to `"provider:update"` (`onProviderUpdate`) to keep `providerUpdates[instanceId]` live.
+  - Pure helper `aggregateUpdateState(updates)` computes `{ availableCount, updatingCount, overallProgress (0..100) }`.
+- `src/components/layout/Sidebar.tsx`:
+  - Footer keeps **one** refresh button (`ml-auto`, rightmost icon in `<footer>`). Verify no duplicate refresh button exists anywhere in `Sidebar.tsx`.
+  - Behavior:
+    - Idle / no available updates: `<RefreshCw />` (spins while `checkingUpdates`), tooltip `"Refresh"`, `aria-label="Refresh"`; clicking refreshes projects/threads/instances AND calls `checkProviderUpdates()`.
+    - Updates available (`availableCount > 0` and not installing): shows download badge (`data-update-badge` + count dot), tooltip `"Update ${availableCount} provider(s)"`, `aria-label="Refresh"`; clicking starts `installAllProviderUpdates()` in background.
+    - Installing (`installingUpdates` or `updatingCount > 0`): renders circular SVG progress ring (`data-update-progress`, `strokeDashoffset` from `overallProgress`) around/inside the button without blocking sidebar or chat interactions.
+- `src/routes/settings.providers.tsx`:
+  - Per-provider row in the left list shows compact version / update badge (`"Update vX.Y.Z"` or circular/mini progress % while updating); detail card `Status` / `Updates` section shows current version, latest version, `"Managed externally"` when unsupported, or an `"Update to vX.Y.Z"` button with progress bar.
+
+**Steps:**
+
+- [ ] **Step 1: Write failing tests (Gemini)**
+  - In `src-tauri/src/updates.rs` (`mod tests`):
+    1. `parse_semver_and_compare_versions` — tests `0.1.9` vs `0.1.10`, `v1.2.3-beta.1`, equal versions (`false`), missing version (`false`), and prerelease vs stable.
+    2. `resolve_update_target_allowlists_known_packages_and_marks_others_external` — verifies `@zed-industries/claude-code-acp`, `@agentclientprotocol/codex-acp`, `@google/gemini-cli` map to `Npm`; `opencode` maps to `Npm("opencode-ai")` only when present in `npm_installed_pkgs` and `ExternallyManaged` otherwise; `antigravity`, `mock`, and arbitrary `command: "bash"` map to `ExternallyManaged`.
+    3. `install_update_rejects_unknown_or_external_instance_id` — verifies invalid `instance_id` or `ExternallyManaged` target returns `Err` without spawning any process.
+  - Create `tests/provider-updates.test.tsx`:
+    1. Tests `aggregateUpdateState` across mixed `up_to_date`, `update_available`, `updating` (`progress: 40`, `80` -> `60`), and `externally_managed` entries.
+    2. Renders `<Sidebar />` footer: verifies exactly ONE refresh button exists, clicking it checks updates (`providersCheckUpdates`) alongside refreshing stores, receiving a `"provider:update"` event with `updateAvailable: true` shows `[data-update-badge]`, clicking it triggers `providersInstallAllUpdates`, and active `updating` progress renders `[data-update-progress]` circular SVG fill without blocking other buttons.
+    3. Renders `ProvidersSettings` with seeded `providerUpdates` and asserts per-provider rows display available version (`v0.2.0`), progress (`65%`), and `"Managed externally"` for Antigravity/custom agents.
+  - Check `tests/sidebar.test.tsx`: verify existing footer refresh tests (`name: /^refresh$/i`, icon-only `textContent === ""` when idle, tooltip `/refresh/i`) remain compatible (or update cleanly if badge adds sr-only text; keep visible text empty when idle and put badge in `aria-hidden` element so `btn.textContent?.trim()` stays `""` or update test explicitly).
+- [ ] **Step 2: Run tests to verify failure (Gemini)**
+  - Run `cargo test --manifest-path src-tauri/Cargo.toml --lib updates` and `pnpm test tests/provider-updates.test.tsx tests/sidebar.test.tsx` → FAIL.
+- [ ] **Step 3: Implement backend `updates.rs`, IPC commands, `useUiStore` update state, Sidebar footer progress/badge, and Providers Settings UI (DeepSeek)**
+  - Create `src-tauri/src/updates.rs`, wire `providers_check_updates`, `providers_install_update`, `providers_install_all_updates` in `src-tauri/src/ipc/mod.rs` and `src-tauri/src/lib.rs`.
+  - Update `src/lib/types.ts`, `src/lib/ipc.ts`, `src/stores/ui.ts`, `src/components/layout/Sidebar.tsx`, and `src/routes/settings.providers.tsx`.
+- [ ] **Step 4: Run verification**
+  - Run `pnpm typecheck && pnpm lint && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
+- [ ] **Step 5: Commit**
+  - `feat(providers): check and install CLI updates with circular progress from sidebar refresh`
+
+**Acceptance Criteria:**
+
+- Exactly one refresh button exists in the sidebar footer (on the right side); clicking it checks all providers without blocking the UI, shows a download badge when updates exist, and installs updates in the background with a circular progress fill.
+- Providers settings shows current/available versions, live progress per provider, and `"Managed externally"` for unsupported/custom tools (`antigravity`, `mock`, custom binaries).
+- Backend validates `instance_id` against configured instances, uses only allowlisted package-manager invocations (`npm view` / `npm install -g <pkg>@latest` without shell interpolation), and handles errors cleanly without crashing or blocking.
+
+### Task 31: Tab selects slash-command and @-mention suggestions
+
+**Files:** `src/components/chat/Composer.tsx`, `tests/composer.test.tsx`.
+
+**Requirements:**
+
+- With the `/` command menu or the `@` mention menu open, `Tab` selects the highlighted suggestion exactly like Enter and keeps focus in the composer; `Shift+Tab` moves the highlight up (or is ignored, never moves DOM focus). Escape still closes; ArrowUp/Down still move.
+- Test: open `/` menu, press Tab, assert the command text is inserted and the menu closes; same for `@` with a seeded workspace file; Shift+Tab changes the highlighted row.

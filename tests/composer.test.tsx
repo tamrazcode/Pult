@@ -230,6 +230,24 @@ describe("composer", () => {
     expect(textarea.value).toBe("/commit ");
   });
 
+  it("picks a slash command with Tab", () => {
+    render(<Composer threadId="th" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "/com" } });
+    fireEvent.keyDown(textarea, { key: "Tab" });
+    expect(textarea.value).toBe("/commit ");
+  });
+
+  it("picks an @ mention with Tab", async () => {
+    workspaceFiles.mockResolvedValue(["src/main.ts", "docs/readme.md"]);
+    render(<Composer threadId="th" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "look @mai" } });
+    expect(await screen.findByText("src/main.ts")).toBeTruthy();
+    fireEvent.keyDown(textarea, { key: "Tab" });
+    expect(textarea.value).toBe("look @src/main.ts ");
+  });
+
   it("detects an @ token at the caret and ignores emails", () => {
     expect(extractMentionQuery("look at @src/ma", 15)).toEqual({ start: 8, query: "src/ma" });
     expect(extractMentionQuery("foo@bar.com", 11)).toBeNull();

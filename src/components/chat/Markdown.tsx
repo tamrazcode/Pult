@@ -20,6 +20,8 @@ import type { HighlighterCore } from "shiki/core";
 import { Check, Copy } from "lucide-react";
 import { openExternalUrl, readImageDataUrl } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
+import { useThreadsStore } from "../../stores/threads";
+import { useUiStore } from "../../stores/ui";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
 
@@ -287,6 +289,22 @@ function fileUrlToPath(src: string): string {
   }
 }
 
+/** Maps a local Markdown link to a workspace-relative preview path. */
+function localPreviewPath(href: string): string | null {
+  if (/^(https?:|mailto:|#)/i.test(href)) return null;
+  let path = href;
+  if (path.startsWith("file://")) path = fileUrlToPath(path);
+  const threads = useThreadsStore.getState();
+  const thread = threads.threads.find((candidate) => candidate.id === threads.activeThreadId);
+  const root = thread?.workspace;
+  if (root && /^[a-zA-Z]:[\\/]/.test(path)) {
+    const normalized = path.replace(/\//g, "\\");
+    if (!normalized.startsWith(root.replace(/[\\/]+$/, ""))) return null;
+    path = normalized.slice(root.length).replace(/^[\\/]+/, "");
+  }
+  return path.replace(/^\.\//, "").replace(/\\/g, "/") || null;
+}
+
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
@@ -351,9 +369,20 @@ const COMPONENTS: Components = {
         target="_blank"
         rel="noreferrer noopener"
         onClick={(event) => {
-          if (!external || !isTauri() || !href) return;
-          event.preventDefault();
-          void openExternalUrl(href).catch((err) => console.error("open_external_url failed", err));
+          if (!href) return;
+          if (external) {
+            if (!isTauri()) return;
+            event.preventDefault();
+            void openExternalUrl(href).catch((err) =>
+              console.error("open_external_url failed", err),
+            );
+            return;
+          }
+          const path = localPreviewPath(href);
+          if (path && isTauri()) {
+            event.preventDefault();
+            useUiStore.getState().openFilePreview(path);
+          }
         }}
       >
         {children}
