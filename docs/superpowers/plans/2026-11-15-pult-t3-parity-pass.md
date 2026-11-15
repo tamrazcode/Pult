@@ -872,3 +872,14 @@
   - Code > Worktrees: default strategy, worktree root preview, and a list of current worktrees from threads (read-only is fine if actions are not available).
 - The settings store must expose typed getters/setters with defaults; pages read/write through it; changes survive restart. Update the keybindings/defaults docs where relevant.
 - Tests: nav grouping/search filtering, persistence of each setting (round-trip), and that each page renders its controls. Gemini authors the tests; unsupported T3 pages are explicitly omitted from the nav.
+
+### Task 26: Final performance, size, and freeze audit (Gemini) + optimizations
+
+**Files:** `DEVLOG.md`, this plan; production files only as findings require.
+
+**Requirements:**
+- Gemini records real measurements on the built app: clean `pnpm build` dist size (total + largest JS chunks), `pult-core.exe` size, cold app start (launch → window responsive), idle and post-imagegen RSS/CPU, SQLite `pult.db` + WAL sizes, top 10 largest event payloads, IPC cap behavior, `pnpm test` duration, Rust test duration, ASCII idle CPU, and warm vs cold first-token latency.
+- Freeze checks: open the historical 8 MB imagegen thread, switch projects/providers repeatedly, open/close the right panel with a large diff, and idle for 5 minutes; record responsiveness and memory growth.
+- Rank findings, implement the safe wins (chunk splitting, unused assets, oversized modules, canvas tuning, safe SQLite checkpoint/VACUUM, redundant IPC), avoid behavior changes for numbers.
+- Record numbers and changes in DEVLOG; re-run all gates and rebuild.
+
