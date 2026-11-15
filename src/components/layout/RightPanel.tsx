@@ -23,6 +23,7 @@ const TABS: { id: RightPanelTab; label: string; icon: typeof FileDiff }[] = [
 ];
 
 const SHORTCUTS: Record<RightPanelTab, string> = {
+  none: "",
   browser: "B",
   terminal: "T",
   files: "F",
@@ -85,7 +86,7 @@ export function RightPanel({ width }: { width: number }) {
       className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
       <div
-        className={`flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle pl-2 ${isTauri() ? "pr-[136px]" : "pr-2"}`}
+        className={`flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
       >
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
@@ -165,7 +166,39 @@ export function RightPanel({ width }: { width: number }) {
 
       <div className="flex min-h-0 flex-1 flex-col">
         <Suspense fallback={<p className="p-3 text-xs text-text-tertiary">Loading surface…</p>}>
-          {tab === "diff" ? (
+          {tab === "none" ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 p-6">
+              <p className="mb-3 text-sm font-medium text-text-primary">Open a surface</p>
+              {TABS.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setTab(id)}
+                  className="flex w-64 items-center gap-2 rounded-(--radius-sm) px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover hover:text-text-primary"
+                >
+                  <Icon size={14} />
+                  <span className="flex-1">{label}</span>
+                  <kbd className="rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
+                    {SHORTCUTS[id]}
+                  </kbd>
+                </button>
+              ))}
+              {DISABLED_SURFACES.map((surface) => (
+                <button
+                  key={surface.label}
+                  type="button"
+                  disabled
+                  title={surface.reason}
+                  className="flex w-64 items-center gap-2 rounded-(--radius-sm) px-3 py-1.5 text-left text-sm text-text-tertiary opacity-60"
+                >
+                  <span className="flex-1">{surface.label}</span>
+                  <kbd className="rounded border border-border-subtle px-1 font-mono text-xs">
+                    {surface.shortcut}
+                  </kbd>
+                </button>
+              ))}
+            </div>
+          ) : tab === "diff" ? (
             <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
           ) : tab === "browser" ? (
             <BrowserPanel threadId={activeThreadId} />

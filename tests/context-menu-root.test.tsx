@@ -19,6 +19,9 @@ vi.mock("@tanstack/react-router", () => ({
       <a href="src/App.tsx" data-link-href="src/App.tsx">
         App source
       </a>
+      <a href="outputs/sandbox.html" data-link-href="outputs/sandbox.html">
+        Sandbox preview
+      </a>
     </div>
   ),
   useRouter: () => ({ navigate }),
@@ -87,6 +90,8 @@ describe("RootLayout context menu", () => {
     useUiStore.setState({
       sidebarOpen: false,
       rightPanelOpen: false,
+      rightPanelTab: "diff",
+      browserTarget: null,
       paletteOpen: false,
       pendingThreadId: null,
       selectedInstanceId: null,
@@ -183,6 +188,23 @@ describe("RootLayout context menu", () => {
       }),
     );
     expect(writeText).toHaveBeenCalledWith("C:\\work\\alpha\\src\\App.tsx");
+  });
+
+  it("offers Open in browser on workspace .html link right-click and calls openInBrowserPanel", () => {
+    const openInBrowserPanelSpy = vi.spyOn(useUiStore.getState(), "openInBrowserPanel");
+    render(<RootLayout />);
+
+    const link = screen.getByRole("link", { name: "Sandbox preview" });
+    fireEvent.contextMenu(link, { clientX: 50, clientY: 70 });
+
+    const menu = screen.getByRole("menu", { name: "Context menu" });
+    const openItem = within(menu).getByRole("menuitem", { name: "Open in browser" });
+    fireEvent.click(openItem);
+
+    expect(openInBrowserPanelSpy).toHaveBeenCalledWith("outputs/sandbox.html");
+    expect(useUiStore.getState().browserTarget).toBe("outputs/sandbox.html");
+    expect(useUiStore.getState().rightPanelTab).toBe("browser");
+    expect(useUiStore.getState().rightPanelOpen).toBe(true);
   });
 
   it("still offers link actions when right-clicking selected text inside a link", () => {

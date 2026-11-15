@@ -90,7 +90,7 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
       >
         <span
           aria-hidden
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[0.625rem] leading-none font-semibold tracking-tight"
+          className="flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[0.625rem] leading-none font-semibold tracking-tight"
           style={{
             backgroundColor: monogram.background,
             color: monogram.color,

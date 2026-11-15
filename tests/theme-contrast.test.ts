@@ -179,4 +179,19 @@ describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
       }
     }
   });
+
+  it("defines corner radius tokens at or above minimum pixel sizes", () => {
+    const mins: Array<[string, number]> = [
+      ["--radius-sm", 8],
+      ["--radius-md", 12],
+      ["--radius-lg", 18],
+    ];
+    for (const [token, minPx] of mins) {
+      const raw = DARK[token];
+      expect(raw, `tokens.css missing ${token}`).toBeTruthy();
+      const match = /^(\d+(?:\.\d+)?)px$/.exec(raw);
+      expect(match, `${token} should be in px, got ${raw}`).not.toBeNull();
+      expect(Number(match![1])).toBeGreaterThanOrEqual(minPx);
+    }
+  });
 });

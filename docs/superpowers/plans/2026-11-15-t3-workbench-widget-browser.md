@@ -391,3 +391,29 @@ T3 Code uses Electron `<webview>` with isolated `partition` profiles (`HostedBro
 - Phase 3: the project widget lives in `ChatColumn`, defaults on, hides while the right panel is open, and toggles from the header. Project scripts are stored per project in localStorage and clicking one prefills the composer; this replaces the planned SQLite table (shortcut: local-only scripts, upgrade to a store column when scripts must sync across machines).
 - Phase 4: the surface menu matches the requested order and shortcuts; enabled surfaces are Browser/Terminal/Files/Diff, the other four are disabled with visible reasons. Browser uses the sandboxed-iframe fallback rather than Tauri's unstable child webview: URL bar, history, workspace HTML via `workspace_read_html`, and a curl header probe with an explicit system-browser fallback. Limitation: local HTML with relative external assets may not resolve inside `srcDoc`; external sites that block framing use the fallback.
 - Verification: 311/311 TS, 169/169 Rust, `pnpm typecheck`, `pnpm lint`, clippy clean, `pnpm tauri build --no-bundle` pass.
+
+---
+
+## Round 3 вЂ” final UI remarks (2026-11-15, evening)
+
+- [x] Sidebar brand: use the non-skewed app-icon SVG, 24px, 4px gap, Regular weight.
+- [x] Project row: exactly one star, immediately after the name; collapse chevron moved to the far right above the thread timestamps; remove the duplicate right star and inline new-thread plus.
+- [x] Image preview: click any chat/generated/attachment image to open a full-window lightbox; Escape and backdrop close.
+- [x] Model picker: cap height to the window (`min(380px, calc(100dvh - 220px))`) so it never clips above the chat.
+- [x] Finished agent turns: no divider and no "Completed" label for `end_turn`; non-normal stop reasons keep their label.
+- [x] Local HTML links: left click opens the built-in browser surface; right click offers Open in browser, Reveal in Explorer, Open in editor, Copy path. Resolve absolute links against the project root when the thread workspace is null.
+- [x] Browser surface consumes a queued target from `useUiStore.browserTarget` and clears it after loading.
+- [x] Right panel: default surface is the centered T3-style "Open a surface" list; choosing an item opens that surface.
+- [x] Radii: `--radius-sm/md/lg` increased to 8/12/18px for inputs, outlines, trays, and panels.
+- [x] Spacing pass across the app, matching the user's T3 sidebar reference: one 4/8/12/16/24 rhythm; sidebar header/search/nav/footer, project and thread rows, section labels, chat transcript/composer, right-panel header/content, settings nav/content, and dialogs.
+- [ ] Run `pnpm typecheck`, `pnpm lint`, `pnpm test`, `cargo test`, `cargo clippy`, rebuild the release exe, then a fresh Gemini review of the whole round.
+
+---
+
+## Round 4 вЂ” glass composer and spacing (2026-11-15, late)
+
+- [x] Composer backing tray must not sit behind the input: draw only a thick flat frame (4px sides/top, 6px bottom) so the glass blur samples the chat canvas again instead of the opaque tray.
+- [x] Appearance setting "Glass opacity" (0вЂ“100, default 100): persisted as `glass_opacity`, hydrates safely, and drives the composer tint layer opacity without disabling `backdrop-blur`.
+- [ ] Spacing pass matching the attached T3 sidebar: 4/8/12/16/24 rhythm, sidebar header/search/nav/footer, project/thread rows, section labels, chat transcript/composer, right-panel header/content, settings nav/content, dialogs.
+- [x] Verify: typecheck, lint, all TS/Rust tests, release build, then a fresh Gemini review.
+- [x] Project monogram badges: reduce the sidebar/chat-header project icons from 24/22px to about 16px (roughly 1.5Г—) while keeping the two-letter initials readable and the existing color styling.

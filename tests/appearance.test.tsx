@@ -1,5 +1,25 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import type * as IpcModule from "../src/lib/ipc";
+
+const { settingsGet, settingsSet } = vi.hoisted(() => ({
+  settingsGet: vi.fn(async (_key: string): Promise<unknown> => null),
+  settingsSet: vi.fn(async () => undefined),
+}));
+
+vi.mock("../src/lib/tauri", () => ({
+  isTauri: () => true,
+}));
+
+vi.mock("../src/lib/ipc", async (importOriginal) => {
+  const actual = await importOriginal<typeof IpcModule>();
+  return {
+    ...actual,
+    settingsGet,
+    settingsSet,
+  };
+});
+
 import { Route } from "../src/routes/settings.appearance";
 import { THEMES } from "../src/lib/theme";
 import { useSettingsStore } from "../src/stores/settings";
@@ -9,7 +29,9 @@ const AppearanceSettings = Route.options.component!;
 describe("AppearanceSettings theme previews", () => {
   beforeEach(() => {
     delete document.documentElement.dataset.theme;
-    useSettingsStore.setState({ theme: "dark", accentHue: null });
+    settingsGet.mockReset().mockResolvedValue(null);
+    settingsSet.mockReset().mockResolvedValue(undefined);
+    useSettingsStore.setState({ theme: "dark", accentHue: null, glassOpacity: 100 });
   });
 
   it("renders all 4 theme radio cards with scoped data-theme miniature previews while root stays dark", () => {
@@ -42,5 +64,40 @@ describe("AppearanceSettings theme previews", () => {
     expect(hasGlassSurface, "Liquid Glass preview should use glass-surface").toBe(true);
 
     expect(container.querySelectorAll("[data-theme]").length).toBe(4);
+  });
+
+  it("renders a Glass opacity range input defaulting to 100 and persists changes", () => {
+    render(<AppearanceSettings />);
+
+    const slider = screen.getByLabelText("Glass opacity") as HTMLInputElement;
+    expect(slider.type).toBe("range");
+    expect(slider.value).toBe("100");
+    expect(useSettingsStore.getState().glassOpacity).toBe(100);
+
+    fireEvent.change(slider, { target: { value: "40" } });
+
+    expect(useSettingsStore.getState().glassOpacity).toBe(40);
+    expect(slider.value).toBe("40");
+    expect(settingsSet).toHaveBeenCalledWith("glass_opacity", 40);
+  });
+
+  it("hydrates glass_opacity from settingsGet and clamps or resets invalid values", async () => {
+    settingsGet.mockImplementation(async (key: string) => (key === "glass_opacity" ? 40 : null));
+    await useSettingsStore.getState().hydrate();
+    expect(useSettingsStore.getState().glassOpacity).toBe(40);
+
+    settingsGet.mockImplementation(async (key: string) => (key === "glass_opacity" ? 150 : null));
+    await useSettingsStore.getState().hydrate();
+    expect(useSettingsStore.getState().glassOpacity).toBe(100);
+
+    settingsGet.mockImplementation(async (key: string) => (key === "glass_opacity" ? -20 : null));
+    await useSettingsStore.getState().hydrate();
+    expect(useSettingsStore.getState().glassOpacity).toBe(0);
+
+    settingsGet.mockImplementation(async (key: string) =>
+      key === "glass_opacity" ? "not-a-number" : null,
+    );
+    await useSettingsStore.getState().hydrate();
+    expect(useSettingsStore.getState().glassOpacity).toBe(100);
   });
 });

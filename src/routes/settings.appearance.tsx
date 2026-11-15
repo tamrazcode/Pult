@@ -11,6 +11,8 @@ function AppearanceSettings() {
   const accentHue = useSettingsStore((s) => s.accentHue);
   const setTheme = useSettingsStore((s) => s.setTheme);
   const setAccentHue = useSettingsStore((s) => s.setAccentHue);
+  const glassOpacity = useSettingsStore((s) => s.glassOpacity);
+  const setGlassOpacity = useSettingsStore((s) => s.setGlassOpacity);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -124,6 +126,29 @@ function AppearanceSettings() {
       <p className="mt-2 text-xs text-text-tertiary">
         "Stock blue" keeps the theme's built-in accent; every other pick recolors the UI in place
         and survives restarts.
+      </p>
+
+      <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+        Glass
+      </h2>
+      <label className="mt-2 block">
+        <span className="flex items-center justify-between text-sm text-text-primary">
+          <span>Composer opacity</span>
+          <span className="tnum text-text-tertiary">{glassOpacity}%</span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={glassOpacity}
+          onChange={(event) => setGlassOpacity(Number(event.target.value))}
+          aria-label="Glass opacity"
+          className="mt-2 w-full accent-(--accent)"
+        />
+      </label>
+      <p className="mt-2 text-xs text-text-tertiary">
+        Lower values make the composer more transparent while keeping the backdrop blur.
       </p>
     </div>
   );

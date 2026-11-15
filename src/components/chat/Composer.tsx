@@ -266,6 +266,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const activeRun = activeRunForThread(runs);
   const sendKey = useSettingsStore((s) => s.sendKey);
+  const glassOpacity = useSettingsStore((s) => s.glassOpacity);
 
   // A Branch action hands the message text over once; consume it here.
   useEffect(() => {
@@ -927,9 +928,14 @@ export function Composer({ threadId }: { threadId?: string }) {
       <div className="relative mx-auto w-full max-w-3xl">
         <div
           aria-hidden
-          className="pointer-events-none absolute -inset-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border border-border-subtle bg-surface-raised"
+          className="pointer-events-none absolute -inset-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border-4 border-b-[6px] border-surface-raised"
         />
-        <div className="relative rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer-lift) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
+        <div
+          className="relative rounded-(--radius-lg) border border-border-strong shadow-(--shadow-composer-lift) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
+          style={{
+            backgroundColor: `color-mix(in srgb, var(--composer-tint) ${glassOpacity}%, transparent)`,
+          }}
+        >
           {runActive && (
             <div
               aria-hidden
@@ -1000,7 +1006,12 @@ export function Composer({ threadId }: { threadId?: string }) {
                   data-image-chip
                   className="group relative h-14 w-14 overflow-hidden rounded-(--radius-md) border border-border-subtle"
                 >
-                  <img src={chip.preview} alt="Attached" className="h-full w-full object-cover" />
+                  <img
+                    src={chip.preview}
+                    alt="Attached"
+                    onClick={() => useUiStore.getState().openImagePreview(chip.preview, "Attached")}
+                    className="h-full w-full cursor-zoom-in object-cover"
+                  />
                   <button
                     onClick={() => setChips((prev) => prev.filter((_, j) => j !== i))}
                     aria-label="Remove image"
@@ -1054,9 +1065,9 @@ export function Composer({ threadId }: { threadId?: string }) {
                 ? "Decision needed — respond to the approval above"
                 : "Ask anything. @ files, / commands"
             }
-            className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+            className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 pb-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
           />
-          <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
+          <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-2.5">
             <label
               title="Attach files"
               aria-label="Attach files"

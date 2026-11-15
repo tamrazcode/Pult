@@ -28,6 +28,8 @@ interface SettingsState {
   showTimestamps: boolean;
   /** Keep the transcript pinned to streaming output. */
   followStreaming: boolean;
+  /** Composer glass tint opacity (0–100). */
+  glassOpacity: number;
   /** Default diff presentation (persisted; also seeds the git store). */
   diffViewMode: "unified" | "split";
   /** Editor used by Files/Project card "Open in editor". */
@@ -43,6 +45,7 @@ interface SettingsState {
   setSendKey: (value: "enter" | "mod-enter") => void;
   setShowTimestamps: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
+  setGlassOpacity: (value: number) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
   setPreferredEditor: (editor: EditorId) => void;
   setKeybinding: (commandId: string, binding: string) => void;
@@ -62,6 +65,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sendKey: "enter",
   showTimestamps: true,
   followStreaming: true,
+  glassOpacity: 100,
   diffViewMode: "unified",
   preferredEditor: "zed",
   keybindings: {},
@@ -95,6 +99,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setFollowStreaming: (followStreaming) => {
     set({ followStreaming });
     if (isTauri()) void settingsSet("follow_streaming", followStreaming).catch(() => {});
+  },
+  setGlassOpacity: (value) => {
+    const glassOpacity = Math.min(100, Math.max(0, Math.round(value)));
+    set({ glassOpacity });
+    if (isTauri()) void settingsSet("glass_opacity", glassOpacity).catch(() => {});
   },
   setDiffViewMode: (diffViewMode) => {
     set({ diffViewMode });
@@ -137,6 +146,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       followStreaming,
       diffViewMode,
       preferredEditor,
+      glassOpacity,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -149,6 +159,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("follow_streaming").catch(() => null),
       settingsGet("diff_view_mode").catch(() => null),
       settingsGet("preferred_editor").catch(() => null),
+      settingsGet("glass_opacity").catch(() => null),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "dark";
     const resolvedHue =
@@ -170,6 +181,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       followStreaming: followStreaming !== false,
       diffViewMode: diffViewMode === "split" ? "split" : "unified",
       preferredEditor: isEditorId(preferredEditor) ? preferredEditor : "zed",
+      glassOpacity:
+        typeof glassOpacity === "number" ? Math.min(100, Math.max(0, glassOpacity)) : 100,
       keybindings:
         keybindings && typeof keybindings === "object"
           ? (keybindings as Record<string, string>)

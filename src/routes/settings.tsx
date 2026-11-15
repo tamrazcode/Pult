@@ -82,9 +82,9 @@ export function SettingsLayout() {
       <div className="flex min-h-0 flex-1">
         <nav
           aria-label="Settings"
-          className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-canvas px-2 py-3"
+          className="flex w-60 shrink-0 flex-col border-r border-border-subtle bg-canvas px-3 py-4"
         >
-          <div className="relative mb-2 px-1">
+          <div className="relative mb-3 px-0">
             <Search
               size={13}
               className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-tertiary"
@@ -107,7 +107,7 @@ export function SettingsLayout() {
               <p className="px-2 py-3 text-xs text-text-tertiary">Nothing matches “{query}”.</p>
             )}
             {groups.map((group, index) => (
-              <div key={group.title ?? `group-${index}`} className="mb-1">
+              <div key={group.title ?? `group-${index}`} className="mb-2">
                 {group.title && (
                   <p className="px-2 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary">
                     {group.title}
@@ -118,7 +118,7 @@ export function SettingsLayout() {
                     key={to}
                     to={to}
                     aria-current={pathname === to ? "page" : undefined}
-                    className={`mb-0.5 flex items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-sm transition ${
+                    className={`mb-1 flex items-center gap-2 rounded-(--radius-sm) px-3 py-2 text-sm transition ${
                       pathname === to
                         ? "bg-active text-text-primary"
                         : "text-text-secondary hover:bg-hover"

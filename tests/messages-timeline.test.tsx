@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
+import { ImageLightbox } from "../src/components/ui/ImageLightbox";
 import { useRunsStore } from "../src/stores/runs";
+import { useUiStore } from "../src/stores/ui";
 import type { AppEvent, Run } from "../src/lib/types";
 
 const { markdownRenderCounts } = vi.hoisted(() => ({
@@ -43,6 +45,7 @@ beforeEach(() => {
     commandsByThread: {},
     queueByThread: {},
   });
+  useUiStore.setState({ imagePreview: null });
 });
 
 describe("MessagesTimeline", () => {
@@ -274,7 +277,7 @@ describe("MessagesTimeline", () => {
     }
   });
 
-  it("omits token usage text from a finished run while keeping the stop reason label", () => {
+  it("omits token usage text and the Completed divider for end_turn", () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0)] },
       viewsByRun: {
@@ -291,9 +294,30 @@ describe("MessagesTimeline", () => {
     });
 
     const { container } = render(<MessagesTimeline threadId="th" />);
-    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText("Completed")).toBeNull();
+    expect(container.querySelector(".h-px.bg-border-subtle")).toBeNull();
     expect(screen.queryByText(/tokens/i)).toBeNull();
     expect(container.textContent).not.toMatch(/tokens/i);
+  });
+
+  it("renders the stop reason label and divider for non-end_turn stop reasons", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "cancelled", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "Stop early", images: [] },
+            { type: "assistant", text: "Partial", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "cancelled",
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(container.querySelector(".h-px.bg-border-subtle")).not.toBeNull();
   });
 
   it("renders user message bubbles with neutral surface and subtle border instead of bg-mention-bg", () => {
@@ -454,5 +478,73 @@ describe("MessagesTimeline", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Raw/i }));
     expect(container.textContent).toContain("exitCode");
+  });
+
+  it("opens image preview dialog on user and agent-generated image clicks and closes on backdrop click or Escape", () => {
+    function TimelineWithLightbox() {
+      const imagePreview = useUiStore((s) => s.imagePreview);
+      const closeImagePreview = useUiStore((s) => s.closeImagePreview);
+      return (
+        <>
+          <MessagesTimeline threadId="th" />
+          {imagePreview && (
+            <ImageLightbox
+              src={imagePreview.src}
+              alt={imagePreview.alt}
+              onClose={closeImagePreview}
+            />
+          )}
+        </>
+      );
+    }
+
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "user",
+              text: "Look at this",
+              images: [{ data: "USERIMG", mimeType: "image/png" }],
+            },
+            {
+              type: "tool",
+              toolCallId: "img-1",
+              title: "Generate image",
+              kind: "other",
+              status: "completed",
+              locations: [],
+              rawOutput: { mimeType: "image/png", data: "AGENTIMG" },
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+
+    render(<TimelineWithLightbox />);
+
+    const openButtons = screen.getAllByRole("button", { name: "Open image" });
+    expect(openButtons).toHaveLength(2);
+
+    // Clicking the user-message image opens the preview dialog; backdrop click closes it.
+    fireEvent.click(openButtons[0]!);
+    const userDialog = screen.getByRole("dialog", { name: "Image preview" });
+    expect(userDialog.querySelector("img")).toHaveAttribute("src", "data:image/png;base64,USERIMG");
+
+    fireEvent.click(userDialog);
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
+
+    // Clicking the agent-generated image opens the preview dialog; Escape closes it.
+    fireEvent.click(openButtons[1]!);
+    const agentDialog = screen.getByRole("dialog", { name: "Image preview" });
+    expect(agentDialog.querySelector("img")).toHaveAttribute(
+      "src",
+      "data:image/png;base64,AGENTIMG",
+    );
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
   });
 });

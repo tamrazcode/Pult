@@ -242,7 +242,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             />
           )}
 
-          {!view.streaming && view.stopReason && <FinishDivider stopReason={view.stopReason} />}
+          {!view.streaming && view.stopReason && view.stopReason !== "end_turn" && (
+            <FinishDivider stopReason={view.stopReason} />
+          )}
 
           {/* Space for the overlaid composer; must sit ABOVE the sentinel so
               scrollIntoView(end) still lands at the true bottom. */}
@@ -474,17 +476,28 @@ function UserRow({
         {images.length > 0 && (
           <div className="flex flex-wrap justify-end gap-2">
             {images.map((img, i) => (
-              <img
+              <button
                 key={i}
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt="Attached"
-                className="max-h-40 rounded-(--radius-md) border border-border-subtle"
-              />
+                type="button"
+                aria-label="Open image"
+                onClick={() =>
+                  useUiStore
+                    .getState()
+                    .openImagePreview(`data:${img.mimeType};base64,${img.data}`, "Attached")
+                }
+                className="cursor-zoom-in"
+              >
+                <img
+                  src={`data:${img.mimeType};base64,${img.data}`}
+                  alt="Attached"
+                  className="max-h-40 rounded-(--radius-md) border border-border-subtle"
+                />
+              </button>
             ))}
           </div>
         )}
         {text && (
-          <div className="rounded-(--radius-md) border border-border-subtle bg-surface px-3.5 py-2 text-base whitespace-pre-wrap text-text-primary">
+          <div className="rounded-(--radius-md) border border-border-subtle bg-surface px-4 py-2.5 text-base whitespace-pre-wrap text-text-primary">
             {text}
           </div>
         )}
@@ -729,13 +742,19 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
   if (failed) return null;
   if (!src) return <span className="text-xs text-text-tertiary">Loading image…</span>;
   return (
-    <a href={src} target="_blank" rel="noreferrer" title="Agent-generated image">
+    <button
+      type="button"
+      aria-label="Open image"
+      title="Agent-generated image"
+      onClick={() => useUiStore.getState().openImagePreview(src, "Agent-generated")}
+      className="cursor-zoom-in"
+    >
       <img
         src={src}
         alt="Agent-generated"
         className="max-h-64 rounded-(--radius-md) border border-border-subtle"
       />
-    </a>
+    </button>
   );
 }
 

@@ -166,7 +166,7 @@ describe("composer", () => {
       paletteOpen: false,
       instances: [],
     });
-    useSettingsStore.setState({ permissionMode: "supervised" });
+    useSettingsStore.setState({ permissionMode: "supervised", glassOpacity: 100 });
     useThreadsStore.setState({ threads: [], activeThreadId: null });
     useProjectsStore.setState({ projects: [], selectedProjectId: null });
   });
@@ -1254,5 +1254,24 @@ describe("composer", () => {
     await waitFor(() =>
       expect(runsDispatch).toHaveBeenCalledWith("th", "queued prompt", "mock", [], null, null),
     );
+  });
+
+  it("keeps backdrop-blur on the composer card and applies color-mix with var(--composer-tint) and glassOpacity", () => {
+    render(<Composer threadId="th" />);
+    const card = screen.getByRole("textbox").parentElement as HTMLElement;
+    expect(card).not.toBeNull();
+    expect(card.className).toContain("backdrop-blur");
+    expect(card.style.backgroundColor).toContain("color-mix");
+    expect(card.style.backgroundColor).toContain("var(--composer-tint)");
+    expect(card.style.backgroundColor).toContain("100%");
+
+    cleanup();
+    useSettingsStore.setState({ glassOpacity: 40 });
+    render(<Composer threadId="th" />);
+    const cardAt40 = screen.getByRole("textbox").parentElement as HTMLElement;
+    expect(cardAt40.className).toContain("backdrop-blur");
+    expect(cardAt40.style.backgroundColor).toContain("color-mix");
+    expect(cardAt40.style.backgroundColor).toContain("var(--composer-tint)");
+    expect(cardAt40.style.backgroundColor).toContain("40%");
   });
 });

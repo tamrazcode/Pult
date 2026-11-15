@@ -3,7 +3,7 @@ import { onAgentProcess, providersInstancesList, settingsGet, settingsSet } from
 import { isTauri } from "../lib/tauri";
 import type { InstanceInfo } from "../lib/types";
 
-export type RightPanelTab = "browser" | "diff" | "files" | "terminal" | "pull-requests";
+export type RightPanelTab = "none" | "browser" | "diff" | "files" | "terminal" | "pull-requests";
 
 /**
  * App-level error with a designed recovery path (§8 M7): agent crash,
@@ -46,6 +46,10 @@ interface UiState {
   paletteOpen: boolean;
   /** One-shot text handed to the composer (Branch from a message). */
   composerPrefill: string | null;
+  /** Target queued for the built-in browser surface (path or URL). */
+  browserTarget: string | null;
+  /** Full-screen image preview (chat images, generated images, attachments). */
+  imagePreview: { src: string; alt?: string } | null;
   /** Workspace-relative file the Files surface should preview. */
   filePreview: string | null;
   /** Thread the UI should open after a Branch action. */
@@ -65,6 +69,10 @@ interface UiState {
   setPaletteOpen: (open: boolean) => void;
   setComposerPrefill: (text: string | null) => void;
   openFilePreview: (path: string | null) => void;
+  openInBrowserPanel: (target: string) => void;
+  setBrowserTarget: (target: string | null) => void;
+  openImagePreview: (src: string, alt?: string) => void;
+  closeImagePreview: () => void;
   setPendingThread: (threadId: string | null) => void;
   setSidebarWidth: (width: number, persist?: boolean) => void;
   setRightPanelWidth: (width: number, persist?: boolean) => void;
@@ -148,7 +156,7 @@ export const useUiStore = create<UiState>((set) => ({
   sidebarWidth: 288, // w-72 default (§6.1)
   rightPanelOpen: false,
   rightPanelWidth: 420, // slightly wider than the old fixed w-96
-  rightPanelTab: "diff",
+  rightPanelTab: "none",
   projectWidgetOpen: true,
   instances: [],
   selectedInstanceId: null,
@@ -156,6 +164,8 @@ export const useUiStore = create<UiState>((set) => ({
   paletteOpen: false,
   composerPrefill: null,
   filePreview: null,
+  browserTarget: null,
+  imagePreview: null,
   pendingThreadId: null,
   processEvents: {},
   globalError: null,
@@ -198,6 +208,16 @@ export const useUiStore = create<UiState>((set) => ({
       rightPanelOpen: true,
       sidebarOpen: isNarrowViewport() ? false : s.sidebarOpen,
     })),
+  openInBrowserPanel: (browserTarget) =>
+    set((s) => ({
+      browserTarget,
+      rightPanelTab: "browser",
+      rightPanelOpen: true,
+      sidebarOpen: isNarrowViewport() ? false : s.sidebarOpen,
+    })),
+  setBrowserTarget: (browserTarget) => set({ browserTarget }),
+  openImagePreview: (src, alt) => set({ imagePreview: { src, alt } }),
+  closeImagePreview: () => set({ imagePreview: null }),
   setPendingThread: (pendingThreadId) => set({ pendingThreadId }),
   setSidebarWidth: (width, persist = false) => {
     const sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));

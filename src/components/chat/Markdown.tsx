@@ -19,9 +19,9 @@ import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { HighlighterCore } from "shiki/core";
 import { Check, Copy } from "lucide-react";
 import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
+import { activeWorkspaceRoot } from "../../lib/activeWorkspace";
 import { classifyMarkdownHref } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
-import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
@@ -290,14 +290,6 @@ function fileUrlToPath(src: string): string {
   }
 }
 
-/** Maps a local Markdown link to a workspace-relative preview path. */
-function activeWorkspaceRoot(): string | null {
-  const threads = useThreadsStore.getState();
-  return (
-    threads.threads.find((candidate) => candidate.id === threads.activeThreadId)?.workspace ?? null
-  );
-}
-
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
@@ -322,12 +314,19 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
 
   if (!local) {
     return (
-      <img
-        src={src}
-        alt={alt ?? ""}
-        loading="lazy"
-        className="my-2 max-h-80 rounded-(--radius-md) border border-border-subtle"
-      />
+      <button
+        type="button"
+        aria-label="Open image"
+        onClick={() => useUiStore.getState().openImagePreview(src ?? "", alt)}
+        className="my-2 block cursor-zoom-in"
+      >
+        <img
+          src={src}
+          alt={alt ?? ""}
+          loading="lazy"
+          className="max-h-80 rounded-(--radius-md) border border-border-subtle"
+        />
+      </button>
     );
   }
   if (failed) {
@@ -341,13 +340,19 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     return <span className="text-sm text-text-tertiary">Loading image…</span>;
   }
   return (
-    <a href={dataUrl} target="_blank" rel="noreferrer" title={alt || src}>
+    <button
+      type="button"
+      aria-label="Open image"
+      title={alt || src}
+      onClick={() => useUiStore.getState().openImagePreview(dataUrl, alt)}
+      className="my-2 block cursor-zoom-in"
+    >
       <img
         src={dataUrl}
         alt={alt ?? ""}
-        className="my-2 max-h-80 rounded-(--radius-md) border border-border-subtle"
+        className="max-h-80 rounded-(--radius-md) border border-border-subtle"
       />
-    </a>
+    </button>
   );
 }
 
@@ -362,6 +367,8 @@ const COMPONENTS: Components = {
         void openInEditor(link.fullPath, "explorer").catch((err) =>
           useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
         );
+      } else if (/\.html?$/i.test(link.relativePath)) {
+        useUiStore.getState().openInBrowserPanel(link.relativePath);
       } else {
         useUiStore.getState().openFilePreview(link.relativePath);
       }

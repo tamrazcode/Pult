@@ -103,4 +103,27 @@ describe("RightPanel Open a surface menu", () => {
       expect(useUiStore.getState().rightPanelTab).toBe("diff");
     }
   });
+
+  it("shows the centered 'Open a surface' list when rightPanelTab is 'none' and switches on selection", () => {
+    useUiStore.setState({ rightPanelOpen: true, rightPanelTab: "none" });
+    render(<RightPanel width={420} />);
+
+    const heading = screen.getByText("Open a surface");
+    expect(heading).toBeVisible();
+    const list = heading.parentElement as HTMLElement;
+    expect(list).toHaveClass("items-center", "justify-center");
+
+    for (const spec of EXPECTED_SURFACES) {
+      const btn = within(list).getByRole("button", { name: new RegExp(`^${spec.label}`, "i") });
+      if (spec.enabled) {
+        expect(btn).not.toBeDisabled();
+      } else {
+        expect(btn).toBeDisabled();
+      }
+    }
+
+    fireEvent.click(within(list).getByRole("button", { name: /Files/i }));
+    expect(useUiStore.getState().rightPanelTab).toBe("files");
+    expect(screen.queryByText("Open a surface")).toBeNull();
+  });
 });

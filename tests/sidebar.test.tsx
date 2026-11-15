@@ -317,29 +317,48 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: /new thread with workspace/i })).toBeNull();
   });
 
-  it("renders project rows with colored initials badge and right-aligned chevron", () => {
+  it("renders project rows with colored initials badge, one star button, and right-aligned chevron", () => {
     render(<Sidebar width={288} />);
 
     const alphaName = screen.getByText("Alpha");
     expect(alphaName).toBeVisible();
-    const row = alphaName.closest("[data-project-row]");
+    const row = alphaName.closest<HTMLElement>("[data-project-row]");
     expect(row).not.toBeNull();
 
     const badge = row!.querySelector<HTMLElement>("[data-project-badge]");
     expect(badge).not.toBeNull();
     expect(badge!.textContent?.trim()).toBe("AL");
     expect(badge!.style.color).toBe("rgb(52, 107, 241)");
+    expect(badge).toHaveClass("h-4", "w-4");
+    expect(badge).not.toHaveClass("h-5", "w-5", "h-6", "w-6");
 
-    const toggle = row!.querySelector<HTMLButtonElement>("button[aria-expanded]");
-    expect(toggle).not.toBeNull();
-    expect(toggle).toHaveAttribute("data-project-chevron", "right");
+    const nameToggle = alphaName.closest("button");
+    expect(nameToggle).not.toBeNull();
+    expect(nameToggle).toHaveAttribute("aria-expanded", "true");
+    expect(nameToggle).not.toHaveAttribute("data-project-chevron");
+    expect(
+      nameToggle!.querySelector("svg.lucide-chevron-down, svg.lucide-chevron-right"),
+    ).toBeNull();
 
-    const nameInToggle = within(toggle!).getByText("Alpha");
-    const chevron = toggle!.querySelector("svg.lucide-chevron-down, svg.lucide-chevron-right");
-    expect(chevron).not.toBeNull();
-    expect(nameInToggle.compareDocumentPosition(chevron!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
+    const starButtons = within(row!).getAllByRole("button", { name: /^(?:un)?star project$/i });
+    expect(starButtons).toHaveLength(1);
+    expect(within(row!).queryByRole("button", { name: /new thread/i })).toBeNull();
+    expect(
+      nameToggle!.compareDocumentPosition(starButtons[0]!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+
+    const chevronBtn = row!.querySelector<HTMLButtonElement>(
+      'button[data-project-chevron="right"]',
     );
+    expect(chevronBtn).not.toBeNull();
+    expect(chevronBtn).toHaveAttribute("aria-expanded", "true");
+    expect(
+      chevronBtn!.querySelector("svg.lucide-chevron-down, svg.lucide-chevron-right"),
+    ).not.toBeNull();
+    expect(row!.lastElementChild).toBe(chevronBtn);
+    expect(
+      starButtons[0]!.compareDocumentPosition(chevronBtn!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
   it("collapsing a project hides its nested threads", async () => {
@@ -597,9 +616,17 @@ describe("Sidebar branding", () => {
 
     const logos = aside!.querySelectorAll('svg[aria-label="pult"]');
     expect(logos).toHaveLength(1);
-    expect(screen.getAllByText("pult")).toHaveLength(1);
+    const logo = logos[0]!;
+    expect(logo).toHaveClass("h-6", "w-6");
+    expect(logo).not.toHaveAttribute("transform");
+    expect(logo.outerHTML).not.toMatch(/skewX/i);
 
-    const topChrome = logos[0].closest("div");
+    const labels = screen.getAllByText("pult");
+    expect(labels).toHaveLength(1);
+    expect(labels[0]).toHaveClass("font-normal");
+    expect(labels[0]!.parentElement).toHaveClass("gap-1");
+
+    const topChrome = logo.closest("div");
     expect(topChrome).not.toBeNull();
     expect(topChrome).toHaveClass("h-10");
     expect(topChrome!.querySelector('button[aria-label*="settings" i]')).toBeNull();

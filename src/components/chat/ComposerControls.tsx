@@ -443,7 +443,8 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
               event.preventDefault();
               pickConfig(modelOption.id, visibleModels[index].value);
             }}
-            className="absolute right-0 bottom-full z-50 mb-2 max-h-[min(70vh,560px)] w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
+            style={{ maxHeight: "min(380px, calc(100dvh - 220px))" }}
+            className="absolute right-0 bottom-full z-50 mb-2 w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
           >
             <div className="border-b border-border-subtle px-2 py-1.5">
               <p className="sr-only">Provider</p>

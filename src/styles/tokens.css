@@ -33,9 +33,9 @@
   --mention-bg: color-mix(in oklab, var(--accent) 16%, transparent);
   --composer-blur: 22px;
   --composer-tint: rgba(17, 17, 17, 0.62);
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
   --shadow-composer: 0 14px 32px -18px rgb(0 0 0 / 75%);
   --shadow-composer-lift:
     0 1px 0 rgb(255 255 255 / 8%) inset, 0 22px 40px -18px rgb(0 0 0 / 90%),

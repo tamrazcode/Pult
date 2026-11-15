@@ -7,6 +7,7 @@ import { CommandPalette, useGlobalHotkeys } from "../components/ui/CommandPalett
 import { ErrorBanner, RouteErrorCard } from "../components/ui/ErrorBanner";
 import { ContextMenu, type ContextMenuItem } from "../components/ui/ContextMenu";
 import { FpsOverlay } from "../components/ui/FpsOverlay";
+import { ImageLightbox } from "../components/ui/ImageLightbox";
 import { ResizeHandle } from "../components/ui/ResizeHandle";
 import {
   ipcErrorMessage,
@@ -15,13 +16,13 @@ import {
   providersWarmup,
   runsRespondElicitation,
 } from "../lib/ipc";
+import { activeWorkspaceRoot } from "../lib/activeWorkspace";
 import { classifyMarkdownHref } from "../lib/links";
 import { preflightInstances } from "../lib/providerChecks";
 import { isTauri } from "../lib/tauri";
 import { useRunsStore } from "../stores/runs";
 import { useProjectsStore } from "../stores/projects";
 import { useSettingsStore } from "../stores/settings";
-import { useThreadsStore } from "../stores/threads";
 import { hydrateLayout, useUiStore } from "../stores/ui";
 
 export const Route = createRootRoute({
@@ -115,6 +116,8 @@ function RootLayout() {
     y: number;
     items: Array<ContextMenuItem | "separator">;
   } | null>(null);
+  const imagePreview = useUiStore((s) => s.imagePreview);
+  const closeImagePreview = useUiStore((s) => s.closeImagePreview);
 
   // Kill the WebView's default right-click menu everywhere; show a real one
   // only where a real action exists (editable text, selected text, links).
@@ -186,10 +189,7 @@ function RootLayout() {
     } else {
       const link = target.closest<HTMLAnchorElement>("a[href]");
       const rawHref = link?.getAttribute("href") ?? "";
-      const threads = useThreadsStore.getState();
-      const workspace =
-        threads.threads.find((candidate) => candidate.id === threads.activeThreadId)?.workspace ??
-        null;
+      const workspace = activeWorkspaceRoot();
       const classified = rawHref ? classifyMarkdownHref(rawHref, workspace) : null;
       const fail = (err: unknown) =>
         useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
@@ -209,6 +209,13 @@ function RootLayout() {
           },
         );
       } else if (classified?.kind === "workspace") {
+        if (/\.html?$/i.test(classified.relativePath)) {
+          items.push({
+            id: "open-browser",
+            label: "Open in browser",
+            onSelect: () => useUiStore.getState().openInBrowserPanel(classified.relativePath),
+          });
+        }
         items.push(
           {
             id: "reveal",
@@ -310,6 +317,9 @@ function RootLayout() {
       )}
       <ErrorBanner />
       <FpsOverlay />
+      {imagePreview && (
+        <ImageLightbox src={imagePreview.src} alt={imagePreview.alt} onClose={closeImagePreview} />
+      )}
     </div>
   );
 }

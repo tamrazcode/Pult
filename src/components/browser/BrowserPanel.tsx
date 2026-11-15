@@ -7,6 +7,7 @@ import {
   openExternalUrl,
   workspaceReadHtml,
 } from "../../lib/ipc";
+import { useUiStore } from "../../stores/ui";
 
 interface BrowserEntry {
   input: string;
@@ -24,6 +25,8 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
   const [checking, setChecking] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const browserTarget = useUiStore((s) => s.browserTarget);
+  const setBrowserTarget = useUiStore((s) => s.setBrowserTarget);
 
   const current = index >= 0 ? history[index] : null;
 
@@ -59,6 +62,15 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
       setError(ipcErrorMessage(err));
     }
   };
+
+  useEffect(() => {
+    if (!browserTarget) return;
+    setBrowserTarget(null);
+    setInput(browserTarget);
+    void navigate(browserTarget);
+    // The queued target is consumed once per click.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browserTarget]);
 
   useEffect(() => {
     const entry = history[index];

@@ -29,6 +29,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 });
 
 import { BrowserPanel } from "../src/components/browser/BrowserPanel";
+import { useUiStore } from "../src/stores/ui";
 
 function navigateTo(target: string) {
   const input = screen.getByLabelText("Browser URL") as HTMLInputElement;
@@ -38,6 +39,7 @@ function navigateTo(target: string) {
 
 describe("BrowserPanel", () => {
   beforeEach(() => {
+    useUiStore.setState({ browserTarget: null });
     openExternalUrl.mockReset().mockResolvedValue(undefined);
     workspaceReadHtml
       .mockReset()
@@ -71,6 +73,35 @@ describe("BrowserPanel", () => {
     const iframe = await screen.findByTitle("Browser preview");
     expect(iframe).toHaveAttribute("sandbox");
     expect(iframe.getAttribute("srcdoc")).toContain("Local Preview");
+  });
+
+  it("consumes useUiStore.browserTarget on mount and loads a URL iframe", async () => {
+    useUiStore.setState({ browserTarget: "http://localhost:5173/queued" });
+
+    render(<BrowserPanel threadId="th" />);
+
+    await waitFor(() => {
+      expect(useUiStore.getState().browserTarget).toBeNull();
+    });
+    const iframe = await screen.findByTitle("Browser preview");
+    expect(iframe).toHaveAttribute("src", "http://localhost:5173/queued");
+    expect(screen.getByLabelText("Browser URL")).toHaveValue("http://localhost:5173/queued");
+  });
+
+  it("consumes useUiStore.browserTarget on mount and loads workspace .html via workspaceReadHtml", async () => {
+    useUiStore.setState({ browserTarget: "outputs/sandbox.html" });
+
+    render(<BrowserPanel threadId="th" />);
+
+    await waitFor(() => {
+      expect(useUiStore.getState().browserTarget).toBeNull();
+    });
+    await waitFor(() => {
+      expect(workspaceReadHtml).toHaveBeenCalledWith("th", "outputs/sandbox.html");
+    });
+    const iframe = await screen.findByTitle("Browser preview");
+    expect(iframe.getAttribute("srcdoc")).toContain("Local Preview");
+    expect(screen.getByLabelText("Browser URL")).toHaveValue("outputs/sandbox.html");
   });
 
   it("supports Back, Forward, and Reload history controls", async () => {

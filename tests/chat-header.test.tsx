@@ -128,6 +128,8 @@ describe("ChatHeader", () => {
     expect(alphaBadge).toBeTruthy();
     expect(alphaBadge!.style.color).toBe("rgb(52, 107, 241)");
     expect(alphaBadge!.style.backgroundColor).toContain("color-mix");
+    expect(alphaBadge).toHaveClass("h-4", "w-4");
+    expect(alphaBadge).not.toHaveClass("h-5", "w-5", "h-6", "w-6");
     expect(screen.getByText("Alpha")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Fix parser" })).toBeVisible();
     expect(screen.getByText(/worktree/i)).toBeVisible();
@@ -142,6 +144,8 @@ describe("ChatHeader", () => {
     expect(alphaBadge).toBeTruthy();
     expect(alphaBadge!.style.color).toBe("rgb(52, 107, 241)");
     expect(alphaBadge!.style.backgroundColor).toContain("color-mix");
+    expect(alphaBadge).toHaveClass("h-4", "w-4");
+    expect(alphaBadge).not.toHaveClass("h-5", "w-5", "h-6", "w-6");
     expect(screen.getByText("Alpha")).toBeVisible();
     expect(screen.getByRole("heading", { name: "New thread" })).toBeVisible();
   });

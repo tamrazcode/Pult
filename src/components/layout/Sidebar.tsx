@@ -9,7 +9,6 @@ import {
   FolderPlus,
   GitPullRequest,
   Loader2,
-  Plus,
   RefreshCw,
   Search,
   Settings,
@@ -159,14 +158,12 @@ function ProjectRow({
   project,
   collapsed,
   onToggle,
-  onNewThread,
   onStar,
   onContextMenu,
 }: {
   project: Project;
   collapsed: boolean;
   onToggle: () => void;
-  onNewThread: () => void;
   onStar: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
@@ -182,13 +179,12 @@ function ProjectRow({
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
-        data-project-chevron="right"
-        className="flex min-w-0 flex-1 items-center gap-2 rounded-(--radius-sm) px-1 py-1 text-left transition hover:bg-hover"
+        className="flex min-w-0 shrink items-center gap-2 rounded-(--radius-sm) px-1 py-1 text-left transition hover:bg-hover"
       >
         <span
           data-project-badge
           aria-hidden
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border px-0.5 text-[0.625rem] leading-none font-semibold tracking-tight"
+          className="flex h-4 w-4 shrink-0 items-center justify-center rounded border text-[0.625rem] leading-none font-semibold tracking-tight"
           style={{
             backgroundColor: monogram.background,
             color: monogram.color,
@@ -198,13 +194,6 @@ function ProjectRow({
           {initials}
         </span>
         <span className="truncate text-sm font-medium text-text-primary">{project.name}</span>
-        {project.pinned && <Star size={10} className="shrink-0 text-warning" fill="currentColor" />}
-        <span className="flex-1" />
-        {collapsed ? (
-          <ChevronRight size={12} className="shrink-0 text-text-tertiary" />
-        ) : (
-          <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
-        )}
       </button>
       <button
         type="button"
@@ -216,13 +205,16 @@ function ProjectRow({
       >
         <Star size={10} fill={project.pinned ? "currentColor" : "none"} />
       </button>
+      <span className="flex-1" />
       <button
         type="button"
-        aria-label="New thread in project"
-        onClick={onNewThread}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary focus-visible:opacity-100 group-hover:opacity-100"
+        onClick={onToggle}
+        aria-label={collapsed ? "Expand project" : "Collapse project"}
+        aria-expanded={!collapsed}
+        data-project-chevron="right"
+        className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
       >
-        <Plus size={12} />
+        {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
       </button>
     </div>
   );
@@ -494,11 +486,11 @@ export function Sidebar({ width }: { width: number }) {
     >
       <div
         data-tauri-drag-region
-        className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-3"
+        className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-4"
       >
-        <span data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
-          <PultLogo className="h-5 w-5 shrink-0 text-text-primary" />
-          <span className="truncate text-sm font-semibold tracking-tight text-text-primary">
+        <span data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-1">
+          <PultLogo className="h-6 w-6 shrink-0 text-text-primary" />
+          <span className="truncate text-sm font-normal tracking-tight text-text-primary">
             pult
           </span>
         </span>
@@ -520,7 +512,7 @@ export function Sidebar({ width }: { width: number }) {
         </button>
       </div>
 
-      <div ref={filterRef} className="relative flex items-center gap-1 px-2 py-2">
+      <div ref={filterRef} className="relative flex items-center gap-2 px-3 py-3">
         <div className="relative min-w-0 flex-1">
           <Search
             size={13}
@@ -595,18 +587,17 @@ export function Sidebar({ width }: { width: number }) {
         </button>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-1 pb-4" aria-label="Threads">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4" aria-label="Threads">
         {groups.map((group) => {
           const key = group.project?.id ?? "__none__";
           const isCollapsed = group.project ? collapsedProjects.includes(group.project.id) : false;
           return (
-            <section key={key} className="mb-2">
+            <section key={key} className="mb-3">
               {group.project ? (
                 <ProjectRow
                   project={group.project}
                   collapsed={isCollapsed}
                   onToggle={() => useUiStore.getState().toggleProjectCollapsed(group.project!.id)}
-                  onNewThread={() => newThread(group.project)}
                   onStar={() => void useProjectsStore.getState().togglePin(group.project!.id)}
                   onContextMenu={(event) => {
                     event.preventDefault();
@@ -614,12 +605,12 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                 />
               ) : (
-                <div className="px-3 pb-1 pt-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                <div className="px-2 pb-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                   No project
                 </div>
               )}
               {!isCollapsed && (
-                <div className="space-y-0.5 pl-3">
+                <div className="space-y-1 pl-9">
                   {group.threads.map((thread) => (
                     <ThreadRow
                       key={thread.id}
@@ -648,7 +639,7 @@ export function Sidebar({ width }: { width: number }) {
         })}
       </nav>
 
-      <footer className="border-t border-border-subtle p-2">
+      <footer className="border-t border-border-subtle p-3">
         <div className="flex items-center gap-1">
           <Tooltip label="Settings">
             <button
