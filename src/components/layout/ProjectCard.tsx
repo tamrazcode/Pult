@@ -1,5 +1,6 @@
 import { useMemo } from "react";
-import { FolderOpen, GitBranch, History, Pencil } from "lucide-react";
+import { FolderOpen, GitBranch, History } from "lucide-react";
+import { EditorSplitButton } from "../ui/EditorSplitButton";
 import { openInEditor } from "../../lib/ipc";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
 import { useGitStore } from "../../stores/git";
@@ -78,16 +79,15 @@ export function ProjectCard({ threadId }: { threadId?: string | null }) {
           <FolderOpen size={14} className="shrink-0 text-text-tertiary" />
         </button>
 
-        <button
-          type="button"
-          onClick={() =>
-            void openInEditor(workspace).catch((err) => console.error("open_in_editor failed", err))
+        <EditorSplitButton
+          variant="card"
+          className="border-t border-border-subtle"
+          onOpen={(editor) =>
+            void openInEditor(workspace, editor).catch((err) =>
+              console.error("open_in_editor failed", err),
+            )
           }
-          className="flex w-full items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-left text-xs text-text-secondary transition hover:bg-hover"
-        >
-          <Pencil size={12} className="shrink-0 text-text-tertiary" />
-          Open in editor
-        </button>
+        />
 
         <div className="flex items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-xs">
           <GitBranch size={12} className="shrink-0 text-text-tertiary" />

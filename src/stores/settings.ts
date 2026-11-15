@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { isEditorId, type EditorId } from "../lib/editors";
 import { settingsGet, settingsSet } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { applyTheme } from "../lib/theme";
@@ -30,7 +31,7 @@ interface SettingsState {
   /** Default diff presentation (persisted; also seeds the git store). */
   diffViewMode: "unified" | "split";
   /** Editor used by Files/Project card "Open in editor". */
-  preferredEditor: "zed" | "vscode" | "antigravity" | "explorer";
+  preferredEditor: EditorId;
   /** Rebindable keyboard shortcuts (§6.7): command id → binding string. */
   keybindings: Record<string, string>;
   /** Starred model ids per provider instance (composer picker). */
@@ -43,7 +44,7 @@ interface SettingsState {
   setShowTimestamps: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
-  setPreferredEditor: (editor: "zed" | "vscode" | "antigravity" | "explorer") => void;
+  setPreferredEditor: (editor: EditorId) => void;
   setKeybinding: (commandId: string, binding: string) => void;
   toggleFavoriteModel: (instanceId: string, modelId: string) => void;
   /** Loads persisted appearance + permission settings once at boot. */
@@ -168,12 +169,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       showTimestamps: showTimestamps !== false,
       followStreaming: followStreaming !== false,
       diffViewMode: diffViewMode === "split" ? "split" : "unified",
-      preferredEditor:
-        preferredEditor === "vscode" ||
-        preferredEditor === "antigravity" ||
-        preferredEditor === "explorer"
-          ? preferredEditor
-          : "zed",
+      preferredEditor: isEditorId(preferredEditor) ? preferredEditor : "zed",
       keybindings:
         keybindings && typeof keybindings === "object"
           ? (keybindings as Record<string, string>)

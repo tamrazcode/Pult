@@ -65,6 +65,7 @@ import { RightPanel } from "../src/components/layout/RightPanel";
 import { useGitStore } from "../src/stores/git";
 import { useProjectsStore } from "../src/stores/projects";
 import { useRunsStore } from "../src/stores/runs";
+import { useSettingsStore } from "../src/stores/settings";
 import { useTerminalsStore } from "../src/stores/terminals";
 import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
@@ -204,6 +205,7 @@ describe("RightPanel ProjectCard & surfaces", () => {
     });
     useGitStore.setState({ byThread: {}, viewMode: "unified", ghAvailable: false, prHistory: [] });
     useTerminalsStore.setState({ byThread: {}, activeByThread: {} });
+    useSettingsStore.setState({ preferredEditor: "zed" });
   });
 
   it("renders project name, branch, uncommitted +N -N, and previous agents with failed count", () => {
@@ -227,13 +229,37 @@ describe("RightPanel ProjectCard & surfaces", () => {
     expect(prevArea.textContent).toMatch(/1\s*failed/i);
   });
 
-  it("calls openInEditor with workspace path when Open in editor is clicked", () => {
+  it("calls openInEditor with workspace path when Open in Zed is clicked", () => {
     seedAlphaProjectWithThread();
 
     render(<RightPanel width={360} />);
 
-    fireEvent.click(screen.getByRole("button", { name: /Open in editor/i }));
-    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha");
+    fireEvent.click(screen.getByRole("button", { name: /Open in Zed/i }));
+    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "zed");
+  });
+
+  it("shows logos for all editors and switches the preferred editor from the card", () => {
+    seedAlphaProjectWithThread();
+
+    render(<RightPanel width={360} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Choose editor" }));
+    const menu = screen.getByRole("menu", { name: "Editor" });
+    for (const [id, label] of [
+      ["vscode", "VS Code"],
+      ["zed", "Zed"],
+      ["antigravity", "Antigravity"],
+      ["explorer", "File Explorer"],
+    ]) {
+      const item = within(menu).getByRole("menuitem", { name: label });
+      expect(item.querySelector(`img[data-editor-logo="${id}"]`)).toBeTruthy();
+    }
+
+    fireEvent.click(within(menu).getByRole("menuitem", { name: "VS Code" }));
+    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "vscode");
+    expect(useSettingsStore.getState().preferredEditor).toBe("vscode");
+    const primary = screen.getByRole("button", { name: /Open in VS Code/i });
+    expect(primary.querySelector('img[data-editor-logo="vscode"]')).toBeTruthy();
   });
 
   it("opens '+' surface menu with Files, Diff, Terminal, Pull requests and switches", () => {
@@ -283,7 +309,7 @@ describe("RightPanel ProjectCard & surfaces", () => {
     render(<RightPanel width={360} />);
 
     expect(screen.getByText("Alpha")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Open in editor/i }));
-    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha");
+    fireEvent.click(screen.getByRole("button", { name: /Open in Zed/i }));
+    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "zed");
   });
 });

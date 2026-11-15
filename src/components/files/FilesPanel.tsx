@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import {
-  ChevronDown,
-  ChevronRight,
-  ExternalLink,
-  File as FileIcon,
-  Folder,
-  FolderOpen,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, File as FileIcon, Folder, FolderOpen } from "lucide-react";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
+import { EditorSplitButton } from "../ui/EditorSplitButton";
+import { getEditorMeta } from "../../lib/editors";
 import { openInEditor, readImageDataUrl, workspaceReadText, workspaceTree } from "../../lib/ipc";
 import type { WorkspaceEntry } from "../../lib/ipc";
 import { useSettingsStore } from "../../stores/settings";
@@ -19,82 +14,6 @@ const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 
 function relativeToFull(root: string, path: string): string {
   return `${root.replace(/[\\/]+$/, "")}\\${path.replace(/\//g, "\\")}`;
-}
-
-function EditorButton({ onOpen }: { onOpen: (editor: string) => void }) {
-  const preferred = useSettingsStore((s) => s.preferredEditor);
-  const setPreferred = useSettingsStore((s) => s.setPreferredEditor);
-  const [open, setOpen] = useState(false);
-  const label =
-    preferred === "vscode"
-      ? "VS Code"
-      : preferred === "antigravity"
-        ? "Antigravity"
-        : preferred === "explorer"
-          ? "File Explorer"
-          : "Zed";
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    window.addEventListener("mousedown", close);
-    return () => window.removeEventListener("mousedown", close);
-  }, [open]);
-
-  return (
-    <div className="relative flex shrink-0" onMouseDown={(event) => event.stopPropagation()}>
-      <button
-        type="button"
-        title={`Open in ${label}`}
-        onClick={() => onOpen(preferred)}
-        className="flex h-7 items-center gap-1 rounded-l-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
-      >
-        <ExternalLink size={12} /> {label}
-      </button>
-      <button
-        type="button"
-        aria-label="Choose editor"
-        aria-expanded={open}
-        title="Choose editor"
-        onClick={() => setOpen((value) => !value)}
-        className="flex h-7 w-6 items-center justify-center rounded-r-(--radius-sm) border border-l-0 border-border-subtle text-text-tertiary transition hover:bg-hover"
-      >
-        <ChevronDown size={12} />
-      </button>
-      {open && (
-        <div
-          role="menu"
-          aria-label="Editor"
-          className="absolute top-full right-0 z-40 mt-1 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
-        >
-          {(
-            [
-              ["vscode", "VS Code"],
-              ["zed", "Zed"],
-              ["antigravity", "Antigravity"],
-              ["explorer", "File Explorer"],
-            ] as const
-          ).map(([id, name]) => (
-            <button
-              key={id}
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setPreferred(id);
-                onOpen(id);
-                setOpen(false);
-              }}
-              className={`flex w-full items-center px-3 py-1.5 text-left text-xs transition hover:bg-hover ${
-                preferred === id ? "text-text-primary" : "text-text-secondary"
-              }`}
-            >
-              {name}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
 }
 
 /** T3-style Files surface: workspace tree + preview, editor choice, context menu. */
@@ -197,7 +116,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     return [
       {
         id: "open-editor",
-        label: `Open in ${preferredEditor === "vscode" ? "VS Code" : preferredEditor === "antigravity" ? "Antigravity" : preferredEditor === "explorer" ? "File Explorer" : "Zed"}`,
+        label: `Open in ${getEditorMeta(preferredEditor).label}`,
         onSelect: () =>
           void openInEditor(full, preferredEditor).catch((err) => setError(String(err))),
       },
@@ -234,7 +153,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
         <div className="min-w-0 flex-1 truncate text-xs text-text-tertiary" title={selected ?? ""}>
           {breadcrumb.length > 0 ? breadcrumb.join(" › ") : "Files"}
         </div>
-        <EditorButton
+        <EditorSplitButton
           onOpen={(editor) => {
             if (!selected || !root) return;
             void openInEditor(relativeToFull(root, selected), editor).catch((err) =>
