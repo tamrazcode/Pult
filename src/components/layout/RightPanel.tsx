@@ -118,6 +118,7 @@ export function RightPanel({ width }: { width: number }) {
           <button
             type="button"
             aria-label="Open a surface"
+            title="Open a surface"
             aria-haspopup="menu"
             aria-expanded={surfacesOpen}
             onClick={() => setSurfacesOpen((open) => !open)}
@@ -129,6 +130,7 @@ export function RightPanel({ width }: { width: number }) {
             <div
               role="menu"
               aria-label="Open a surface"
+              title="Open a surface"
               className="absolute top-full right-0 z-40 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
             >
               {TABS.map(({ id, label, icon: Icon }) => (

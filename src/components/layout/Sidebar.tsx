@@ -454,6 +454,7 @@ export function Sidebar({ width }: { width: number }) {
           <button
             type="button"
             aria-label="Filter threads"
+            title="Filter threads"
             aria-haspopup="menu"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen((open) => !open)}
@@ -494,6 +495,7 @@ export function Sidebar({ width }: { width: number }) {
         <button
           type="button"
           aria-label="New project"
+          title="New project"
           onClick={() => setCreateOpen(true)}
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
@@ -502,6 +504,7 @@ export function Sidebar({ width }: { width: number }) {
         <button
           type="button"
           aria-label="New thread"
+          title="New thread"
           onClick={() => newThread(null)}
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >

@@ -689,9 +689,16 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                 }]
             })
             .unwrap_or_default(),
-        SessionUpdate::AgentMessageChunk { content } => text_of(&content)
-            .map(|delta| vec![EventKind::AgentMessageDelta { delta }])
-            .unwrap_or_default(),
+        SessionUpdate::AgentMessageChunk { content } => match &content {
+            // Agents that return generated images as content blocks (imagegen)
+            // become a Markdown data URL so the transcript renders them inline.
+            ContentBlock::Image { data, mime_type } => vec![EventKind::AgentMessageDelta {
+                delta: format!("\n\n![generated image](data:{mime_type};base64,{data})\n\n"),
+            }],
+            _ => text_of(&content)
+                .map(|delta| vec![EventKind::AgentMessageDelta { delta }])
+                .unwrap_or_default(),
+        },
         SessionUpdate::AgentThoughtChunk { content } => text_of(&content)
             .map(|delta| vec![EventKind::AgentThoughtDelta { delta }])
             .unwrap_or_default(),

@@ -231,6 +231,19 @@ struct RunState {
     instance_id: String,
 }
 
+/// Pre-initialized agent connection for the selected provider. `session/new`
+/// still runs on first use, but the slow CLI startup + initialize are paid
+/// while the user is reading the empty state instead of on the first send.
+struct WarmConn {
+    conn: Arc<AcpConn>,
+    events_rx: mpsc::UnboundedReceiver<EventKind>,
+    client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>,
+    init: crate::protocol::types::InitializeResult,
+    root: PathBuf,
+    spawn_sig: crate::runtime::pool::SpawnSig,
+    created: std::time::Instant,
+}
+
 struct Inner {
     /// Active runs: run_id → live connection/session.
     runs: HashMap<String, RunState>,
@@ -246,6 +259,8 @@ struct Inner {
     terminals: Arc<TerminalRegistry>,
     /// User-facing PTY terminals (M5 panel): ConPTY-backed, event-streamed.
     ptys: Arc<crate::runtime::ptys::PtyRegistry>,
+    /// Pre-initialized agent processes (selected provider) ready for a session.
+    warm: HashMap<String, WarmConn>,
     /// The agent matrix (§4.5 config.toml instances; mock fallback).
     instances: Vec<crate::config::InstanceSpec>,
 }
@@ -296,15 +311,107 @@ impl AgentRuntime {
                 permission_modes: HashMap::new(),
                 terminals,
                 ptys: Arc::new(crate::runtime::ptys::PtyRegistry::new(sink)),
+                warm: HashMap::new(),
                 instances,
             }),
             pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals),
         }
     }
 
+    /// Spawns and initializes the selected provider in the background so the
+    /// first turn skips the slow CLI startup/handshake (Codex cold start ~11 s).
+    pub async fn warmup(
+        self: &Arc<Self>,
+        instance_id: &str,
+        workspace: Option<&str>,
+    ) -> Result<(), crate::PultError> {
+        let spawn_config = self.spawn_config_for(instance_id)?;
+        let root = match workspace.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(path) => {
+                let path = PathBuf::from(path);
+                if !path.is_dir() {
+                    return Err(crate::PultError::with_code(
+                        "workspace.missing",
+                        format!("Project or thread folder not found: {}", path.display()),
+                    ));
+                }
+                clean_verbatim(path.canonicalize().map_err(|e| {
+                    crate::PultError::internal(format!("warmup workspace: {e}"))
+                })?)
+            }
+            None => self.workspace_root()?,
+        };
+        let spawn_sig = crate::runtime::pool::SpawnSig {
+            command: spawn_config.command.clone(),
+            args: spawn_config.args.clone(),
+            env: spawn_config.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        };
+        {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            if let Some(existing) = inner.warm.get(instance_id) {
+                if existing.root == root
+                    && existing.spawn_sig == spawn_sig
+                    && !existing.conn.is_dead()
+                    && existing.created.elapsed() < std::time::Duration::from_secs(600)
+                {
+                    return Ok(());
+                }
+            }
+        }
+        let (conn, streams) = AcpConn::spawn(&spawn_config)
+            .map_err(|e| crate::PultError::internal(format!("warmup spawn: {e}")))?;
+        let conn = Arc::new(conn);
+        let init = conn
+            .initialize()
+            .await
+            .map_err(|e| crate::PultError::internal(format!("warmup initialize: {e}")))?;
+        if conn.is_dead() {
+            conn.kill();
+            return Err(crate::PultError::internal("warmup agent exited"));
+        }
+        let warm = WarmConn {
+            conn: Arc::clone(&conn),
+            events_rx: streams.events_rx,
+            client_requests_rx: streams.client_requests_rx,
+            init,
+            root,
+            spawn_sig,
+            created: std::time::Instant::now(),
+        };
+        let replaced = {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.warm.insert(instance_id.to_string(), warm)
+        };
+        if let Some(old) = replaced {
+            old.conn.kill();
+        }
+        Ok(())
+    }
+
+    /// Takes the matching warm connection, discarding stale or mismatched ones.
+    fn take_warm(
+        &self,
+        instance_id: &str,
+        root: &Path,
+        spawn_sig: &crate::runtime::pool::SpawnSig,
+    ) -> Option<WarmConn> {
+        let warm = {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.warm.remove(instance_id)
+        }?;
+        let stale = warm.root != root
+            || &warm.spawn_sig != spawn_sig
+            || warm.conn.is_dead()
+            || warm.created.elapsed() > std::time::Duration::from_secs(600);
+        if stale {
+            warm.conn.kill();
+            return None;
+        }
+        Some(warm)
+    }
+
     /// User PTY terminal registry (M5 terminal panel).
-    pub fn ptys(&self) -> Arc<crate::runtime::ptys::PtyRegistry> {
-        Arc::clone(
+    pub fn ptys(&self) -> Arc<crate::runtime::ptys::PtyRegistry> {        Arc::clone(
             &self
                 .inner
                 .lock()
@@ -1450,6 +1557,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let session_id: String;
     let mut applied_config: DesiredConfigMap;
     let mut replayed_metadata = Vec::new();
+    let mut preinit: Option<crate::protocol::types::InitializeResult> = None;
+    let warm = if pooled.is_none() {
+        runtime.take_warm(&instance_id, &root, &spawn_sig)
+    } else {
+        None
+    };
 
     if let Some(entry) = pooled {
         timing.pooled = true;
@@ -1481,28 +1594,35 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         }
         emit_process("running", None);
     } else {
-        // The receivers come back separately: the run loop owns them exclusively,
-        // while the connection itself is shared through an Arc.
-        let spawn_started = std::time::Instant::now();
-        let (conn_raw, streams) = match AcpConn::spawn(&spawn_config) {
-            Ok(parts) => parts,
-            Err(err) => {
-                let msg = err.to_string();
-                emit_process("crashed", Some(msg.clone()));
-                runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
-                return Ok(());
-            }
+        // Warm process (if any) already finished spawn + initialize.
+        let (spawn_conn, spawn_events, spawn_requests) = if let Some(warm) = warm {
+            preinit = Some(warm.init);
+            (warm.conn, warm.events_rx, warm.client_requests_rx)
+        } else {
+            // The receivers come back separately: the run loop owns them exclusively,
+            // while the connection itself is shared through an Arc.
+            let spawn_started = std::time::Instant::now();
+            let (conn_raw, streams) = match AcpConn::spawn(&spawn_config) {
+                Ok(parts) => parts,
+                Err(err) => {
+                    let msg = err.to_string();
+                    emit_process("crashed", Some(msg.clone()));
+                    runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
+                    return Ok(());
+                }
+            };
+            let crate::drivers::acp::AcpStreams {
+                events_rx: spawned_events,
+                client_requests_rx: spawned_requests,
+            } = streams;
+            timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
+            emit_process("spawned", None);
+            (Arc::new(conn_raw), spawned_events, spawned_requests)
         };
-        let crate::drivers::acp::AcpStreams {
-            events_rx: spawned_events,
-            client_requests_rx: spawned_requests,
-        } = streams;
-        conn = Arc::new(conn_raw);
-        events_rx = spawned_events;
-        client_requests_rx = spawned_requests;
+        conn = spawn_conn;
+        events_rx = spawn_events;
+        client_requests_rx = spawn_requests;
         applied_config = DesiredConfigMap::new();
-        timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
-        emit_process("spawned", None);
 
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
@@ -1516,8 +1636,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             );
         }
 
-        let resolved = match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root).await
-        {
+        let resolved =
+            match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root, preinit.take())
+                .await
+            {
             Ok(resolved) => resolved,
             Err(err) => {
                 let died = conn.died_on_own();
@@ -2339,12 +2461,16 @@ async fn resolve_session(
     thread_id: &str,
     instance_id: &str,
     root: &Path,
+    preinit: Option<crate::protocol::types::InitializeResult>,
 ) -> Result<ResolvedSession, crate::PultError> {
     let t_handshake = std::time::Instant::now();
-    let init = conn
-        .initialize()
-        .await
-        .map_err(|e| crate::PultError::internal(e.to_string()))?;
+    let init = match preinit {
+        Some(init) => init,
+        None => conn
+            .initialize()
+            .await
+            .map_err(|e| crate::PultError::internal(e.to_string()))?,
+    };
     let handshake_ms = t_handshake.elapsed().as_millis() as u64;
     let t_session = std::time::Instant::now();
     let mut resumed = false;

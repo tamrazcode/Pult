@@ -568,11 +568,19 @@ pub fn settings_set(
     runtime.store().set_setting(&key, &value)
 }
 
+#[tauri::command]
+pub async fn providers_warmup(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    instance_id: String,
+    workspace: Option<String>,
+) -> Result<(), PultError> {
+    runtime.warmup(&instance_id, workspace.as_deref()).await
+}
+
 /// One-click connect check (§4.3): spawn the agent, handshake, cache caps,
 /// shut down. No prompt — free and session-safe.
 #[tauri::command]
-pub async fn providers_preflight(
-    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+pub async fn providers_preflight(    runtime: tauri::State<'_, Arc<AgentRuntime>>,
     instance_id: String,
 ) -> Result<crate::runtime::PreflightReport, PultError> {
     runtime.preflight(&instance_id).await

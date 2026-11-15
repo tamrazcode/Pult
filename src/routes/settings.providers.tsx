@@ -510,7 +510,14 @@ function ProvidersSettings() {
         )}
 
         {adding && (
-          <div className="absolute inset-y-0 right-0 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
+          <div
+            className="fixed inset-0 z-30 bg-black/40"
+            aria-hidden
+            onClick={() => setAdding(false)}
+          />
+        )}
+        {adding && (
+          <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
             <div className="flex items-center justify-between">
               <p className="text-sm font-medium text-text-primary">Add provider</p>
               <button

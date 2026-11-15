@@ -22,7 +22,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { ipcErrorMessage, runsDispatch } from "../../lib/ipc";
+import { ipcErrorMessage, readImageDataUrl, runsDispatch } from "../../lib/ipc";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
@@ -598,6 +598,7 @@ function ToolRow({ item }: { item: ToolChatItem }) {
   const Icon = toolIcon(item.kind);
   const detail = item.rawOutput ?? item.content;
   const hasDetail = item.rawInput !== undefined || detail !== undefined;
+  const image = findImageCandidate(item.rawOutput ?? item.content ?? item.rawInput);
   return (
     <div>
       <button
@@ -619,6 +620,11 @@ function ToolRow({ item }: { item: ToolChatItem }) {
           />
         )}
       </button>
+      {image && (
+        <div className="py-1 pl-5">
+          <ToolImage candidate={image} />
+        </div>
+      )}
       {open && hasDetail && (
         <div className="space-y-1.5 py-1 pl-5">
           <ToolReadable label="Input" value={item.rawInput} />
@@ -643,6 +649,77 @@ function ToolRow({ item }: { item: ToolChatItem }) {
         </div>
       )}
     </div>
+  );
+}
+
+interface ImageCandidate {
+  dataUrl?: string;
+  path?: string;
+}
+
+/** Finds an inline/base64/path image anywhere in a tool payload (imagegen). */
+function findImageCandidate(value: unknown, depth = 0): ImageCandidate | null {
+  if (depth > 4 || value === null || value === undefined) return null;
+  if (typeof value === "string") {
+    const dataUrl = value.match(/data:image\/[a-z0-9.+-]+;base64,[A-Za-z0-9+/=]+/i);
+    if (dataUrl) return { dataUrl: dataUrl[0] };
+    const path =
+      value.match(/[A-Za-z]:\\[^\n"']+?\.(?:png|jpe?g|webp|gif)/i) ??
+      value.match(/\/[^\s"']+?\.(?:png|jpe?g|webp|gif)/i);
+    if (path) return { path: path[0] };
+    return null;
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findImageCandidate(entry, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (
+      typeof record.mimeType === "string" &&
+      record.mimeType.startsWith("image/") &&
+      typeof record.data === "string"
+    ) {
+      return { dataUrl: `data:${record.mimeType};base64,${record.data}` };
+    }
+    for (const key of ["image", "images", "content", "result", "output", "path", "file", "url"]) {
+      const found = findImageCandidate(record[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function ToolImage({ candidate }: { candidate: ImageCandidate }) {
+  const [src, setSrc] = useState<string | null>(candidate.dataUrl ?? null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (src || !candidate.path) return;
+    let cancelled = false;
+    readImageDataUrl(candidate.path)
+      .then((url) => {
+        if (!cancelled) setSrc(url);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [candidate.path, src]);
+  if (failed) return null;
+  if (!src) return <span className="text-xs text-text-tertiary">Loading image…</span>;
+  return (
+    <a href={src} target="_blank" rel="noreferrer" title="Agent-generated image">
+      <img
+        src={src}
+        alt="Agent-generated"
+        className="max-h-64 rounded-(--radius-md) border border-border-subtle"
+      />
+    </a>
   );
 }
 

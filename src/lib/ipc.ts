@@ -275,10 +275,14 @@ export function providersDetectInstalled(): Promise<DetectedAgent[]> {
   return invokeWithFallback<DetectedAgent[]>("providers_detect_installed", []);
 }
 
-/** One-click connect check: spawn → handshake → cache caps → shut down. */ export function providersPreflight(
-  instanceId: string,
-): Promise<PreflightReport> {
+/** One-click connect check: spawn → handshake → cache caps → shut down. */
+export function providersPreflight(instanceId: string): Promise<PreflightReport> {
   return invokeRequired<PreflightReport>("providers_preflight", { instanceId });
+}
+
+/** Pre-spawns the selected provider so the first message skips cold start. */
+export function providersWarmup(instanceId: string, workspace?: string | null): Promise<void> {
+  return invokeRequired<void>("providers_warmup", { instanceId, workspace });
 }
 
 /** Agent-managed sign-in: authenticate + session re-probe. */

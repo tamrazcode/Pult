@@ -8,10 +8,11 @@ import { ErrorBanner, RouteErrorCard } from "../components/ui/ErrorBanner";
 import { ContextMenu, type ContextMenuItem } from "../components/ui/ContextMenu";
 import { FpsOverlay } from "../components/ui/FpsOverlay";
 import { ResizeHandle } from "../components/ui/ResizeHandle";
-import { openExternalUrl, runsRespondElicitation } from "../lib/ipc";
+import { openExternalUrl, providersWarmup, runsRespondElicitation } from "../lib/ipc";
 import { preflightInstances } from "../lib/providerChecks";
 import { isTauri } from "../lib/tauri";
 import { useRunsStore } from "../stores/runs";
+import { useProjectsStore } from "../stores/projects";
 import { hydrateLayout, useUiStore } from "../stores/ui";
 
 export const Route = createRootRoute({
@@ -36,6 +37,9 @@ function RootLayout() {
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const activeElicitation = useRunsStore((s) => s.activeElicitation);
   const pendingThreadId = useUiStore((s) => s.pendingThreadId);
+  const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
+  const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
+  const projects = useProjectsStore((s) => s.projects);
   const router = useRouter();
   useGlobalHotkeys(() => setPaletteOpen(true));
 
@@ -44,6 +48,14 @@ function RootLayout() {
     useUiStore.getState().setPendingThread(null);
     void router.navigate({ to: "/thread/$threadId", params: { threadId: pendingThreadId } });
   }, [pendingThreadId, router]);
+
+  // Warm the selected provider in the project the next message will run in, so
+  // the first turn does not pay the 5–13 s CLI cold start.
+  useEffect(() => {
+    if (!isTauri() || !selectedInstanceId) return;
+    const root = projects.find((project) => project.id === selectedProjectId)?.rootPath;
+    void providersWarmup(selectedInstanceId, root ?? null).catch(() => undefined);
+  }, [selectedInstanceId, selectedProjectId, projects]);
   useEffect(() => {
     void hydrateLayout();
   }, []);

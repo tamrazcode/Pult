@@ -178,6 +178,7 @@ pub fn run() {
             ipc::settings_get,
             ipc::settings_set,
             ipc::providers_preflight,
+            ipc::providers_warmup,
             ipc::providers_authenticate,
             ipc::usage_report,
         ])

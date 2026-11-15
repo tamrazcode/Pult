@@ -204,6 +204,7 @@ export function ChatHeader({
           </button>
           <button
             aria-label="Thread actions"
+            title="Thread actions"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
             className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) px-1.5 text-text-tertiary transition hover:bg-hover hover:text-text-secondary"

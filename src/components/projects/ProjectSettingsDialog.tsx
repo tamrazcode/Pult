@@ -81,7 +81,12 @@ export function ProjectSettingsDialog({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
       <form
         role="dialog"
         aria-modal="true"
