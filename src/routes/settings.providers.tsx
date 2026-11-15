@@ -329,7 +329,9 @@ function ProvidersSettings() {
       <div className="flex min-h-0 flex-1">
         {/* Provider list (T3-style left column) */}
         <div
-          className={`${detailOpen ? "hidden" : "flex"} w-full shrink-0 flex-col border-r border-border-subtle min-[1120px]:flex min-[1120px]:w-64`}
+          className={`${
+            instances.length === 0 ? "hidden min-[1120px]:flex" : detailOpen ? "hidden" : "flex"
+          } w-full shrink-0 flex-col border-r border-border-subtle min-[1120px]:flex min-[1120px]:w-64`}
         >
           <div className="flex items-center justify-between px-3 py-2.5">
             <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
@@ -400,7 +402,9 @@ function ProvidersSettings() {
 
         {/* Detail pane (T3-style right column) */}
         <div
-          className={`${detailOpen ? "block" : "hidden"} relative min-w-0 flex-1 overflow-y-auto p-5 min-[1120px]:block`}
+          className={`${
+            detailOpen || instances.length === 0 ? "block" : "hidden"
+          } relative min-w-0 flex-1 overflow-y-auto p-5 min-[1120px]:block`}
         >
           {selected && (
             <button
@@ -579,69 +583,69 @@ function ProvidersSettings() {
               </div>
             </div>
           )}
-
-          {adding && (
-            <div
-              className="fixed inset-0 z-30 bg-black/40"
-              aria-hidden
-              onClick={() => setAdding(false)}
-            />
-          )}
-          {adding && (
-            <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
-              <div className="flex items-center justify-between">
-                <p className="text-sm font-medium text-text-primary">Add provider</p>
-                <button
-                  onClick={() => setAdding(false)}
-                  aria-label="Close"
-                  className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                >
-                  <X size={14} />
-                </button>
-              </div>
-              <p className="mt-1 text-xs text-text-tertiary">
-                One click connects a detected CLI — pult picks the right command and checks the
-                handshake itself.
-              </p>
-              <div className="mt-3 space-y-2">
-                {detected.length === 0 && (
-                  <p className="text-sm text-text-tertiary">
-                    No known agent CLIs on PATH. Use "Add custom ACP instance" below for any
-                    ACP-over-stdio command.
-                  </p>
-                )}
-                {detected.map((agent) => (
-                  <ConnectRow
-                    key={agent.id}
-                    agent={agent}
-                    alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
-                    onAdded={() => void reload()}
-                    onReport={(report) => {
-                      const now = Date.now();
-                      setReports((m) => ({
-                        ...m,
-                        [agent.suggestedInstanceId]: {
-                          report,
-                          at: now,
-                          lastAttemptAt: now,
-                          lastError: null,
-                        },
-                      }));
-                      setAuthAttempted((m) => ({
-                        ...m,
-                        [agent.suggestedInstanceId]: report.authRequired,
-                      }));
-                      setSelectedId(agent.suggestedInstanceId);
-                      void reload();
-                    }}
-                  />
-                ))}
-                <AddInstanceForm onAdded={() => void reload()} />
-              </div>
-            </div>
-          )}
         </div>
       </div>
+
+      {adding && (
+        <div
+          className="fixed inset-0 z-30 bg-black/40"
+          aria-hidden
+          onClick={() => setAdding(false)}
+        />
+      )}
+      {adding && (
+        <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium text-text-primary">Add provider</p>
+            <button
+              onClick={() => setAdding(false)}
+              aria-label="Close"
+              className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <p className="mt-1 text-xs text-text-tertiary">
+            One click connects a detected CLI — pult picks the right command and checks the
+            handshake itself.
+          </p>
+          <div className="mt-3 space-y-2">
+            {detected.length === 0 && (
+              <p className="text-sm text-text-tertiary">
+                No known agent CLIs on PATH. Use "Add custom ACP instance" below for any
+                ACP-over-stdio command.
+              </p>
+            )}
+            {detected.map((agent) => (
+              <ConnectRow
+                key={agent.id}
+                agent={agent}
+                alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
+                onAdded={() => void reload()}
+                onReport={(report) => {
+                  const now = Date.now();
+                  setReports((m) => ({
+                    ...m,
+                    [agent.suggestedInstanceId]: {
+                      report,
+                      at: now,
+                      lastAttemptAt: now,
+                      lastError: null,
+                    },
+                  }));
+                  setAuthAttempted((m) => ({
+                    ...m,
+                    [agent.suggestedInstanceId]: report.authRequired,
+                  }));
+                  setSelectedId(agent.suggestedInstanceId);
+                  void reload();
+                }}
+              />
+            ))}
+            <AddInstanceForm onAdded={() => void reload()} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

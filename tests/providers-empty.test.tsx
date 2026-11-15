@@ -68,8 +68,26 @@ describe("ProvidersSettings empty state", () => {
 
   it("shows a first-run empty state and an add action outside Tauri", () => {
     render(<ProvidersSettings />);
-    expect(screen.getByText("No providers yet")).toBeInTheDocument();
+    const emptyHeading = screen.getByText("No providers yet");
+    expect(emptyHeading).toBeInTheDocument();
+    const detailPane = emptyHeading.closest(".overflow-y-auto");
+    expect(detailPane).not.toBeNull();
+    expect(detailPane).not.toHaveClass("hidden");
+    expect(detailPane).toHaveClass("block");
     expect(screen.getAllByRole("button", { name: /add provider/i }).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the detail empty state unhidden in compact layout when zero instances are configured", async () => {
+    tauriState.enabled = true;
+    providersInstancesList.mockResolvedValue([]);
+
+    render(<ProvidersSettings />);
+
+    const emptyHeading = await screen.findByText("No providers yet");
+    const detailPane = emptyHeading.closest(".overflow-y-auto");
+    expect(detailPane).not.toBeNull();
+    expect(detailPane).not.toHaveClass("hidden");
+    expect(detailPane).toHaveClass("block");
   });
 
   it("surfaces config.toml parse errors and renders Back to providers control at 1040px width after selecting a provider", async () => {
@@ -90,10 +108,16 @@ describe("ProvidersSettings empty state", () => {
     expect(alert).toHaveTextContent(/invalid TOML at line 3/);
 
     const providerBtn = await screen.findByRole("button", { name: /Claude Code/i });
-    fireEvent.click(providerBtn);
-
     const backBtn = screen.getByRole("button", { name: /back to providers/i });
     expect(backBtn).toBeInTheDocument();
+    const detailPane = backBtn.parentElement;
+    expect(detailPane).toHaveClass("hidden");
+
+    fireEvent.click(providerBtn);
+    expect(detailPane).not.toHaveClass("hidden");
+    expect(detailPane).toHaveClass("block");
+
     fireEvent.click(backBtn);
+    expect(detailPane).toHaveClass("hidden");
   });
 });

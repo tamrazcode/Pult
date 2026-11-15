@@ -187,3 +187,88 @@ fn cap_ui_event_payloads_enforces_total_history_budget() {
         other => panic!("unexpected kind: {other:?}"),
     }
 }
+
+#[derive(Default)]
+struct RecordingSink(std::sync::Mutex<Vec<(String, serde_json::Value)>>);
+
+impl EventSink for RecordingSink {
+    fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
+        self.0
+            .lock()
+            .expect("sink lock")
+            .push((event.to_string(), payload));
+        Ok(())
+    }
+
+    fn notify(&self, _title: &str, _body: &str) {}
+}
+
+#[tokio::test]
+async fn refused_dirty_delete_keeps_thread_and_settles_status() {
+    let repo = init_repo();
+    let wt_dir = add_worktree(&repo.0, "wt-dirty-run");
+    let untracked = wt_dir.join("untracked.txt");
+    std::fs::write(&untracked, "keep me\n").expect("write untracked");
+
+    let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+    let sink = Arc::new(RecordingSink::default());
+    let runtime = Arc::new(AgentRuntime::new(store, Arc::clone(&sink) as Arc<dyn EventSink>));
+    runtime.set_instances_in_memory(vec![crate::config::mock_spec()]);
+
+    seed_worktree_thread(&runtime, "th-dirty-run", &repo.0, "wt-dirty-run", &wt_dir);
+    let thread = runtime.store().get_thread("th-dirty-run").expect("get thread");
+
+    let run = runtime
+        .dispatch(&thread, "hello mock", &[], "mock")
+        .expect("dispatch mock run");
+
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
+    loop {
+        let parked = sink.0.lock().expect("sink lock").iter().any(|(ev, payload)| {
+            ev == "permission:request" && payload["runId"].as_str() == Some(run.id.as_str())
+        });
+        if parked {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "mock run did not reach permission:request within 8s"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    assert_eq!(
+        runtime
+            .store()
+            .get_thread("th-dirty-run")
+            .expect("thread while running")
+            .status,
+        "working"
+    );
+
+    runtime.begin_delete_thread("th-dirty-run");
+    let err = threads_delete_inner(&runtime, "th-dirty-run", Some("safe"))
+        .await
+        .expect_err("safe delete must refuse dirty worktree");
+    runtime.finish_delete_thread("th-dirty-run");
+
+    assert_eq!(err.code(), "git.worktree_dirty");
+    let after = runtime
+        .store()
+        .get_thread("th-dirty-run")
+        .expect("thread row must remain after refused dirty delete");
+    assert_ne!(after.status, "working", "refused delete must settle status");
+    assert_eq!(after.status, "settled");
+    assert!(untracked.exists(), "untracked file must still exist");
+
+    let settled_emitted = sink.0.lock().expect("sink lock").iter().any(|(ev, payload)| {
+        ev == "thread:update"
+            && payload["thread"]["id"].as_str() == Some("th-dirty-run")
+            && payload["thread"]["status"].as_str() == Some("settled")
+    });
+    assert!(
+        settled_emitted,
+        "finalize_run must emit thread:update with settled status even while deleting"
+    );
+}
+

@@ -2839,3 +2839,137 @@ async fn cancel_escalates_to_kill_when_agent_ignores_cancel() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+#[test]
+fn remembered_permission_clear_removes_only_matching_entries() {
+    use crate::runtime::RememberedPermission;
+
+    let (runtime, _sink) = mock_runtime();
+    runtime.remember_decision("/ws/a", "inst1", "edit", "allow-a1");
+    runtime.remember_decision("/ws/a", "inst2", "edit", "allow-a2");
+    runtime.remember_decision("/ws/b", "inst1", "edit", "allow-b1");
+
+    assert_eq!(runtime.list_remembered_permissions().len(), 3);
+
+    runtime
+        .clear_remembered_permission(Some("/ws/a"), None, Some("edit"))
+        .expect("clear A/edit");
+
+    let remaining = runtime.list_remembered_permissions();
+    assert_eq!(
+        remaining,
+        vec![RememberedPermission {
+            workspace: "/ws/b".to_string(),
+            instance_id: "inst1".to_string(),
+            tool_kind: "edit".to_string(),
+            option_id: "allow-b1".to_string(),
+        }],
+        "only workspace A + tool_kind edit entries must be removed; got {remaining:?}"
+    );
+    assert!(runtime.remembered_for("/ws/a", "inst1", "edit").is_none());
+    assert!(runtime.remembered_for("/ws/a", "inst2", "edit").is_none());
+    assert_eq!(
+        runtime.remembered_for("/ws/b", "inst1", "edit").as_deref(),
+        Some("allow-b1")
+    );
+
+    runtime
+        .clear_remembered_permission(None, None, None)
+        .expect("clear all");
+    assert!(
+        runtime.list_remembered_permissions().is_empty(),
+        "clear all must empty remembered permissions"
+    );
+}
+
+#[tokio::test]
+async fn provider_switch_emits_context_reset_notice() {
+    let (runtime, sink, sandbox, thread) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-provider-switch-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let mut spec_a = crate::config::mock_spec();
+        spec_a.id = "mock-a".to_string();
+        spec_a.display_name = "Mock A".to_string();
+        let spec_b = crate::config::InstanceSpec {
+            id: "mock-b".to_string(),
+            display_name: "Mock B".to_string(),
+            driver: "mock".to_string(),
+            command: "node".to_string(),
+            args: Vec::new(),
+            env: Default::default(),
+            enabled: true,
+        };
+        runtime.set_instances_in_memory(vec![spec_a, spec_b]);
+
+        let mut thread = thread_record("th-provider-switch");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+
+        let _run1 = runtime
+            .dispatch(&thread, "hello mock A", &[], "mock-a")
+            .expect("dispatch A");
+        (runtime, sink, sandbox, thread)
+    };
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.len() == 1 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+
+    let run2 = {
+        let _env = env_lock();
+        runtime
+            .dispatch(&thread, "hello mock B", &[], "mock-b")
+            .expect("dispatch B")
+    };
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.len() == 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let events = runtime.store().load_events(&run2.id).expect("load run2 events");
+    let notice_idx = events.iter().position(|e| {
+        matches!(
+            &e.kind,
+            EventKind::Notice { level, message }
+                if level == "warning" && message.contains("Switched agent")
+        )
+    });
+    let msg_idx = events
+        .iter()
+        .position(|e| matches!(&e.kind, EventKind::AgentMessageDelta { .. }));
+    assert!(
+        notice_idx.is_some(),
+        "expected persisted warning Notice on provider switch; got {events:?}"
+    );
+    assert!(
+        msg_idx.is_some(),
+        "expected AgentMessageDelta in second run; got {events:?}"
+    );
+    assert!(
+        notice_idx.unwrap() < msg_idx.unwrap(),
+        "warning Notice must precede first AgentMessageDelta; got {events:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+

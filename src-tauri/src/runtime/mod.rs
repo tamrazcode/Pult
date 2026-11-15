@@ -1556,26 +1556,52 @@ impl AgentRuntime {
         instance_id: Option<&str>,
         tool_kind: Option<&str>,
     ) -> Result<(), crate::PultError> {
-        let Some(mut value) = self.store.get_setting("remembered_permissions")? else {
+        let Some(value) = self.store.get_setting("remembered_permissions")? else {
             return Ok(());
         };
-        let Some(workspaces) = value.as_object_mut() else {
+        let Some(workspaces) = value.as_object() else {
             return Ok(());
         };
-        workspaces.retain(|key, _| workspace.is_none_or(|wanted| wanted == key));
-        for instances in workspaces.values_mut() {
-            let Some(instances) = instances.as_object_mut() else {
+        // Delete the leaves that match ALL given filters; keep everything else.
+        // Filters are hierarchical: a tool-kind filter never reaches another
+        // workspace or instance.
+        let mut next = serde_json::Map::new();
+        for (ws, instances) in workspaces {
+            if workspace.is_some_and(|wanted| wanted != ws) {
+                next.insert(ws.clone(), instances.clone());
+                continue;
+            }
+            let Some(instances) = instances.as_object() else {
                 continue;
             };
-            instances.retain(|key, _| instance_id.is_none_or(|wanted| wanted == key));
-            for kinds in instances.values_mut() {
-                let Some(kinds) = kinds.as_object_mut() else {
+            let mut next_instances = serde_json::Map::new();
+            for (instance, kinds) in instances {
+                if instance_id.is_some_and(|wanted| wanted != instance) {
+                    next_instances.insert(instance.clone(), kinds.clone());
+                    continue;
+                }
+                let Some(kinds) = kinds.as_object() else {
                     continue;
                 };
-                kinds.retain(|key, _| tool_kind.is_none_or(|wanted| wanted == key));
+                let mut next_kinds = serde_json::Map::new();
+                for (kind, option) in kinds {
+                    if tool_kind.is_some_and(|wanted| wanted != kind) {
+                        next_kinds.insert(kind.clone(), option.clone());
+                    }
+                }
+                if !next_kinds.is_empty() {
+                    next_instances.insert(
+                        instance.clone(),
+                        serde_json::Value::Object(next_kinds),
+                    );
+                }
+            }
+            if !next_instances.is_empty() {
+                next.insert(ws.clone(), serde_json::Value::Object(next_instances));
             }
         }
-        self.store.set_setting("remembered_permissions", &value)
+        self.store
+            .set_setting("remembered_permissions", &serde_json::Value::Object(next))
     }
 
     fn set_thread_status(&self, thread_id: &str, status: &str) -> Result<(), crate::PultError> {
@@ -2000,9 +2026,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             );
         }
 
-        let resolved =
-            match resolve_session(&conn, &runtime, &thread_id, &instance_id, &root, preinit.take())
-                .await
+        let resolved = match resolve_session(
+            &conn,
+            &runtime,
+            &thread_id,
+            &instance_id,
+            &run_id,
+            &root,
+            preinit.take(),
+        )
+        .await
             {
             Ok(resolved) => resolved,
             Err(err) => {
@@ -2516,15 +2549,16 @@ impl AgentRuntime {
             guard.cancelling_runs.remove(run_id);
             guard.deleting_threads.contains(thread_id)
         };
-        // The run is over either way; a refused delete leaves a usable thread.
+        // The run is over either way; a refused delete leaves a usable thread,
+        // so the UI must see the settled status before the delete attempt.
         let _ = self.store.set_thread_status(thread_id, "settled");
+        self.emit_thread_updated(thread_id);
         if deleting {
             // The thread is going away: never start its next queued message.
             return Ok(());
         }
         if let Ok(thread) = self.store.get_thread(thread_id) {
             self.spawn_checkpoint(&thread, run_id);
-            self.emit("thread:update", &ThreadUpdatedPayload { thread });
         }
         // Queue auto-dispatch: the oldest queued message starts its own run
         // now that the thread is free (§6.1 queue semantics).
@@ -2881,6 +2915,7 @@ async fn resolve_session(
     runtime: &AgentRuntime,
     thread_id: &str,
     instance_id: &str,
+    current_run_id: &str,
     root: &Path,
     preinit: Option<crate::protocol::types::InitializeResult>,
 ) -> Result<ResolvedSession, crate::PultError> {
@@ -2903,11 +2938,14 @@ async fn resolve_session(
     // A SQLite failure is not "no previous session": surface it instead of
     // silently starting fresh.
     let session_ref = runtime.store.get_session_ref(thread_id, instance_id)?;
-    let previous_instance = runtime
-        .store
-        .list_runs(thread_id)
-        .ok()
-        .and_then(|runs| runs.last().map(|run| run.instance_id.clone()));
+    let previous_instance = runtime.store.list_runs(thread_id).ok().and_then(|runs| {
+        // This run's own row already exists: the previous agent is the last
+        // row that is not the current run.
+        runs.into_iter()
+            .rev()
+            .find(|run| run.id != current_run_id)
+            .map(|run| run.instance_id)
+    });
     let mut context_reset_reason = None;
     let session = match session_ref {
         Some(remote) if init.agent_capabilities.load_session => {
