@@ -5,14 +5,6 @@ import type { InstanceInfo } from "../lib/types";
 
 export type RightPanelTab = "diff" | "files" | "terminal";
 
-/** Options applied to the next thread created from the empty /chat route. */
-export interface NewThreadOptions {
-  /** Workspace path (empty = the global workspace root). */
-  workspace: string;
-  /** Work in an isolated git worktree of the workspace's repo (M4). */
-  worktree: boolean;
-}
-
 /**
  * App-level error with a designed recovery path (§8 M7): agent crash,
  * storage failure, protocol failure. Rendered as a dismissible banner.
@@ -55,7 +47,6 @@ interface UiState {
   processEvents: Record<string, { at: number; kind: string; detail?: string | null }[]>;
   /** Latest unrecovered app-level error (§8 M7 error states). */
   globalError: GlobalError | null;
-  newThreadOptions: NewThreadOptions;
   toggleSidebar: () => void;
   /** Project ids whose thread list is collapsed (session memory). */
   collapsedProjects: string[];
@@ -88,7 +79,6 @@ interface UiState {
   ) => void;
   setGlobalError: (error: GlobalError) => void;
   clearGlobalError: () => void;
-  setNewThreadOptions: (patch: Partial<NewThreadOptions>) => void;
   loadInstances: () => Promise<void>;
   applyProcessEvent: (instanceId: string, kind: string, detail?: string | null) => void;
 }
@@ -148,7 +138,6 @@ export const useUiStore = create<UiState>((set) => ({
   paletteOpen: false,
   processEvents: {},
   globalError: null,
-  newThreadOptions: { workspace: "", worktree: false },
   toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
   toggleProjectCollapsed: (projectId) =>
     set((s) => ({
@@ -183,8 +172,6 @@ export const useUiStore = create<UiState>((set) => ({
     })),
   setGlobalError: (globalError) => set({ globalError }),
   clearGlobalError: () => set({ globalError: null }),
-  setNewThreadOptions: (patch) =>
-    set((s) => ({ newThreadOptions: { ...s.newThreadOptions, ...patch } })),
 
   loadInstances: async () => {
     await ensureProcessEventSubscription();

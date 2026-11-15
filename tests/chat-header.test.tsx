@@ -43,6 +43,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { ChatHeader } from "../src/components/chat/ChatHeader";
 import { Composer } from "../src/components/chat/Composer";
+import { NewChatEmptyState } from "../src/components/chat/NewChatEmptyState";
 import { useProjectsStore } from "../src/stores/projects";
 import { useRunsStore } from "../src/stores/runs";
 import { useThreadsStore } from "../src/stores/threads";
@@ -102,7 +103,6 @@ describe("ChatHeader", () => {
       selectedInstanceId: "mock",
       instances: [mockInstance],
       paletteOpen: false,
-      newThreadOptions: { workspace: "", worktree: false },
     });
   });
 
@@ -149,6 +149,15 @@ describe("ChatHeader", () => {
     expect(screen.getByText("Alpha")).toBeVisible();
     expect(screen.getByRole("heading", { name: "New thread" })).toBeVisible();
   });
+
+  it("does not render workspace folder input or isolated worktree checkbox on /chat", () => {
+    useProjectsStore.setState({ projects: [alpha], selectedProjectId: "alpha", loaded: true });
+
+    render(<NewChatEmptyState />);
+
+    expect(screen.queryByLabelText("Workspace folder for new threads")).toBeNull();
+    expect(screen.queryByLabelText(/Isolated worktree/i)).toBeNull();
+  });
 });
 
 describe("Composer /chat dispatch", () => {
@@ -173,7 +182,6 @@ describe("Composer /chat dispatch", () => {
       selectedInstanceId: "mock",
       instances: [mockInstance],
       paletteOpen: false,
-      newThreadOptions: { workspace: "", worktree: false },
     });
   });
 

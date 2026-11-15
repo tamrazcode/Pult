@@ -153,7 +153,9 @@
   import type { ReactElement } from "react";
 
   export type ProviderBrand = "claude" | "codex" | "gemini" | "opencode" | "mock" | "custom";
-  export function detectProviderBrand(inst: Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">): ProviderBrand;
+  export function detectProviderBrand(
+    inst: Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">,
+  ): ProviderBrand;
   export function ProviderLogo(props: {
     instance: Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args"> | null;
     className?: string;
@@ -437,7 +439,11 @@
   }
 
   export function gitDiffSummary(threadId: string, base?: string | null): Promise<GitDiffSummary>;
-  export function gitDiffFile(threadId: string, path: string, base?: string | null): Promise<DiffFile>;
+  export function gitDiffFile(
+    threadId: string,
+    path: string,
+    base?: string | null,
+  ): Promise<DiffFile>;
   ```
 
 **Steps:**
@@ -553,12 +559,7 @@
 - [ ] **Step 3: Implement `useVirtualRows.ts`, update `src/stores/git.ts`, `src/components/diff/DiffLines.tsx`, and `src/components/diff/DiffPanel.tsx` (DeepSeek)**
       Build `useVirtualRows.ts`, refactor `src/stores/git.ts` to use `gitDiffSummary` + `gitDiffFile` + `O(1)` `patchHash` reconciliation, add the 2,000-line cap to `DiffLines.tsx`, and update `src/components/diff/DiffPanel.tsx`.
 - [ ] **Step 4: Run verification**
-      Run all checks:
-      - `pnpm typecheck`
-      - `pnpm lint`
-      - `pnpm test`
-      - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write`
-      - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+      Run all checks: - `pnpm typecheck` - `pnpm lint` - `pnpm test` - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write` - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
       All → PASS.
 - [ ] **Step 5: Commit**
       `perf(diff): virtualize DiffPanel rows, cap DiffLines, and lazy-load per-file diffs`
@@ -577,12 +578,7 @@
 **Steps:**
 
 - [ ] **Step 1: Run full verification gates**
-      Run every gate and record exact pass counts:
-      - `pnpm typecheck`
-      - `pnpm lint`
-      - `pnpm test`
-      - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write`
-      - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+      Run every gate and record exact pass counts: - `pnpm typecheck` - `pnpm lint` - `pnpm test` - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write` - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
 - [ ] **Step 2: Build frontend bundle**
       Run `pnpm build` → PASS.
 - [ ] **Step 3: Kill running `pult-core` and build Tauri release binary**
@@ -591,18 +587,10 @@
       `pnpm tauri build --no-bundle`
       Verify `src-tauri/target/release/pult-core.exe` is produced cleanly.
 - [ ] **Step 4: Launch built exe and capture v3 screenshots**
-      Launch `src-tauri/target/release/pult-core.exe`, confirm the desktop window renders cleanly without crashing, and capture the four required screenshots to:
-      - `docs/screenshots/v3-composer-picker.png`
-      - `docs/screenshots/v3-shell-header.png`
-      - `docs/screenshots/v3-theme-previews.png`
-      - `docs/screenshots/v3-diff-large.png`
-      *(Note: headless desktop automation on Windows cannot click inside the WebView2 surface. Capture the live `pult-core.exe` window for the default shell/composer view, and if secondary routes/popovers cannot be clicked via desktop automation in `pult-core.exe`, capture those specific route views honestly using headless Chromium/Playwright against `vite preview` / built `dist/` — and explicitly state in `DEVLOG.md` which screenshots came from the `pult-core.exe` window vs browser render, never claiming clicks that were not performed.)*
+      Launch `src-tauri/target/release/pult-core.exe`, confirm the desktop window renders cleanly without crashing, and capture the four required screenshots to: - `docs/screenshots/v3-composer-picker.png` - `docs/screenshots/v3-shell-header.png` - `docs/screenshots/v3-theme-previews.png` - `docs/screenshots/v3-diff-large.png`
+      _(Note: headless desktop automation on Windows cannot click inside the WebView2 surface. Capture the live `pult-core.exe` window for the default shell/composer view, and if secondary routes/popovers cannot be clicked via desktop automation in `pult-core.exe`, capture those specific route views honestly using headless Chromium/Playwright against `vite preview` / built `dist/` — and explicitly state in `DEVLOG.md` which screenshots came from the `pult-core.exe` window vs browser render, never claiming clicks that were not performed.)_
 - [ ] **Step 5: Update `DEVLOG.md`**
-      Add a `## Pult v3 — composer, shell, theme previews & diff performance (2026-11-15)` entry covering:
-      - What changed across Tasks 1–8 (single 40px header + route headers, removal of `NewThreadOptionsStrip`, unified `ProviderModelPicker` + stale-config pruning in UI and Rust, 14px proportional type scale + zero `10px`/`11px`, scoped `[data-theme]` previews, metadata-only `git_diff_summary` + path-validated `git_diff_file` + blob-SHA `patch_hash`, 2,000-line cap in `DiffLines`, dynamic-height `useVirtualRows`).
-      - Exact test counts, `pnpm build`, and `pnpm tauri build --no-bundle` results.
-      - Known limitation: **headless desktop automation cannot click inside the WebView**, noting honestly which actions were verified by automated tests / window launch and making zero unverified click claims.
+      Add a `## Pult v3 — composer, shell, theme previews & diff performance (2026-11-15)` entry covering: - What changed across Tasks 1–8 (single 40px header + route headers, removal of `NewThreadOptionsStrip`, unified `ProviderModelPicker` + stale-config pruning in UI and Rust, 14px proportional type scale + zero `10px`/`11px`, scoped `[data-theme]` previews, metadata-only `git_diff_summary` + path-validated `git_diff_file` + blob-SHA `patch_hash`, 2,000-line cap in `DiffLines`, dynamic-height `useVirtualRows`). - Exact test counts, `pnpm build`, and `pnpm tauri build --no-bundle` results. - Known limitation: **headless desktop automation cannot click inside the WebView**, noting honestly which actions were verified by automated tests / window launch and making zero unverified click claims.
 - [ ] **Step 6: Stop `pult-core` and commit acceptance artifacts**
       Ensure no background `pult-core` process remains running, verify `git status`, and commit:
       `git add DEVLOG.md docs/screenshots/v3-*.png && git commit -m "docs(devlog): record v3 acceptance verification and screenshots"`
-

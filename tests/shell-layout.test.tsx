@@ -143,7 +143,6 @@ describe("shell layout polish", () => {
       selectedInstanceId: null,
       paletteOpen: false,
       appVersion: null,
-      newThreadOptions: { workspace: "", worktree: false },
     });
     useRunsStore.setState({
       runsByThread: {},

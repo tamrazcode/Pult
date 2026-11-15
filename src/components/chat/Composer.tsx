@@ -382,26 +382,17 @@ export function Composer({ threadId }: { threadId?: string }) {
           const desired = useRunsStore.getState().desiredModeByThread;
           const pendingMode = modeForSend(desired);
           const pendingConfig = configForSend(useRunsStore.getState().desiredConfigByThread);
-          const { workspace, worktree } = useUiStore.getState().newThreadOptions;
           const selectedProjectId = useProjectsStore.getState().selectedProjectId;
           const project = useProjectsStore
             .getState()
             .projects.find((candidate) => candidate.id === selectedProjectId);
-          const explicitWorkspace = workspace.trim();
-          const targetWorkspace = explicitWorkspace || project?.rootPath || undefined;
-          // An explicit folder outside the project is standalone; only the
-          // project's own folder (or no override) keeps the project link.
-          const targetProject =
-            explicitWorkspace && explicitWorkspace !== project?.rootPath ? null : project;
-          // An explicit folder is the user's override; otherwise the project's
-          // worktree strategy decides.
-          const targetWorktree =
-            explicitWorkspace && explicitWorkspace !== project?.rootPath
-              ? worktree
-              : worktree || project?.worktreeStrategy === "worktree";
+          // New threads inherit their project's folder and worktree strategy;
+          // the old folder/worktree strip is gone.
+          const targetWorkspace = project?.rootPath || undefined;
+          const targetWorktree = project?.worktreeStrategy === "worktree";
           const thread = await useThreadsStore
             .getState()
-            .createThread(targetProject?.id ?? null, text.slice(0, 40), {
+            .createThread(project?.id ?? null, text.slice(0, 40), {
               workspace: targetWorkspace,
               worktree: targetWorktree,
             });
@@ -416,7 +407,6 @@ export function Composer({ threadId }: { threadId?: string }) {
               useRunsStore.getState().setDesiredConfig(thread.id, configId, configValue);
             }
           }
-          if (!targetProject && project) useProjectsStore.getState().selectProject(null);
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
           // The pending picks now belong to this thread; never to the next one.
@@ -836,9 +826,6 @@ function ComposerStatusLine({
   const threadWorkspace = useThreadsStore((s) =>
     threadId ? (s.threads.find((t) => t.id === threadId)?.workspace ?? null) : null,
   );
-  const newThreadWorkspace = useUiStore((s) =>
-    threadId ? null : s.newThreadOptions.workspace || null,
-  );
   const projectRoot = useProjectsStore((s) =>
     threadId
       ? null
@@ -855,7 +842,7 @@ function ComposerStatusLine({
   if (awaitingDecision) {
     return <span className="truncate text-xs text-warning">Decision needed — see above</span>;
   }
-  const raw = threadWorkspace ?? newThreadWorkspace ?? projectRoot;
+  const raw = threadWorkspace ?? projectRoot;
   if (!raw) {
     return <span className="truncate text-xs text-text-tertiary">No workspace selected</span>;
   }

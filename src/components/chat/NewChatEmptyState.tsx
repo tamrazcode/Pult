@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { Composer } from "./Composer";
-import { NewThreadOptionsStrip } from "./NewThreadOptionsStrip";
 import { PultLogo } from "../ui/PultLogo";
 
 /** Halftone-ish terrain of characters; deterministic so it never flickers. */
@@ -37,11 +36,10 @@ export function NewChatEmptyState() {
             What should we do in Pult?
           </h1>
           <p className="mt-1.5 max-w-md text-sm text-text-tertiary">
-            Describe a task, pick a folder, and let the agent take it from there.
+            Describe a task and let the agent take it from there.
           </p>
         </div>
         <div className="mt-7">
-          <NewThreadOptionsStrip />
           <Composer />
         </div>
       </div>

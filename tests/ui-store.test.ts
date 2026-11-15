@@ -36,4 +36,9 @@ describe("ui store", () => {
     expect(useUiStore.getState().rightPanelTab).toBe("terminal");
     expect(useUiStore.getState().rightPanelOpen).toBe(true);
   });
+
+  it("does not expose newThreadOptions or setNewThreadOptions", () => {
+    expect("newThreadOptions" in useUiStore.getState()).toBe(false);
+    expect("setNewThreadOptions" in useUiStore.getState()).toBe(false);
+  });
 });
