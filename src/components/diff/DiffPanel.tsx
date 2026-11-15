@@ -93,6 +93,7 @@ function FileCard({
         <button
           onClick={onToggleReviewed}
           title={reviewed ? "Mark as not reviewed" : "Mark reviewed"}
+          aria-label={reviewed ? "Mark as not reviewed" : "Mark reviewed"}
           aria-pressed={reviewed}
           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) border transition ${
             reviewed
@@ -318,34 +319,36 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {/* header: branch + totals + refresh + view toggle */}
-      <div className="flex items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
-        <span className="flex items-center gap-1 rounded-(--radius-sm) bg-active px-2 py-0.5 font-mono text-xs text-text-secondary">
-          <GitBranch size={12} className="text-text-tertiary" />
-          {state.status?.branch ?? "HEAD"}
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
+        <span className="flex min-w-0 max-w-full items-center gap-1 rounded-(--radius-sm) bg-active px-2 py-0.5 font-mono text-xs text-text-secondary">
+          <GitBranch size={12} className="shrink-0 text-text-tertiary" />
+          <span className="truncate">{state.status?.branch ?? "HEAD"}</span>
           {state.status && state.status.ahead + state.status.behind > 0 && (
-            <span className="tnum text-text-tertiary">
+            <span className="tnum shrink-0 text-text-tertiary">
               {" "}
               ↑{state.status.ahead} ↓{state.status.behind}
             </span>
           )}
         </span>
         {hasChanges && <Diffstat added={totalAdded} removed={totalRemoved} />}
-        <span className="tnum text-xs text-text-tertiary">
+        <span className="tnum shrink-0 text-xs whitespace-nowrap text-text-tertiary">
           {reviewedCount}/{files.length} reviewed
         </span>
         <div className="flex-1" />
         <button
           onClick={() => void refresh(threadId)}
           title="Re-read git status and diff"
-          className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          aria-label="Refresh diff"
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
           <RefreshCw size={13} className={state.loading ? "animate-spin" : ""} />
         </button>
-        <div className="flex h-7 overflow-hidden rounded-(--radius-sm) border border-border-subtle text-xs">
+        <div className="flex h-7 shrink-0 overflow-hidden rounded-(--radius-sm) border border-border-subtle text-xs">
           {(["unified", "split"] as const).map((mode) => (
             <button
               key={mode}
               onClick={() => setViewMode(mode)}
+              aria-pressed={viewMode === mode}
               className={`px-2 transition ${
                 viewMode === mode
                   ? "bg-active text-text-primary"
@@ -359,7 +362,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
       </div>
 
       {/* actions: commit ▸ push ▸ PR */}
-      <div className="flex items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
+      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
         <input
           value={state.commitMessage}
           onChange={(e) => setCommitMessage(threadId, e.target.value)}
@@ -368,7 +371,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           }}
           placeholder="Commit message…"
           aria-label="Commit message"
-          className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+          className="h-7 min-w-[120px] flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
         />
         {suggested && !state.commitMessage && (
           <button

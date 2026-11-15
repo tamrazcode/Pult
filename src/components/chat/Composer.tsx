@@ -596,7 +596,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   };
 
   return (
-    <div className="shrink-0 px-6 pb-5">
+    <div className="shrink-0 px-3 pb-5 sm:px-6">
       {pendingApproval && (
         <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-(--radius-md) border border-warning bg-warning/10 px-3 py-1.5">
           <span className="min-w-0 flex-1 truncate text-xs text-warning">
@@ -797,6 +797,8 @@ export function Composer({ threadId }: { threadId?: string }) {
             </label>
           ) : (
             <span
+              role="img"
+              aria-label="Images are not supported by this agent"
               title="This agent does not accept images"
               className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary/40"
             >
@@ -824,7 +826,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               aria-label="Send message"
               title="Send message"
               disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:opacity-40"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
             >
               <ArrowUp size={14} />
             </button>

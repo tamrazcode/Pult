@@ -1,6 +1,16 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { CheckCheck, GitBranch, Moon, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
+import {
+  CheckCheck,
+  GitBranch,
+  MoreHorizontal,
+  Moon,
+  Pencil,
+  Pin,
+  PinOff,
+  Trash2,
+  X,
+} from "lucide-react";
 import { runsCancel } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import { useProjectsStore } from "../../stores/projects";
@@ -94,7 +104,7 @@ export function ChatHeader({
   return (
     <header
       data-tauri-drag-region
-      className={`relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pl-4 ${isTauri() ? "pr-[136px]" : "pr-0"}`}
+      className={`relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pl-4 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
     >
       {editing ? (
         <input
@@ -175,9 +185,9 @@ export function ChatHeader({
             aria-label="Thread actions"
             aria-expanded={menuOpen}
             onClick={() => setMenuOpen((open) => !open)}
-            className="flex h-6 items-center rounded-(--radius-sm) px-1.5 text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) px-1.5 text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
           >
-            ⋯
+            <MoreHorizontal size={15} />
           </button>
           {menuOpen && (
             <div

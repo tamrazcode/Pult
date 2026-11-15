@@ -441,6 +441,15 @@ export function Sidebar({ width }: { width: number }) {
             className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
         </div>
+        <button
+          type="button"
+          aria-label="Refresh projects and threads"
+          title="Refresh projects and threads"
+          onClick={refresh}
+          className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+        >
+          <RefreshCw size={14} />
+        </button>
         <div>
           <button
             type="button"
@@ -580,15 +589,6 @@ export function Sidebar({ width }: { width: number }) {
         >
           <BarChart3 size={15} className="text-text-tertiary" />
           <span>Usage</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Refresh"
-          onClick={refresh}
-          className="flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-sm text-text-secondary transition hover:bg-hover"
-        >
-          <RefreshCw size={15} className="text-text-tertiary" />
-          <span>Refresh</span>
         </button>
       </footer>
 

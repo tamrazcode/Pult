@@ -15,7 +15,7 @@ function AboutSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="text-lg font-medium text-text-primary">About pult</h1>
+      <h2 className="text-lg font-medium text-text-primary">About pult</h2>
       <p className="mt-1 text-sm text-text-tertiary">
         A local-first Agent Development Environment: your coding agents, one window, over the Agent
         Client Protocol. pult runs the agents you already have — it never resells access or stores
@@ -25,7 +25,7 @@ function AboutSettings() {
       <dl className="mt-4 space-y-2 text-sm">
         <div className="flex gap-3">
           <dt className="w-32 shrink-0 text-text-tertiary">Version</dt>
-          <dd className="font-mono tnum text-text-primary">{version ?? "—"}</dd>
+          <dd className="font-mono tnum text-text-primary">{version || "—"}</dd>
         </div>
         <div className="flex gap-3">
           <dt className="w-32 shrink-0 text-text-tertiary">Protocol</dt>

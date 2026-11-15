@@ -112,7 +112,7 @@ function DiagnosticsSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="text-lg font-medium text-text-primary">Diagnostics</h1>
+      <h2 className="text-lg font-medium text-text-primary">Diagnostics</h2>
       <p className="mt-1 text-sm text-text-tertiary">
         Live view of every configured agent: capabilities, process events, and the last raw protocol
         frames while a run is active.

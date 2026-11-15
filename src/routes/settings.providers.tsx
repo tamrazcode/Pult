@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Bot, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import {
   ipcErrorMessage,
   providersAuthenticate,
@@ -122,7 +122,10 @@ function ProvidersSettings() {
   const [authAttempted, setAuthAttempted] = useState<Record<string, boolean>>({});
 
   const reload = async () => {
-    if (!isTauri()) return;
+    if (!isTauri()) {
+      setLoaded(true);
+      return;
+    }
     const list = await providersInstancesList();
     setInstances(list);
     setDetected(await providersDetectInstalled());
@@ -285,7 +288,24 @@ function ProvidersSettings() {
 
       {/* Detail pane (T3-style right column) */}
       <div className="relative min-w-0 flex-1 overflow-y-auto p-5">
-        {!selected && loaded && (
+        {!loaded && <p className="text-sm text-text-tertiary">Loading providers…</p>}
+        {!selected && loaded && instances.length === 0 && (
+          <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center">
+            <Bot size={24} className="text-text-tertiary" aria-hidden />
+            <p className="text-sm font-medium text-text-primary">No providers yet</p>
+            <p className="max-w-xs text-xs text-text-tertiary">
+              Connect a local ACP agent or add any ACP-over-stdio command. pult never stores your
+              keys.
+            </p>
+            <button
+              onClick={() => setAdding(true)}
+              className="mt-1 flex h-8 items-center gap-1.5 rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+            >
+              <Plus size={13} /> Add provider
+            </button>
+          </div>
+        )}
+        {!selected && loaded && instances.length > 0 && (
           <p className="text-sm text-text-tertiary">Pick a provider on the left.</p>
         )}
         {selected && (

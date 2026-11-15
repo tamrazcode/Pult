@@ -122,6 +122,13 @@ async function ensureProcessEventSubscription(): Promise<void> {
   });
 }
 
+const NARROW_WITH_PANELS = 1180;
+
+/** Sidebar + right panel + transcript do not fit below this width. */
+function isNarrowViewport(): boolean {
+  return typeof window !== "undefined" && window.innerWidth < NARROW_WITH_PANELS;
+}
+
 export const useUiStore = create<UiState>((set) => ({
   sidebarOpen: true,
   collapsedProjects: [],
@@ -135,15 +142,34 @@ export const useUiStore = create<UiState>((set) => ({
   paletteOpen: false,
   processEvents: {},
   globalError: null,
-  toggleSidebar: () => set((s) => ({ sidebarOpen: !s.sidebarOpen })),
+  toggleSidebar: () =>
+    set((s) => {
+      const sidebarOpen = !s.sidebarOpen;
+      return {
+        sidebarOpen,
+        rightPanelOpen: sidebarOpen && isNarrowViewport() ? false : s.rightPanelOpen,
+      };
+    }),
   toggleProjectCollapsed: (projectId) =>
     set((s) => ({
       collapsedProjects: s.collapsedProjects.includes(projectId)
         ? s.collapsedProjects.filter((id) => id !== projectId)
         : [...s.collapsedProjects, projectId],
     })),
-  toggleRightPanel: () => set((s) => ({ rightPanelOpen: !s.rightPanelOpen })),
-  setRightPanelTab: (tab) => set({ rightPanelTab: tab, rightPanelOpen: true }),
+  toggleRightPanel: () =>
+    set((s) => {
+      const rightPanelOpen = !s.rightPanelOpen;
+      return {
+        rightPanelOpen,
+        sidebarOpen: rightPanelOpen && isNarrowViewport() ? false : s.sidebarOpen,
+      };
+    }),
+  setRightPanelTab: (tab) =>
+    set((s) => ({
+      rightPanelTab: tab,
+      rightPanelOpen: true,
+      sidebarOpen: isNarrowViewport() ? false : s.sidebarOpen,
+    })),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
   setSidebarWidth: (width, persist = false) => {
     const sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));

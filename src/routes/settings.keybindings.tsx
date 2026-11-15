@@ -52,7 +52,7 @@ function KeybindingsSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="text-lg font-medium text-text-primary">Keybindings</h1>
+      <h2 className="text-lg font-medium text-text-primary">Keybindings</h2>
       <p className="mt-1 text-sm text-text-tertiary">
         Press a row, then the new combination (needs {MOD_KEY} or Alt so typing stays safe). Esc
         cancels.

@@ -37,6 +37,24 @@ describe("ui store", () => {
     expect(useUiStore.getState().rightPanelOpen).toBe(true);
   });
 
+  it("keeps only one side rail below the narrow breakpoint", () => {
+    const original = window.innerWidth;
+    try {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1024 });
+      useUiStore.setState({ sidebarOpen: true, rightPanelOpen: false });
+      useUiStore.getState().toggleRightPanel();
+      expect(useUiStore.getState().rightPanelOpen).toBe(true);
+      expect(useUiStore.getState().sidebarOpen).toBe(false);
+
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: 1440 });
+      useUiStore.setState({ sidebarOpen: true, rightPanelOpen: false });
+      useUiStore.getState().toggleRightPanel();
+      expect(useUiStore.getState().sidebarOpen).toBe(true);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: original });
+    }
+  });
+
   it("does not expose newThreadOptions or setNewThreadOptions", () => {
     expect("newThreadOptions" in useUiStore.getState()).toBe(false);
     expect("setNewThreadOptions" in useUiStore.getState()).toBe(false);

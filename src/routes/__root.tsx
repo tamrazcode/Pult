@@ -37,6 +37,18 @@ function RootLayout() {
     void hydrateLayout();
   }, []);
 
+  // Shrinking the window with both side rails open must not crush the chat.
+  useEffect(() => {
+    const onResize = () => {
+      if (window.innerWidth < 1180 && sidebarOpen && rightPanelOpen) {
+        useUiStore.getState().toggleSidebar();
+      }
+    };
+    window.addEventListener("resize", onResize);
+    onResize();
+    return () => window.removeEventListener("resize", onResize);
+  }, [sidebarOpen, rightPanelOpen]);
+
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-canvas text-text-primary">
       <div className="flex min-h-0 flex-1">

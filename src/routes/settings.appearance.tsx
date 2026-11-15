@@ -14,7 +14,7 @@ function AppearanceSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h1 className="text-lg font-medium text-text-primary">Appearance</h1>
+      <h2 className="text-lg font-medium text-text-primary">Appearance</h2>
       <p className="mt-1 text-sm text-text-tertiary">
         Themes swap the token palette; the accent recolors buttons, mentions, and monograms.
       </p>
@@ -77,7 +77,7 @@ function AppearanceSettings() {
                     <span className="h-1 w-2/3 rounded-full bg-text-tertiary/60" />
                     <span className="mt-auto flex items-center gap-1">
                       <span className="h-2 w-10 rounded-sm bg-surface-raised" />
-                      <span className="h-2 w-4 rounded-sm bg-accent" />
+                      <span className="h-2 w-6 rounded-sm bg-accent" />
                     </span>
                   </span>
                 </span>

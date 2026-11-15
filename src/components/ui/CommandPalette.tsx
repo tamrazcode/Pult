@@ -25,6 +25,7 @@ export function CommandPalette({ open, onClose }: Props) {
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const navigate = useMemo(() => (path: string) => void router.navigate({ to: path }), [router]);
 
@@ -32,10 +33,19 @@ export function CommandPalette({ open, onClose }: Props) {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return commands;
-    return commands.filter((c) =>
-      `${c.title} ${c.keywords ?? ""} ${c.section}`.toLowerCase().includes(q),
-    );
+    const result = q
+      ? commands.filter((c) =>
+          `${c.title} ${c.keywords ?? ""} ${c.section}`.toLowerCase().includes(q),
+        )
+      : commands;
+    const order: Command["section"][] = [
+      "Actions",
+      "Navigate",
+      "Threads",
+      "Appearance",
+      "Settings",
+    ];
+    return [...result].sort((a, b) => order.indexOf(a.section) - order.indexOf(b.section));
   }, [commands, query]);
 
   useEffect(() => {
@@ -51,7 +61,7 @@ export function CommandPalette({ open, onClose }: Props) {
 
   useEffect(() => {
     const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${cursor}"]`);
-    el?.scrollIntoView({ block: "nearest" });
+    el?.scrollIntoView?.({ block: "nearest" });
   }, [cursor]);
 
   if (!open) return null;
@@ -62,6 +72,26 @@ export function CommandPalette({ open, onClose }: Props) {
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Tab") {
+      const root = dialogRef.current;
+      if (!root) return;
+      const focusable = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'input, button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (e.key === "Escape") {
       e.stopPropagation();
       onClose();
@@ -87,8 +117,13 @@ export function CommandPalette({ open, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-50" onKeyDown={onKeyDown}>
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
       <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        onClick={onClose}
+        aria-hidden
+      />
+      <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-label="Command palette"

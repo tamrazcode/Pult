@@ -23,9 +23,6 @@ export function SettingsLayout() {
           aria-label="Settings"
           className="w-56 shrink-0 border-r border-border-subtle bg-canvas px-2 py-4"
         >
-          <p className="px-2 pb-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-            Settings
-          </p>
           {NAV.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}

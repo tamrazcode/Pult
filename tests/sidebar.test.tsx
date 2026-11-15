@@ -375,13 +375,13 @@ describe("Sidebar", () => {
     expect(readRow!.querySelector(unreadDotSelector)).toBeNull();
   });
 
-  it("renders footer buttons (Settings, Pull requests, Usage, Refresh) and triggers actions", async () => {
+  it("renders footer navigation and a toolbar refresh action", async () => {
     render(<Sidebar width={288} />);
 
     const settingsBtn = screen.getByRole("button", { name: /settings/i });
     const prsBtn = screen.getByRole("button", { name: /pull requests/i });
     const usageBtn = screen.getByRole("button", { name: /usage/i });
-    const refreshBtn = screen.getByRole("button", { name: /refresh/i });
+    const refreshBtn = screen.getByRole("button", { name: /refresh projects and threads/i });
 
     await userEvent.click(settingsBtn);
     expect(navigate).toHaveBeenCalledWith(

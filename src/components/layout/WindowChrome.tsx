@@ -136,7 +136,7 @@ export function RouteHeader({
   return (
     <header
       data-tauri-drag-region
-      className={`flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle bg-canvas pl-4 ${isTauri() ? "pr-[136px]" : "pr-0"}`}
+      className={`flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle bg-canvas pl-4 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
     >
       <h1 className="shrink-0 truncate text-base font-medium text-text-primary">{title}</h1>
       {subtitle && (
