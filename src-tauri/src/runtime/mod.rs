@@ -283,6 +283,8 @@ impl AgentRuntime {
         if instances.is_empty() {
             instances.push(crate::config::mock_spec());
         }
+        let terminals = Arc::new(TerminalRegistry::default());
+        let pool_terminals = Arc::clone(&terminals);
         Self {
             store,
             sink: Arc::clone(&sink),
@@ -292,11 +294,11 @@ impl AgentRuntime {
                 threads_working: HashMap::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
-                terminals: Arc::new(TerminalRegistry::default()),
+                terminals,
                 ptys: Arc::new(crate::runtime::ptys::PtyRegistry::new(sink)),
                 instances,
             }),
-            pool: crate::runtime::pool::IdlePool::new(),
+            pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals),
         }
     }
 
@@ -593,15 +595,25 @@ impl AgentRuntime {
             inner.threads_working.get(&thread.id).cloned()
         };
         if active.is_none() {
-            let run = self.dispatch(thread, text, images, instance_id)?;
-            return Ok(SendOutcome {
-                run: Some(run),
-                queued: false,
-                queue_id: None,
-            });
+            match self.dispatch(thread, text, images, instance_id) {
+                Ok(run) => {
+                    return Ok(SendOutcome {
+                        run: Some(run),
+                        queued: false,
+                        queue_id: None,
+                    })
+                }
+                // Lost the race to a concurrent send: queue behind its run
+                // instead of refusing the message.
+                Err(err) if is_thread_busy(&err) => {
+                    tracing::debug!(target: "pult::runtime", error = %err,
+                        "send raced with dispatch; queueing instead");
+                }
+                Err(err) => return Err(err),
+            }
         }
         let item = QueueItem {
-            id: format!("q-{}-{}", now_millis(), thread.id),
+            id: new_row_id("q", &thread.id),
             thread_id: thread.id.clone(),
             instance_id: instance_id.to_string(),
             text: text.to_string(),
@@ -610,6 +622,11 @@ impl AgentRuntime {
         };
         self.store.enqueue_queue_item(&item)?;
         self.emit_queue_updated(&thread.id);
+        // The active run may have finished between the check above and this
+        // insert: nobody would drain that queue, so start it here.
+        if self.active_run_for(&thread.id).is_none() {
+            self.auto_dispatch_queue(&thread.id);
+        }
         Ok(SendOutcome {
             run: None,
             queued: true,
@@ -823,16 +840,6 @@ impl AgentRuntime {
         // an immediate typed error, not a failed run record.
         let root = self.workspace_root_for(thread)?;
 
-        let active = {
-            let inner = self.inner.lock().expect("runtime lock poisoned");
-            inner.threads_working.get(&thread.id).cloned()
-        };
-        if active.is_some() {
-            return Err(crate::PultError::internal(
-                "thread already has an active run; queue instead",
-            ));
-        }
-
         let desired = self.desired_config(&thread.id);
         let effective_config = self.filter_config_for_instance(instance_id, &desired);
         let model = desired_string(&effective_config, "model");
@@ -840,7 +847,7 @@ impl AgentRuntime {
             .iter()
             .find_map(|id| desired_string(&effective_config, id));
         let run = RunRecord {
-            id: format!("run-{}-{}", now_millis(), thread.id),
+            id: new_row_id("run", &thread.id),
             thread_id: thread.id.clone(),
             idx: self.store.run_count(&thread.id)? as i64,
             status: "running".to_string(),
@@ -854,42 +861,53 @@ impl AgentRuntime {
             error: None,
         };
         // Register before the DB write so a threads_get landing in between
-        // sees the run as live instead of a zombie.
-        self.inner
-            .lock()
-            .expect("runtime lock poisoned")
-            .threads_working
-            .insert(thread.id.clone(), run.id.clone());
-        if let Err(err) = self.store.create_run(&run) {
-            self.inner
-                .lock()
-                .expect("runtime lock poisoned")
+        // sees the run as live instead of a zombie. Check-and-insert under one
+        // lock: two concurrent dispatches must not both start a run.
+        {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            if inner.threads_working.contains_key(&thread.id) {
+                return Err(crate::PultError::with_code(
+                    "thread.busy",
+                    "thread already has an active run; queue instead",
+                ));
+            }
+            inner
                 .threads_working
-                .remove(&thread.id);
+                .insert(thread.id.clone(), run.id.clone());
+        }
+        if let Err(err) = self.store.create_run(&run) {
+            self.rollback_run(&run.id, &thread.id);
             return Err(err);
         }
-        // Covers backend-created runs too (queue auto-dispatch): the UI
-        // registers the record so the timeline can select it.
-        self.emit("run:started", &RunStartedPayload { run: run.clone() });
-        let user_event = Event::new(
-            run.id.clone(),
-            self.store.next_seq(&run.id)?,
-            EventKind::UserMessage {
-                text: text.to_string(),
-                images: images.to_vec(),
-            },
-        );
-        self.store.append_event(&user_event)?;
-        self.emit_run_event(&run.id, &user_event);
+        let user_event = match self.store.next_seq(&run.id) {
+            Ok(seq) => Event::new(
+                run.id.clone(),
+                seq,
+                EventKind::UserMessage {
+                    text: text.to_string(),
+                    images: images.to_vec(),
+                },
+            ),
+            Err(err) => return Err(self.abort_run_start(&run, &thread.id, err)),
+        };
+        if let Err(err) = self.store.append_event(&user_event) {
+            return Err(self.abort_run_start(&run, &thread.id, err));
+        }
 
         let (answers_tx, answers_rx) = mpsc::unbounded_channel::<(String, AnswerPayload)>();
 
         {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
             inner.answer_queues.insert(run.id.clone(), answers_tx);
-            inner.threads_working.insert(thread.id.clone(), run.id.clone());
         }
-        self.set_thread_status(&thread.id, "working")?;
+        if let Err(err) = self.set_thread_status(&thread.id, "working") {
+            return Err(self.abort_run_start(&run, &thread.id, err));
+        }
+        // Covers backend-created runs too (queue auto-dispatch): the UI
+        // registers the record so the timeline can select it. Emitted after
+        // every fallible step so a failed start never leaves a ghost run.
+        self.emit("run:started", &RunStartedPayload { run: run.clone() });
+        self.emit_run_event(&run.id, &user_event);
 
         let this = Arc::clone(self);
         let run_id = run.id.clone();
@@ -922,6 +940,33 @@ impl AgentRuntime {
         Ok(run)
     }
 
+    /// Removes a run's in-memory registration after it failed to start.
+    fn rollback_run(&self, run_id: &str, thread_id: &str) {
+        let mut inner = self.inner.lock().expect("runtime lock poisoned");
+        inner.runs.remove(run_id);
+        inner.answer_queues.remove(run_id);
+        inner.threads_working.remove(thread_id);
+    }
+
+    /// Roll back a start that failed after the run row was written; the row is
+    /// marked failed so a restart does not adopt a ghost "running" run.
+    fn abort_run_start(
+        &self,
+        run: &RunRecord,
+        thread_id: &str,
+        err: crate::PultError,
+    ) -> crate::PultError {
+        self.rollback_run(&run.id, thread_id);
+        let _ = self.store.finish_run(
+            &run.id,
+            now_millis(),
+            "failed",
+            Some("failed"),
+            Some(&err.to_string()),
+        );
+        err
+    }
+
     /// Stop button / Esc: cancel the active run's prompt turn (§5.3).
     pub fn cancel(&self, run_id: &str) -> Result<(), crate::PultError> {
         let (conn, session_id) = {
@@ -943,6 +988,18 @@ impl AgentRuntime {
                 }
             });
         Ok(())
+    }
+
+    /// Force-kills a run's agent process (thread delete: a wedged agent may
+    /// ignore `session/cancel` and keep its worktree files open).
+    pub fn kill_run(&self, run_id: &str) {
+        let conn = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.runs.get(run_id).map(|state| Arc::clone(&state.conn))
+        };
+        if let Some(conn) = conn {
+            conn.kill();
+        }
     }
 
     /// Route a permission answer from the UI into the run's queue.
@@ -1276,6 +1333,58 @@ fn persist_event_batch(
     runtime.store.append_events_batch(&events)?;
     runtime.emit_run_events(run_id, &events);
     Ok(())
+}
+
+/// Applies one projected agent event to the run: first-delta timing, coalesced
+/// persistence, and session metadata. Shared by the select loop and the
+/// post-prompt drain, which picks up events the select did not get to.
+#[allow(clippy::too_many_arguments)]
+fn apply_session_event(
+    runtime: &AgentRuntime,
+    run_id: &str,
+    thread_id: &str,
+    instance_id: &str,
+    timing: &mut RunTiming,
+    batcher: &mut crate::runtime::batch::EventBatcher,
+    applied_config: &mut DesiredConfigMap,
+    prompt_started: std::time::Instant,
+    kind: EventKind,
+) -> Result<(), String> {
+    if timing.first_delta_ms.is_none()
+        && matches!(
+            &kind,
+            EventKind::AgentMessageDelta { .. } | EventKind::AgentThoughtDelta { .. }
+        )
+    {
+        timing.first_delta_ms = Some(prompt_started.elapsed().as_millis() as u64);
+    }
+    let metadata = matches!(
+        &kind,
+        EventKind::ConfigOptions { .. } | EventKind::SessionInfo { title: Some(_) }
+    )
+    .then(|| kind.clone());
+    let flushed = batcher.push(kind);
+    persist_event_batch(runtime, run_id, flushed).map_err(|err| format!("store: {err}"))?;
+    if let Some(kind) = metadata {
+        if let EventKind::ConfigOptions { options } = &kind {
+            sync_applied_config(applied_config, options);
+        }
+        runtime.apply_session_metadata(thread_id, instance_id, &kind);
+    }
+    Ok(())
+}
+
+/// `dispatch` refused because another run won the thread (queue instead).
+fn is_thread_busy(err: &crate::PultError) -> bool {
+    matches!(err, crate::PultError::Internal { code, .. } if code == "thread.busy")
+}
+
+/// Unique row id: wall clock plus a process-local counter, so two sends in the
+/// same millisecond do not collide on a primary key.
+fn new_row_id(prefix: &str, thread_id: &str) -> String {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{prefix}-{}-{seq}-{thread_id}", now_millis())
 }
 
 /// Drive one prompt turn: consume projected events + client-side requests
@@ -1660,32 +1769,13 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             }
             kind = events_rx.recv() => {
                 if let Some(kind) = kind {
-                    if timing.first_delta_ms.is_none()
-                        && matches!(
-                            &kind,
-                            EventKind::AgentMessageDelta { .. } | EventKind::AgentThoughtDelta { .. }
-                        )
-                    {
-                        timing.first_delta_ms =
-                            Some(prompt_started.elapsed().as_millis() as u64);
-                    }
-                    let metadata = matches!(
-                        &kind,
-                        EventKind::ConfigOptions { .. }
-                            | EventKind::SessionInfo { title: Some(_) }
-                    )
-                    .then(|| kind.clone());
-                    let flushed = batcher.push(kind);
-                    if let Err(err) = persist_event_batch(&runtime, &run_id, flushed) {
-                        failure = Some(format!("store: {err}"));
+                    if let Err(err) = apply_session_event(
+                        &runtime, &run_id, &thread_id, &instance_id, &mut timing,
+                        &mut batcher, &mut applied_config, prompt_started, kind,
+                    ) {
+                        failure = Some(err);
                         stop_reason = Some("failed".to_string());
                         break;
-                    }
-                    if let Some(kind) = metadata {
-                        if let EventKind::ConfigOptions { options } = &kind {
-                            sync_applied_config(&mut applied_config, options);
-                        }
-                        runtime.apply_session_metadata(&thread_id, &instance_id, &kind);
                     }
                 }
             }
@@ -1733,7 +1823,8 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             }
                         }
                         ClientRequest::TerminalCreate { request_id, params } => {
-                            let reply = handle_terminal_create(&terminals, &root, &params);
+                            let reply =
+                                handle_terminal_create(&terminals, &session_id, &root, &params);
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::TerminalOutput { request_id, params } => {
@@ -1777,6 +1868,21 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         stop_reason = Some("failed".to_string());
                     }
                 }
+                break;
+            }
+        }
+    }
+
+    // The prompt reply can win the select while the turn's last notifications
+    // are still queued; they belong to this run, not to the next pooled turn.
+    if failure.is_none() {
+        while let Ok(kind) = events_rx.try_recv() {
+            if let Err(err) = apply_session_event(
+                &runtime, &run_id, &thread_id, &instance_id, &mut timing, &mut batcher,
+                &mut applied_config, prompt_started, kind,
+            ) {
+                failure = Some(err);
+                stop_reason = Some("failed".to_string());
                 break;
             }
         }
@@ -1830,6 +1936,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         }
     } else {
         conn.kill();
+        // The agent process is gone, so its terminals are unreachable: kill
+        // their children instead of leaking orphaned processes.
+        terminals.release_session(&session_id);
     }
     if crashed_mid_run {
         emit_process("crashed", failure.clone());
@@ -1914,6 +2023,16 @@ impl AgentRuntime {
                     Err(err) => {
                         tracing::error!(target: "pult::runtime",
                             error = %err, "queue auto-dispatch failed");
+                        // A failed dispatch must not eat the user's message.
+                        if let Err(restore) = self.store.enqueue_queue_item(&item) {
+                            tracing::error!(target: "pult::runtime",
+                                error = %restore, "queue auto-dispatch restore failed");
+                        }
+                        // A concurrent run won the thread: its finalize drains
+                        // the queue, unless it already ended in this gap.
+                        if is_thread_busy(&err) && self.active_run_for(thread_id).is_none() {
+                            self.auto_dispatch_queue(thread_id);
+                        }
                     }
                 }
                 self.emit_queue_updated(thread_id);
@@ -2548,6 +2667,7 @@ fn notify_if_unfocused(runtime: &AgentRuntime, title: &str, body: &str) {
 /// `terminal/create` handler: sandbox-checked cwd + spawn (§5.5).
 fn handle_terminal_create(
     terminals: &TerminalRegistry,
+    session_id: &str,
     root: &Path,
     params: &CreateTerminalParams,
 ) -> ClientReply {
@@ -2561,6 +2681,7 @@ fn handle_terminal_create(
         .map(|e| (e.name.clone(), e.value.clone()))
         .collect();
     terminals.create(
+        session_id,
         &params.command,
         &params.args,
         cwd.as_ref(),
@@ -2649,6 +2770,12 @@ fn diff_stats(diff: &str) -> (u64, u64) {
 
 /// Reject paths escaping the workspace root (§5.5: -32002-style typed error).
 fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
+    let escape = || {
+        RpcError::new(
+            ERR_RESOURCE_NOT_FOUND,
+            format!("path escapes workspace: {raw}"),
+        )
+    };
     let candidate = Path::new(raw);
     // Rootless POSIX-style paths (/repo/src/main.rs) from an agent whose cwd
     // is the workspace resolve against the workspace root; drive/UNC paths
@@ -2663,27 +2790,25 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     };
     for component in joined.components() {
         if component == std::path::Component::ParentDir {
-            return Err(RpcError::new(
-                ERR_RESOURCE_NOT_FOUND,
-                format!("path escapes workspace: {raw}"),
-            ));
+            return Err(escape());
         }
     }
     // Compare canonical against canonical: `canonicalize()` returns verbatim
     // `\?\…` paths, and mixing that with a clean root makes `starts_with`
     // fail spuriously ("path escapes workspace" for `.`).
-    match (joined.canonicalize(), root.canonicalize()) {
-        (Ok(real), Ok(base)) => {
-            if !real.starts_with(base) {
-                return Err(RpcError::new(
-                    ERR_RESOURCE_NOT_FOUND,
-                    format!("path escapes workspace: {raw}"),
-                ));
-            }
-        }
-        _ => {
-            // New file that does not exist yet: containment is guaranteed by
-            // the ParentDir check plus an absolute-or-rooted join.
+    let base = root.canonicalize().map_err(|_| escape())?;
+    // New files and symlinked parents do not canonicalize themselves, so walk
+    // up to the nearest existing ancestor: an absolute path outside the root
+    // (`C:\evil.txt`) or a symlink pointing out of it must still be rejected.
+    let mut ancestor = joined.as_path();
+    loop {
+        match ancestor.canonicalize() {
+            Ok(real) if real.starts_with(&base) => break,
+            Ok(_) => return Err(escape()),
+            Err(_) => match ancestor.parent() {
+                Some(parent) => ancestor = parent,
+                None => return Err(escape()),
+            },
         }
     }
     Ok(joined)

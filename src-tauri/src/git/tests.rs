@@ -425,6 +425,16 @@ async fn diff_file_rejects_absolute_parent_and_outside_paths() {
     assert_eq!(err_code(&err), "git.invalid_base");
 }
 
+/// `git diff` must not accept option-shaped refs: `--output=…` would let the
+/// caller write the diff anywhere on disk.
+#[tokio::test]
+async fn diff_rejects_option_like_base() {
+    let fx = fixture_repo().await;
+    let err = diff(fx.path(), Some("--output=pwned.txt")).await.unwrap_err();
+    assert_eq!(err_code(&err), "git.invalid_base");
+    assert!(!fx.path().join("pwned.txt").exists());
+}
+
 #[tokio::test]
 async fn diff_file_rejects_symlink_escape_when_supported() {
     let fx = fixture_repo().await;

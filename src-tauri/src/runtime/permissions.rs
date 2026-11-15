@@ -88,11 +88,12 @@ fn in_workspace(root: &std::path::Path, path: &str) -> bool {
     // absolute-from-cwd path for the agent, so the RootDir case must be
     // handled before any is_relative shortcut.
     match candidate.components().next() {
-        // Drive/UNC-qualified: containment against the real root.
-        Some(Component::Prefix(_)) => match candidate.canonicalize() {
-            Ok(real) => real.starts_with(root),
+        // Drive/UNC-qualified: containment against the real root. Canonicalize
+        // both sides so `\\?\` verbatim prefixes do not fail the comparison.
+        Some(Component::Prefix(_)) => match (candidate.canonicalize(), root.canonicalize()) {
+            (Ok(real), Ok(base)) => real.starts_with(base),
             // Unresolvable absolute path: conservatively outside.
-            Err(_) => false,
+            _ => false,
         },
         // POSIX-rootless (/repo/...): the sandbox maps it under the
         // workspace; any ParentDir component is an escape attempt.
@@ -100,8 +101,8 @@ fn in_workspace(root: &std::path::Path, path: &str) -> bool {
             let mut comps = candidate.components().skip(1);
             !comps.any(|c| c == Component::ParentDir)
         }
-        // Relative: joined with the root by the sandbox.
-        _ => true,
+        // Relative: joined with the root by the sandbox, so `..` is an escape.
+        _ => !candidate.components().any(|c| c == Component::ParentDir),
     }
 }
 
@@ -228,6 +229,10 @@ mod tests {
         let sneaky = vec!["/repo/../../etc/passwd".to_string()];
         let r4 = req("edit", &sneaky, &options, None);
         assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r4), PolicyDecision::Ask);
+        // relative ../ escape (the agent edits it outside the fs sandbox) → ask
+        let relative = vec!["..\\..\\Windows\\System32\\drivers\\etc\\hosts".to_string()];
+        let r5 = req("edit", &relative, &options, None);
+        assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r5), PolicyDecision::Ask);
     }
 
     #[test]

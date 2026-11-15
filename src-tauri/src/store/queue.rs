@@ -74,14 +74,42 @@ impl Store {
     }
 
     /// Pops the oldest queued message for a thread, if any (auto-dispatch).
+    /// One DELETE…RETURNING statement: two concurrent dispatchers can never
+    /// pop the same row (which would run the same message twice).
     pub fn pop_queue_head(&self, thread_id: &str) -> Result<Option<QueueItem>, PultError> {
-        let items = self.list_queue(thread_id)?;
-        let head = match items.first() {
-            Some(head) => head.clone(),
-            None => return Ok(None),
-        };
-        self.remove_queue_item(&head.id)?;
-        Ok(Some(head))
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "DELETE FROM queue_items
+                     WHERE id IN (
+                         SELECT id FROM queue_items WHERE thread_id = ?1
+                         ORDER BY created_at ASC, rowid ASC LIMIT 1
+                     )
+                     RETURNING id, thread_id, instance_id, text, images, created_at",
+                )
+                .map_err(|e| sql("pop_queue_head prepare", e))?;
+            let mut rows = stmt
+                .query(params![thread_id])
+                .map_err(|e| sql("pop_queue_head query", e))?;
+            let Some(row) = rows.next().map_err(|e| sql("pop_queue_head row", e))? else {
+                return Ok(None);
+            };
+            let raw: String = row.get(4).map_err(|e| sql("pop_queue_head images", e))?;
+            Ok(Some(QueueItem {
+                id: row.get(0).map_err(|e| sql("pop_queue_head id", e))?,
+                thread_id: row
+                    .get(1)
+                    .map_err(|e| sql("pop_queue_head thread_id", e))?,
+                instance_id: row
+                    .get(2)
+                    .map_err(|e| sql("pop_queue_head instance_id", e))?,
+                text: row.get(3).map_err(|e| sql("pop_queue_head text", e))?,
+                images: serde_json::from_str(&raw).unwrap_or_default(),
+                created_at: row
+                    .get(5)
+                    .map_err(|e| sql("pop_queue_head created_at", e))?,
+            }))
+        })
     }
 }
 

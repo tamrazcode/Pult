@@ -518,19 +518,17 @@ async fn diff_with_temp_index(
     let head_ok = git(repo, &["rev-parse", "--verify", "-q", "HEAD"], None)
         .await
         .is_ok();
-    let base = match base {
-        Some(b) if !b.trim().is_empty() => b.trim().to_string(),
-        _ if head_ok => "HEAD".to_string(),
-        // Fresh repo without commits: plain `git diff` (index vs worktree)
-        // renders every file as a new-file diff.
-        _ => String::new(),
+    let (base, resolved_base) = match validate_base(base)? {
+        Some(base) => (base.clone(), base),
+        _ if head_ok => ("HEAD".to_string(), "HEAD".to_string()),
+        // Fresh repo without commits: diff against the empty tree so staged
+        // and untracked files both appear, matching diff_summary/diff_file.
+        _ => (EMPTY_TREE.to_string(), "worktree".to_string()),
     };
-    let mut args: Vec<&str> = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames"];
-    if !base.is_empty() {
-        args.push(&base);
-    }
+    let args: Vec<&str> = vec![
+        "diff", "--no-color", "--no-ext-diff", "--no-renames", &base,
+    ];
     let raw = git(repo, &args, Some(temp)).await?;
-    let resolved_base = if base.is_empty() { "worktree".to_string() } else { base };
     let files = parse_diff_files(&raw);
     Ok(GitDiff {
         repo_root: repo.to_string_lossy().into_owned(),

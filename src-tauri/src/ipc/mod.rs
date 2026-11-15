@@ -366,8 +366,21 @@ pub async fn threads_delete(
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
+        // Still wedged: take the process down so the worktree can be removed.
+        if runtime.active_run_for(&thread_id).is_some() {
+            runtime.kill_run(&run_id);
+            for _ in 0..20 {
+                if runtime.active_run_for(&thread_id).is_none() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+        }
     }
     runtime.pool.invalidate_thread(&thread_id);
+    // Panel shells are children of pult, not of the agent: without this they
+    // keep the worktree open and the directory removal below fails.
+    runtime.ptys().kill_thread(&thread_id);
     if let Ok(thread) = runtime.store().get_thread(&thread_id) {
         if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
             if let Err(err) = crate::git::worktree_remove(std::path::Path::new(main_repo), name).await

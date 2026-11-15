@@ -315,6 +315,25 @@ impl PtyRegistry {
         })
     }
 
+    /// Kills and forgets every terminal owned by a thread (thread deleted):
+    /// child processes must die before the worktree directory can be removed.
+    pub fn kill_thread(&self, thread_id: &str) {
+        let states: Vec<Arc<Mutex<PtyState>>> = {
+            let mut inner = self.inner.lock().expect("pty registry lock poisoned");
+            let ids: Vec<String> = inner
+                .iter()
+                .filter(|(_, s)| s.lock().expect("pty lock poisoned").thread_id == thread_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.into_iter().filter_map(|id| inner.remove(&id)).collect()
+        };
+        for state in states {
+            let mut guard = state.lock().expect("pty lock poisoned");
+            guard.killed = true;
+            let _ = guard.child.kill();
+        }
+    }
+
     fn get(&self, terminal_id: &str) -> Result<Arc<Mutex<PtyState>>, PultError> {
         self.inner
             .lock()

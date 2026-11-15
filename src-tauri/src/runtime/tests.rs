@@ -157,6 +157,28 @@ fn kinds_of(runtime: &AgentRuntime, run_id: &str) -> Vec<EventKind> {
 }
 
 #[tokio::test]
+async fn queue_auto_dispatch_failure_keeps_the_message() {
+    let (runtime, _sink) = mock_runtime();
+    let thread = thread_record("th-queue-fail");
+    runtime.store().create_thread(&thread).expect("create thread");
+    let item = crate::store::records::QueueItem {
+        id: "q-fail".to_string(),
+        thread_id: thread.id.clone(),
+        instance_id: "missing-instance".to_string(),
+        text: "keep me".to_string(),
+        images: Vec::new(),
+        created_at: 1,
+    };
+    runtime.store().enqueue_queue_item(&item).expect("enqueue");
+
+    runtime.auto_dispatch_queue(&thread.id);
+
+    let queue = runtime.store().list_queue(&thread.id).expect("list queue");
+    assert_eq!(queue.len(), 1, "a failed dispatch must not eat the message");
+    assert_eq!(queue[0].text, "keep me");
+}
+
+#[tokio::test]
 async fn queued_message_auto_dispatches_after_run_finished() {
     // The env lock guards the process-env writes and the env reads inside the
     // sync dispatch calls; it is scoped so no await point holds it.
@@ -642,6 +664,45 @@ fn sandbox_rejects_parent_directory_escapes() {
     };
     let (reply, _) = write_file_sandboxed(&root, &params);
     assert!(reply.is_err(), "rooted ../ must be rejected");
+}
+
+/// A drive-qualified path outside the root must be rejected even though the
+/// file does not exist yet (canonicalizing it alone would fail open).
+#[cfg(windows)]
+#[test]
+fn sandbox_rejects_absolute_paths_outside_root() {
+    use crate::protocol::jsonrpc::ERR_RESOURCE_NOT_FOUND;
+    let root = std::env::temp_dir().join(format!(
+        "pult-sandbox-abs-{}",
+        crate::events::now_millis()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let outside = std::env::temp_dir().join("pult-outside-write.txt");
+    let _ = std::fs::remove_file(&outside);
+    let params = crate::protocol::types::WriteTextFileParams {
+        session_id: "s1".into(),
+        path: outside.to_string_lossy().into_owned(),
+        content: "nope".into(),
+        meta: None,
+    };
+    let (reply, change) = write_file_sandboxed(&root, &params);
+    assert_eq!(reply.unwrap_err().code, ERR_RESOURCE_NOT_FOUND);
+    assert!(change.is_none());
+    assert!(!outside.exists(), "outside file must not be created");
+
+    // A new nested file inside the root is still writable.
+    let inside = root.join("nested").join("new.txt");
+    let params = crate::protocol::types::WriteTextFileParams {
+        session_id: "s1".into(),
+        path: inside.to_string_lossy().into_owned(),
+        content: "ok".into(),
+        meta: None,
+    };
+    let (reply, change) = write_file_sandboxed(&root, &params);
+    assert!(reply.is_ok());
+    assert!(change.is_some());
+    assert!(inside.exists());
+    let _ = std::fs::remove_dir_all(&root);
 }
 
 /// A mode picked while idle is remembered and applied before the next run's

@@ -148,8 +148,8 @@ fn record_frame(
     summary: String,
 ) {
     let mut guard = ring.lock().expect("frames lock poisoned");
-    let mut line = format!("{direction} {summary}");
-    line.truncate(600);
+    // Frames can carry multibyte text; byte truncation would panic mid-char.
+    let line: String = format!("{direction} {summary}").chars().take(600).collect();
     guard.push_back(line);
     if guard.len() > FRAME_RING {
         guard.pop_front();
@@ -541,10 +541,37 @@ impl AcpConn {
         result
     }
 
-    /// Terminate the agent process.
+    /// Terminate the agent process. On Windows a `.cmd`/`.bat` shim runs the
+    /// real agent as a grandchild, so killing only cmd.exe orphans it (and its
+    /// pipes/worktree locks): take the whole tree down.
     pub fn kill(&self) {
         self.killed.store(true, Ordering::Relaxed);
         if let Ok(mut child) = self.child.lock() {
+            // Already exited: no tree left to kill (and the pid may be reused).
+            if matches!(child.try_wait(), Ok(Some(_))) {
+                return;
+            }
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                if let Some(pid) = child.id() {
+                    // Wait for taskkill: dropping the Child (kill_on_drop) or
+                    // start_kill() before it walks the tree would orphan the
+                    // shim's grandchildren. The child lock keeps it alive here.
+                    let tree_gone = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .stdin(std::process::Stdio::null())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status()
+                        .map(|status| status.success())
+                        .unwrap_or(false);
+                    if tree_gone {
+                        return;
+                    }
+                }
+            }
             let _ = child.start_kill();
         }
     }
@@ -849,6 +876,18 @@ pub fn tool_call_summary(data: &ToolCallUpdateData) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn record_frame_truncates_multibyte_on_a_char_boundary() {
+        let ring: Arc<Mutex<std::collections::VecDeque<String>>> =
+            Arc::new(Mutex::new(std::collections::VecDeque::new()));
+        record_frame(&ring, "←", "ж".repeat(400)); // 800 bytes, 400 chars
+        let frames = ring.lock().expect("ring lock");
+        let line = frames.back().expect("frame recorded");
+        assert!(line.chars().count() <= 600);
+        assert!(line.starts_with("← "));
+        assert!(!line.contains('\u{FFFD}'), "no broken characters");
+    }
 
     #[test]
     fn projection_maps_all_ui_visible_variants() {

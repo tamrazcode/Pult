@@ -18,12 +18,16 @@ const DEFAULT_RING_BYTES: u64 = 1 << 20; // 1 MiB
 
 struct TerminalState {
     child: Child,
+    /// Run that created this terminal: released when that agent goes away.
+    owner_session: String,
     /// Combined stdout+stderr bytes, truncated from the front on the cap.
     buffer: Vec<u8>,
     /// True once the buffer was truncated (the agent should know).
     truncated: bool,
     byte_cap: u64,
     exit: Option<TerminalExitStatus>,
+    /// Pipe pumps still running; the exit is only final once they drained.
+    pipes_left: usize,
 }
 
 type SharedState = Arc<Mutex<TerminalState>>;
@@ -55,6 +59,7 @@ impl TerminalRegistry {
     /// sandbox-checked by the caller.
     pub fn create(
         &self,
+        session_id: &str,
         command: &str,
         args: &[String],
         cwd: Option<&PathBuf>,
@@ -88,10 +93,12 @@ impl TerminalRegistry {
         );
         let state: SharedState = Arc::new(Mutex::new(TerminalState {
             child,
+            owner_session: session_id.to_string(),
             buffer: Vec::new(),
             truncated: false,
             byte_cap: cap,
             exit: None,
+            pipes_left: 0,
         }));
 
         // Two pumps fold stdout+stderr into one ring; pipes are taken before
@@ -108,6 +115,7 @@ impl TerminalRegistry {
             .into_iter()
             .flatten()
             .collect();
+            state.lock().expect("terminal lock").pipes_left = readers.len();
             for pipe in readers {
                 let state = Arc::clone(&state);
                 tokio::spawn(async move {
@@ -123,6 +131,8 @@ impl TerminalRegistry {
                             }
                         }
                     }
+                    let mut guard = state.lock().expect("terminal lock");
+                    guard.pipes_left = guard.pipes_left.saturating_sub(1);
                 });
             }
         }
@@ -183,6 +193,15 @@ impl TerminalRegistry {
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         };
+        // The process is gone but its pipes may still hold the tail; drain them
+        // so `output` after `wait_for_exit` returns the whole transcript.
+        let drain_until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while std::time::Instant::now() < drain_until {
+            if state.lock().expect("terminal lock").pipes_left == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
         serde_json::to_value(crate::protocol::types::WaitForTerminalExitResult {
             exit_code: exit.exit_code,
             signal: exit.signal,
@@ -217,12 +236,19 @@ impl TerminalRegistry {
         }
     }
 
-    /// Drops every terminal (run teardown: the agent process is gone).
-    pub fn release_all(&self) {
+    /// Drops every terminal created by a session (the agent is gone).
+    pub fn release_session(&self, session_id: &str) {
         let mut guard = self.inner.lock().expect("terminal registry lock");
-        for (_, state) in guard.drain() {
-            let mut entry = state.lock().expect("terminal lock");
-            let _ = entry.child.start_kill();
+        let ids: Vec<String> = guard
+            .iter()
+            .filter(|(_, state)| state.lock().expect("terminal lock").owner_session == session_id)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in ids {
+            if let Some(state) = guard.remove(&id) {
+                let mut entry = state.lock().expect("terminal lock");
+                let _ = entry.child.start_kill();
+            }
         }
     }
 }
@@ -258,10 +284,12 @@ mod tests {
                     .unwrap()
                     .block_on(async { cmd.spawn().unwrap() })
             },
+            owner_session: "run-test".to_string(),
             buffer,
             truncated: false,
             byte_cap: cap,
             exit: None,
+            pipes_left: 0,
         }
     }
 
@@ -290,6 +318,7 @@ mod tests {
         let registry = TerminalRegistry::default();
         let created = registry
             .create(
+                "run-test",
                 "cmd",
                 &["/c".into(), "echo hi".into()],
                 None,
@@ -320,5 +349,35 @@ mod tests {
         let registry = TerminalRegistry::default();
         let err = registry.output("nope").unwrap_err();
         assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn release_session_only_drops_that_sessions_terminals() {
+        let registry = TerminalRegistry::default();
+        let make = |session_id: &'static str| {
+            registry
+                .create(
+                    session_id,
+                    "cmd",
+                    &["/c".into(), "ping -n 10 127.0.0.1 >nul".into()],
+                    None,
+                    &[],
+                    None,
+                )
+                .expect("terminal created")["terminalId"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        let mine = make("session-a");
+        let other = make("session-b");
+
+        registry.release_session("session-a");
+        assert_eq!(registry.output(&mine).unwrap_err().code, ERR_RESOURCE_NOT_FOUND);
+        assert!(
+            registry.output(&other).is_ok(),
+            "other session keeps its terminal"
+        );
+        registry.release_session("session-b");
     }
 }

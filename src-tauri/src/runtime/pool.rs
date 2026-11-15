@@ -7,13 +7,14 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::drivers::acp::{AcpConn, ClientRequest};
 use crate::events::EventKind;
+use crate::runtime::terminals::TerminalRegistry;
 use crate::runtime::DesiredConfigMap;
 
 pub const MAX_IDLE_CONNS: usize = 6;
@@ -50,15 +51,30 @@ pub struct IdlePool {
     entries: Mutex<HashMap<String, IdleConn>>,
     evicted: AtomicU64,
     expired: AtomicU64,
+    /// Agent terminals belong to a session; killing the session releases them.
+    terminals: Arc<TerminalRegistry>,
 }
 
 impl IdlePool {
+    /// Pool without a shared terminal registry (tests, isolated use).
     pub fn new() -> Self {
+        Self::with_terminals(Arc::new(TerminalRegistry::default()))
+    }
+
+    /// Production pool: terminal release follows session eviction/kill.
+    pub fn with_terminals(terminals: Arc<TerminalRegistry>) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
             evicted: AtomicU64::new(0),
             expired: AtomicU64::new(0),
+            terminals,
         }
+    }
+
+    /// Kill a warm session and everything it still owns.
+    fn kill_idle(&self, entry: IdleConn) {
+        entry.conn.kill();
+        self.terminals.release_session(&entry.session_id);
     }
 
     pub fn take_matching(
@@ -72,14 +88,14 @@ impl IdlePool {
         self.evict_expired();
         let entry = self.lock().remove(thread_id)?;
         if Instant::now().duration_since(entry.last_used) > IDLE_TTL {
-            entry.conn.kill();
+            self.kill_idle(entry);
             self.expired.fetch_add(1, Ordering::Relaxed);
             return None;
         }
         let matches =
             entry.instance_id == instance_id && entry.root == root && &entry.spawn_sig == spawn_sig;
         if !matches || entry.conn.is_dead() {
-            entry.conn.kill();
+            self.kill_idle(entry);
             return None;
         }
         Some(entry)
@@ -97,12 +113,12 @@ impl IdlePool {
                 .collect();
             for key in stale {
                 if let Some(old) = entries.remove(&key) {
-                    kill.push(old.conn);
+                    kill.push(old);
                     self.expired.fetch_add(1, Ordering::Relaxed);
                 }
             }
             if let Some(old) = entries.remove(&thread_id) {
-                kill.push(old.conn);
+                kill.push(old);
             }
             entries.insert(thread_id, entry);
             while entries.len() > MAX_IDLE_CONNS {
@@ -112,20 +128,20 @@ impl IdlePool {
                     .map(|(key, _)| key.clone());
                 let Some(key) = oldest else { break };
                 if let Some(old) = entries.remove(&key) {
-                    kill.push(old.conn);
+                    kill.push(old);
                     self.evicted.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
-        for conn in kill {
-            conn.kill();
+        for entry in kill {
+            self.kill_idle(entry);
         }
     }
 
     pub fn invalidate_thread(&self, thread_id: &str) {
         let entry = self.lock().remove(thread_id);
         if let Some(entry) = entry {
-            entry.conn.kill();
+            self.kill_idle(entry);
         }
     }
 
@@ -149,13 +165,13 @@ impl IdlePool {
                 .collect();
             for key in stale {
                 if let Some(old) = entries.remove(&key) {
-                    kill.push(old.conn);
+                    kill.push(old);
                     self.expired.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
-        for conn in kill {
-            conn.kill();
+        for entry in kill {
+            self.kill_idle(entry);
         }
     }
 
@@ -178,12 +194,12 @@ impl IdlePool {
                 .collect();
             for key in keys {
                 if let Some(entry) = entries.remove(&key) {
-                    kill.push(entry.conn);
+                    kill.push(entry);
                 }
             }
         }
-        for conn in kill {
-            conn.kill();
+        for entry in kill {
+            self.kill_idle(entry);
         }
     }
 
@@ -199,6 +215,7 @@ impl Drop for IdlePool {
         if let Ok(entries) = self.entries.get_mut() {
             for entry in entries.values() {
                 entry.conn.kill();
+                self.terminals.release_session(&entry.session_id);
             }
         }
     }
