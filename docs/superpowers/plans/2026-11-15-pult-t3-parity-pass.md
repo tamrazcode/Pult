@@ -821,7 +821,6 @@
 - Re-run the existing icon generation script and verify the built exe/taskbar icon at 16/32/48 px.
 
 ### Task 24: Living, theme-colored ASCII background
-
 **Files:** `src/components/chat/NewChatEmptyState.tsx`, `src/components/chat/LivingAscii.tsx` (new), `src/styles/index.css` (keyframes if needed), tests (deterministic math helpers).
 
 **Requirements:**
@@ -830,4 +829,23 @@
 - Pointer/click listeners only on the background layer, not on the composer or text; respect `prefers-reduced-motion` (static but more visible), cap to ~30 fps, use `requestAnimationFrame`, and pause when the tab/window is hidden.
 - Deterministic base field (no flicker); wave state is ephemeral and not persisted.
 - Tests for the pure wave/falloff function (crest brighter than edge, click pulse decays over time).
+
+### Task 25: T3-style Settings navigation with real, working pages
+
+**Files:** `src/routes/settings.tsx`, `src/routes/settings.*.tsx`, `src/stores/settings.ts`, `src/lib/types.ts`, `src/lib/ipc.ts`, `src-tauri/src/ipc/mod.rs` (only if a setting needs backend), tests for each page and the settings store.
+
+**Requirements:**
+- Rebuild the Settings left rail like the reference: a `Search` field with `/` shortcut, grouped nav (`General`, `Appearance`, `Chat`, `Diffs & pull requests`, `Keybindings`; group `Agents`: `Providers`, `Threads`; group `Code`: `Projects`, `Source control`, `Worktrees`) and a local user chip at the bottom (opens General; no fake avatar upload).
+- Search filters the nav live and jumps to the first match on Enter. Every nav item opens a page that actually configures and persists something; do NOT add Voice, Browser, Devices, Scheduled tasks, SnapShots or any other page without a real backing feature.
+- Real settings to implement (persisted via existing settings store/`settings_set`, applied live):
+  - General: desktop notifications on/off (existing), confirm before deleting a thread on/off, default landing route (`/chat` vs last thread).
+  - Chat: default permission mode (Supervised / Auto-edit / Auto / Full access), send key behavior (Enter sends vs Mod+Enter sends), follow streaming output on/off, show message timestamps on/off.
+  - Diffs & pull requests: default diff view (Unified / Split), wrap long diff lines on/off, auto-refresh on window focus on/off.
+  - Agents > Threads: default sidebar filter (All / Active / Unread), default worktree strategy for new projects (root/worktree), auto-settle idle threads after N minutes (applies to thread status; backend timer if needed, otherwise skip rather than fake it).
+  - Code > Projects: list projects with name/folder/strategy, create/edit/delete via the existing dialogs.
+  - Code > Source control: default diff base (HEAD vs worktree), auto-fetch on open, PR checks refresh interval (only if real); skip anything without backend support.
+  - Code > Worktrees: default strategy, worktree root preview, and a list of current worktrees from threads (read-only is fine if actions are not available).
+- The settings store must expose typed getters/setters with defaults; pages read/write through it; changes survive restart. Update the keybindings/defaults docs where relevant.
+- Tests: nav grouping/search filtering, persistence of each setting (round-trip), and that each page renders its controls. Gemini authors the tests; unsupported T3 pages are explicitly omitted from the nav.
+
 
