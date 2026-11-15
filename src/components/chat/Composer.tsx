@@ -725,177 +725,183 @@ export function Composer({ threadId }: { threadId?: string }) {
           <p className="px-1 text-xs text-text-tertiary">Keep typing to queue another message</p>
         </div>
       )}
-      <div className="relative mx-auto w-full max-w-3xl rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
-        {runActive && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-4 top-0 h-px overflow-hidden motion-reduce:hidden"
-          >
-            <div className="h-full w-1/4 rounded-full bg-accent/70 composer-hairline" />
-          </div>
-        )}
-        {mentionOpen && (
-          <div
-            className="absolute bottom-full left-0 mb-2 max-h-56 w-full overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
-            role="listbox"
-            aria-label="Workspace files"
-          >
-            <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">Files</p>
-            {mentionFiles.map((path, i) => (
-              <button
-                key={path}
-                role="option"
-                aria-selected={i === mentionIndex}
-                onClick={() => pickMention(path)}
-                onMouseEnter={() => setMentionIndex(i)}
-                className={`flex w-full items-center px-3 py-1 text-left font-mono text-xs ${
-                  i === mentionIndex ? "bg-hover text-text-primary" : "text-text-secondary"
-                }`}
-              >
-                <span className="truncate">{path}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {slashOpen && threadId && !mentionOpen && (
-          <div
-            className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
-            role="listbox"
-            aria-label="Agent commands"
-          >
-            {slashMatches.map((command, i) => (
-              <button
-                key={command.name}
-                role="option"
-                aria-selected={i === slashIndex}
-                onClick={() => pickSlash(command)}
-                onMouseEnter={() => setSlashIndex(i)}
-                className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left ${
-                  i === slashIndex ? "bg-hover" : ""
-                }`}
-              >
-                <span className="font-mono text-sm text-accent">/{command.name}</span>
-                <span className="truncate text-xs text-text-tertiary">{command.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-        {error && (
-          <div
-            className="border-b border-border-subtle px-4 py-1.5 text-xs text-danger"
-            role="alert"
-          >
-            {error}
-          </div>
-        )}
-        {chips.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-4 pt-3">
-            {chips.map((chip, i) => (
-              <div
-                key={`${chip.preview.slice(-16)}-${i}`}
-                className="group relative h-14 w-14 overflow-hidden rounded-(--radius-md) border border-border-subtle"
-              >
-                <img src={chip.preview} alt="Attached" className="h-full w-full object-cover" />
-                <button
-                  onClick={() => setChips((prev) => prev.filter((_, j) => j !== i))}
-                  aria-label="Remove image"
-                  className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
-                >
-                  <X size={10} />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-        <textarea
-          ref={textareaRef}
-          value={value}
-          onChange={(e) => {
-            const next = e.target.value;
-            setValue(next);
-            setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
-            autosize();
-          }}
-          onKeyDown={onKeyDown}
-          onPaste={(e) => void handlePaste(e)}
-          readOnly={awaitingDecision}
-          rows={1}
-          spellCheck={false}
-          placeholder={
-            awaitingDecision
-              ? "Decision needed — respond to the approval above"
-              : "Ask anything. @ files, / commands"
-          }
-          className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+      <div className="relative mx-auto w-full max-w-3xl">
+        <div
+          aria-hidden
+          className="pointer-events-none absolute -inset-x-1 top-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border border-border-subtle bg-surface-raised"
         />
-        <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
-          {imageCapable ? (
-            <label
-              title="Attach images"
-              aria-label="Attach images"
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+        <div className="relative rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer-lift) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
+          {runActive && (
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-4 top-0 h-px overflow-hidden motion-reduce:hidden"
             >
-              <Paperclip size={15} />
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  void handleAttach(e.target.files);
-                  e.target.value = "";
-                }}
-              />
-            </label>
-          ) : (
-            <span
-              role="img"
-              aria-label="Images are not supported by this agent"
-              title="This agent does not accept images"
-              className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary/40"
-            >
-              <Paperclip size={15} />
-            </span>
+              <div className="h-full w-1/4 rounded-full bg-accent/70 composer-hairline" />
+            </div>
           )}
-          <ModePill threadId={threadId} />
-          <div className="flex-1" />
-          <ProviderModelPicker threadId={threadId} />
-          <ComposerOverflowMenu threadId={threadId} />
-          {runActive ? (
-            value.trim() || chips.length > 0 ? (
-              <button
-                type="button"
-                onClick={handleSend}
-                aria-label="Queue message"
-                title="Queue message"
-                disabled={awaitingDecision || busy}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+          {mentionOpen && (
+            <div
+              className="absolute bottom-full left-0 mb-2 max-h-56 w-full overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+              role="listbox"
+              aria-label="Workspace files"
+            >
+              <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">Files</p>
+              {mentionFiles.map((path, i) => (
+                <button
+                  key={path}
+                  role="option"
+                  aria-selected={i === mentionIndex}
+                  onClick={() => pickMention(path)}
+                  onMouseEnter={() => setMentionIndex(i)}
+                  className={`flex w-full items-center px-3 py-1 text-left font-mono text-xs ${
+                    i === mentionIndex ? "bg-hover text-text-primary" : "text-text-secondary"
+                  }`}
+                >
+                  <span className="truncate">{path}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {slashOpen && threadId && !mentionOpen && (
+            <div
+              className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
+              role="listbox"
+              aria-label="Agent commands"
+            >
+              {slashMatches.map((command, i) => (
+                <button
+                  key={command.name}
+                  role="option"
+                  aria-selected={i === slashIndex}
+                  onClick={() => pickSlash(command)}
+                  onMouseEnter={() => setSlashIndex(i)}
+                  className={`flex w-full items-baseline gap-2 px-3 py-1.5 text-left ${
+                    i === slashIndex ? "bg-hover" : ""
+                  }`}
+                >
+                  <span className="font-mono text-sm text-accent">/{command.name}</span>
+                  <span className="truncate text-xs text-text-tertiary">{command.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {error && (
+            <div
+              className="border-b border-border-subtle px-4 py-1.5 text-xs text-danger"
+              role="alert"
+            >
+              {error}
+            </div>
+          )}
+          {chips.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-4 pt-3">
+              {chips.map((chip, i) => (
+                <div
+                  key={`${chip.preview.slice(-16)}-${i}`}
+                  className="group relative h-14 w-14 overflow-hidden rounded-(--radius-md) border border-border-subtle"
+                >
+                  <img src={chip.preview} alt="Attached" className="h-full w-full object-cover" />
+                  <button
+                    onClick={() => setChips((prev) => prev.filter((_, j) => j !== i))}
+                    aria-label="Remove image"
+                    className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={(e) => {
+              const next = e.target.value;
+              setValue(next);
+              setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
+              autosize();
+            }}
+            onKeyDown={onKeyDown}
+            onPaste={(e) => void handlePaste(e)}
+            readOnly={awaitingDecision}
+            rows={1}
+            spellCheck={false}
+            placeholder={
+              awaitingDecision
+                ? "Decision needed — respond to the approval above"
+                : "Ask anything. @ files, / commands"
+            }
+            className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+          />
+          <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
+            {imageCapable ? (
+              <label
+                title="Attach images"
+                aria-label="Attach images"
+                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
               >
-                <ListPlus size={15} />
-              </button>
+                <Paperclip size={15} />
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    void handleAttach(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </label>
+            ) : (
+              <span
+                role="img"
+                aria-label="Images are not supported by this agent"
+                title="This agent does not accept images"
+                className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary/40"
+              >
+                <Paperclip size={15} />
+              </span>
+            )}
+            <ModePill threadId={threadId} />
+            <div className="flex-1" />
+            <ProviderModelPicker threadId={threadId} />
+            <ComposerOverflowMenu threadId={threadId} />
+            {runActive ? (
+              value.trim() || chips.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={handleSend}
+                  aria-label="Queue message"
+                  title="Queue message"
+                  disabled={awaitingDecision || busy}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+                >
+                  <ListPlus size={15} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStop}
+                  aria-label="Stop run"
+                  title="Stop run"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
+                >
+                  <Square size={11} />
+                </button>
+              )
             ) : (
               <button
                 type="button"
-                onClick={handleStop}
-                aria-label="Stop run"
-                title="Stop run"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
+                onClick={handleSend}
+                aria-label="Send message"
+                title="Send message"
+                disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
               >
-                <Square size={11} />
+                <ArrowUp size={14} />
               </button>
-            )
-          ) : (
-            <button
-              type="button"
-              onClick={handleSend}
-              aria-label="Send message"
-              title="Send message"
-              disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
-            >
-              <ArrowUp size={14} />
-            </button>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>

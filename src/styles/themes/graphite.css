@@ -29,4 +29,7 @@
   --composer-blur: 16px;
   --composer-tint: rgba(22, 22, 22, 0.8);
   --shadow-composer: 0 14px 32px -18px rgb(0 0 0 / 75%);
+  --shadow-composer-lift:
+    0 1px 0 rgb(255 255 255 / 8%) inset, 0 22px 40px -18px rgb(0 0 0 / 90%),
+    0 6px 14px -8px rgb(0 0 0 / 80%);
 }
