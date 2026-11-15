@@ -42,6 +42,10 @@ interface UiState {
   selectedInstanceId: string | null;
   /** ⌘K command palette visibility (§6.7) — opened from hotkeys and buttons. */
   paletteOpen: boolean;
+  /** One-shot text handed to the composer (Branch from a message). */
+  composerPrefill: string | null;
+  /** Thread the UI should open after a Branch action. */
+  pendingThreadId: string | null;
   /** Diagnostics ring: last process events per instance (M6). */
   processEvents: Record<string, { at: number; kind: string; detail?: string | null }[]>;
   /** Latest unrecovered app-level error (§8 M7 error states). */
@@ -53,6 +57,8 @@ interface UiState {
   toggleRightPanel: () => void;
   setRightPanelTab: (tab: RightPanelTab) => void;
   setPaletteOpen: (open: boolean) => void;
+  setComposerPrefill: (text: string | null) => void;
+  setPendingThread: (threadId: string | null) => void;
   setSidebarWidth: (width: number, persist?: boolean) => void;
   setRightPanelWidth: (width: number, persist?: boolean) => void;
   setSelectedInstanceId: (instanceId: string | null) => void;
@@ -140,6 +146,8 @@ export const useUiStore = create<UiState>((set) => ({
   selectedInstanceId: null,
   instanceByThread: {},
   paletteOpen: false,
+  composerPrefill: null,
+  pendingThreadId: null,
   processEvents: {},
   globalError: null,
   toggleSidebar: () =>
@@ -171,6 +179,8 @@ export const useUiStore = create<UiState>((set) => ({
       sidebarOpen: isNarrowViewport() ? false : s.sidebarOpen,
     })),
   setPaletteOpen: (paletteOpen) => set({ paletteOpen }),
+  setComposerPrefill: (composerPrefill) => set({ composerPrefill }),
+  setPendingThread: (pendingThreadId) => set({ pendingThreadId }),
   setSidebarWidth: (width, persist = false) => {
     const sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
     set({ sidebarWidth });

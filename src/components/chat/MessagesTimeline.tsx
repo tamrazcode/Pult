@@ -7,6 +7,7 @@ import {
   ChevronRight,
   Copy,
   Eye,
+  GitBranch,
   Globe,
   Layers,
   MessageSquare,
@@ -23,6 +24,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { ipcErrorMessage, runsDispatch } from "../../lib/ipc";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
+import { useThreadsStore } from "../../stores/threads";
+import { useSettingsStore } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
 import type {
   ApprovalRequest,
@@ -95,6 +98,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
   const [activeHistoryKey, setActiveHistoryKey] = useState<string | null>(null);
+  const followStreaming = useSettingsStore((s) => s.followStreaming);
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
 
@@ -108,13 +112,13 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
   // Follow the stream: scroll only while pinned to the bottom, in a frame.
   useEffect(() => {
-    if (!isAtBottomRef.current) return;
+    if (!followStreaming || !isAtBottomRef.current) return;
     const frame = requestAnimationFrame(() => {
       // The reader may have scrolled up while the frame was pending.
       if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
     });
     return () => cancelAnimationFrame(frame);
-  }, [view]);
+  }, [view, followStreaming]);
 
   // Markdown's trailing throttle can grow the DOM between events; keep the
   // view pinned when the reader has not scrolled away.
@@ -122,14 +126,14 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     const content = scrollRef.current?.firstElementChild;
     if (!content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
-      if (!isAtBottomRef.current) return;
+      if (!followStreaming || !isAtBottomRef.current) return;
       requestAnimationFrame(() => {
         if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
       });
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [threadId, hasView, entries.length]);
+  }, [threadId, hasView, entries.length, followStreaming]);
 
   if (!threadId || !view) return <EmptyState />;
 
@@ -248,9 +252,11 @@ const ChatItemRow = memo(
   function ChatItemRow({ item, showCaret }: { item: ChatItem; showCaret: boolean }) {
     switch (item.type) {
       case "user":
-        return <UserRow text={item.text} images={item.images} />;
+        return <UserRow text={item.text} images={item.images} ts={item.ts} />;
       case "assistant":
-        return <TextRow text={item.text} streaming={item.streaming} showCaret={showCaret} />;
+        return (
+          <TextRow text={item.text} streaming={item.streaming} showCaret={showCaret} ts={item.ts} />
+        );
       case "thought":
         return <ThoughtGroup item={item} streaming={item.streaming && showCaret} />;
       case "tool":
@@ -371,9 +377,92 @@ function Caret({ show }: { show: boolean }) {
   );
 }
 
-function UserRow({ text, images }: { text: string; images: { data: string; mimeType: string }[] }) {
+function formatTime(ts: number | undefined): string | null {
+  if (!ts) return null;
+  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Hover row under a message: copy, branch into a new thread, timestamp. */
+function MessageActions({
+  text,
+  ts,
+  align,
+}: {
+  text: string;
+  ts?: number;
+  align: "left" | "right";
+}) {
+  const [copied, setCopied] = useState(false);
+  const showTimestamps = useSettingsStore((s) => s.showTimestamps);
+  const time = showTimestamps ? formatTime(ts) : null;
+  const copy = () => {
+    void navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => undefined);
+  };
+  const branch = () => {
+    const threads = useThreadsStore.getState();
+    const thread = threads.threads.find((candidate) => candidate.id === threads.activeThreadId);
+    if (!thread) return;
+    void threads
+      .createThread(thread.projectId ?? null, `Branch: ${text.slice(0, 48)}`, {
+        workspace: thread.workspace,
+        worktree: false,
+      })
+      .then(async (next) => {
+        // The message text seeds the branch's first turn; transcript history
+        // stays in the source thread.
+        useUiStore.getState().setComposerPrefill(text);
+        useUiStore.getState().setPendingThread(next.id);
+      })
+      .catch((err) =>
+        useUiStore.getState().setGlobalError({ kind: "storage", message: ipcErrorMessage(err) }),
+      );
+  };
   return (
-    <div className="flex justify-end">
+    <div
+      className={`flex items-center gap-0.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100 ${
+        align === "right" ? "justify-end" : "justify-start"
+      }`}
+    >
+      <button
+        type="button"
+        aria-label="Copy message"
+        title="Copy"
+        onClick={copy}
+        className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+      <button
+        type="button"
+        aria-label="Branch from message"
+        title="Branch from message"
+        onClick={branch}
+        className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+      >
+        <GitBranch size={12} />
+      </button>
+      {time && <span className="px-1 text-xs text-text-tertiary tabular-nums">{time}</span>}
+    </div>
+  );
+}
+
+function UserRow({
+  text,
+  images,
+  ts,
+}: {
+  text: string;
+  images: { data: string; mimeType: string }[];
+  ts?: number;
+}) {
+  return (
+    <div className="group flex justify-end">
       <div className="flex max-w-[75%] flex-col items-end gap-2">
         {images.length > 0 && (
           <div className="flex flex-wrap justify-end gap-2">
@@ -392,6 +481,7 @@ function UserRow({ text, images }: { text: string; images: { data: string; mimeT
             {text}
           </div>
         )}
+        <MessageActions text={text} ts={ts} align="right" />
       </div>
     </div>
   );
@@ -401,15 +491,20 @@ function TextRow({
   text,
   streaming,
   showCaret,
+  ts,
 }: {
   text: string;
   streaming: boolean;
   showCaret: boolean;
+  ts?: number;
 }) {
   return (
-    <div className="md text-base text-text-primary">
-      <Markdown text={text} streaming={streaming} />
-      {streaming && showCaret && <Caret show />}
+    <div className="group">
+      <div className="md text-base text-text-primary">
+        <Markdown text={text} streaming={streaming} />
+        {streaming && showCaret && <Caret show />}
+      </div>
+      {!streaming && <MessageActions text={text} ts={ts} align="left" />}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import { useGitStore } from "../../stores/git";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
+import { useSettingsStore } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
 import type {
   CommandInfo,
@@ -198,11 +199,21 @@ export function Composer({ threadId }: { threadId?: string }) {
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const instances = useUiStore((s) => s.instances);
   const paletteOpen = useUiStore((s) => s.paletteOpen);
+  const composerPrefill = useUiStore((s) => s.composerPrefill);
   const activeElicitation = useRunsStore((s) => s.activeElicitation);
   const commands = useRunsStore((s) => (threadId ? s.commandsByThread[threadId] : undefined));
   const queue = useRunsStore((s) => (threadId ? s.queueByThread[threadId] : undefined));
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const activeRun = activeRunForThread(runs);
+  const sendKey = useSettingsStore((s) => s.sendKey);
+
+  // A Branch action hands the message text over once; consume it here.
+  useEffect(() => {
+    if (!composerPrefill) return;
+    setValue(composerPrefill);
+    useUiStore.getState().setComposerPrefill(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [composerPrefill]);
 
   // Reopening a thread restores the provider it last used; a stale send error
   // from another thread must not leak into this composer.
@@ -595,7 +606,9 @@ export function Composer({ threadId }: { threadId?: string }) {
       }
     }
     if (e.key === "Enter" && !e.shiftKey) {
-      // Plain Enter sends (standard chat UX); Shift+Enter is the newline.
+      const shouldSend = sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey;
+      if (!shouldSend) return;
+      // Enter sends (default); Shift+Enter is always a newline.
       e.preventDefault();
       handleSend();
     }

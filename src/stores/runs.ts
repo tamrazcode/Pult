@@ -36,12 +36,16 @@ export interface UserChatItem {
   type: "user";
   text: string;
   images: ImageInput[];
+  /** Event timestamp (ms) for the hover timestamp. */
+  ts?: number;
 }
 
 export interface AssistantChatItem {
   type: "assistant";
   text: string;
   streaming: boolean;
+  /** Event timestamp (ms) for the hover timestamp. */
+  ts?: number;
 }
 
 export interface ThoughtChatItem {
@@ -180,7 +184,7 @@ function appendTextDelta(
   return [
     ...closed,
     type === "assistant"
-      ? { type: "assistant", text: delta, streaming: true }
+      ? { type: "assistant", text: delta, streaming: true, ts }
       : { type: "thought", text: delta, streaming: true, startedAt: ts, endedAt: ts },
   ];
 }
@@ -219,7 +223,12 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         ...view,
         items: [
           ...view.items,
-          { type: "user", text: event.payload.text, images: event.payload.images },
+          {
+            type: "user",
+            text: event.payload.text,
+            images: event.payload.images,
+            ts: event.ts,
+          },
         ],
       };
 

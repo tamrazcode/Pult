@@ -10,6 +10,7 @@ import {
   providersPreflight,
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
+import { preflightInstances, readCachedChecks } from "../lib/providerChecks";
 import { useUiStore } from "../stores/ui";
 import { ConnectRow } from "../components/settings/AgentConnect";
 import { SignInActions } from "../components/settings/SignInActions";
@@ -137,7 +138,40 @@ function ProvidersSettings() {
   };
 
   useEffect(() => {
-    void reload().catch((err) => setSaveError(ipcErrorMessage(err)));
+    const cached = readCachedChecks();
+    const seeded: Record<string, PreflightReport> = {};
+    for (const [id, check] of Object.entries(cached)) seeded[id] = check.report;
+    if (Object.keys(seeded).length > 0) setReports(seeded);
+    if (!isTauri()) {
+      setLoaded(true);
+      return;
+    }
+    void (async () => {
+      try {
+        const list = await providersInstancesList();
+        setInstances(list);
+        setDetected(await providersDetectInstalled());
+        await useUiStore.getState().loadInstances();
+        setLoaded(true);
+        setSelectedId((sel) =>
+          sel && list.some((i) => i.id === sel) ? sel : (list[0]?.id ?? null),
+        );
+        const enabled = list.filter((instance) => instance.enabled);
+        if (enabled.length > 0) {
+          setChecking(Object.fromEntries(enabled.map((instance) => [instance.id, true])));
+          const results = await preflightInstances(list);
+          setReports(
+            Object.fromEntries(Object.entries(results).map(([id, check]) => [id, check.report])),
+          );
+          setChecking({});
+          const refreshed = await providersInstancesList();
+          setInstances(refreshed);
+        }
+      } catch (err) {
+        setSaveError(ipcErrorMessage(err));
+        setLoaded(true);
+      }
+    })();
   }, []);
 
   const selected = useMemo(

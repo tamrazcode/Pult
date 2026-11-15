@@ -90,7 +90,9 @@ describe("applyRunEvent", () => {
     view = applyRunEvent(view, messageDelta("Hel"));
     view = applyRunEvent(view, messageDelta("lo, "));
     view = applyRunEvent(view, messageDelta("world"));
-    expect(view.items).toEqual([{ type: "assistant", text: "Hello, world", streaming: true }]);
+    expect(view.items).toEqual([
+      { type: "assistant", text: "Hello, world", streaming: true, ts: 1_700_000_000_000 },
+    ]);
     expect(view.streaming).toBe(true);
   });
 
@@ -172,7 +174,9 @@ describe("applyRunEvent", () => {
   it("inserts a user bubble on user_message", () => {
     let view = emptyRunView(true);
     view = applyRunEvent(view, userMessage("fix the bug"));
-    expect(view.items).toEqual([{ type: "user", text: "fix the bug", images: [] }]);
+    expect(view.items).toEqual([
+      { type: "user", text: "fix the bug", images: [], ts: 1_700_000_000_000 },
+    ]);
   });
 
   it("builds a compaction divider from chunks and status updates", () => {

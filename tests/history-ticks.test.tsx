@@ -108,7 +108,7 @@ describe("MessagesTimeline HistoryTicks integration", () => {
     });
 
     const { rerender } = render(<MessagesTimeline threadId="th" />);
-    expect(screen.queryAllByRole("button")).toHaveLength(0);
+    expect(screen.queryAllByLabelText(/Prompt/)).toHaveLength(0);
 
     act(() => {
       useRunsStore.setState({
@@ -144,7 +144,7 @@ describe("MessagesTimeline HistoryTicks integration", () => {
     expect(screen.getByRole("button", { name: "Prompt two" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Prompt three" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Reply/ })).toBeNull();
-    expect(screen.getAllByRole("button")).toHaveLength(3);
+    expect(screen.getAllByLabelText(/Prompt/)).toHaveLength(3);
   });
 
   it("shows trimmed first 80 chars of user message when hovering or focusing its tick", () => {

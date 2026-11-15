@@ -1,13 +1,16 @@
-import { useEffect } from "react";
-import { Outlet, createRootRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import { Outlet, createRootRoute, useRouter } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { RightPanel } from "../components/layout/RightPanel";
 import { ElicitationModal } from "../components/chat/ElicitationModal";
 import { CommandPalette, useGlobalHotkeys } from "../components/ui/CommandPalette";
 import { ErrorBanner, RouteErrorCard } from "../components/ui/ErrorBanner";
+import { ContextMenu, type ContextMenuItem } from "../components/ui/ContextMenu";
 import { FpsOverlay } from "../components/ui/FpsOverlay";
 import { ResizeHandle } from "../components/ui/ResizeHandle";
-import { runsRespondElicitation } from "../lib/ipc";
+import { openExternalUrl, runsRespondElicitation } from "../lib/ipc";
+import { preflightInstances } from "../lib/providerChecks";
+import { isTauri } from "../lib/tauri";
 import { useRunsStore } from "../stores/runs";
 import { hydrateLayout, useUiStore } from "../stores/ui";
 
@@ -32,9 +35,35 @@ function RootLayout() {
   const paletteOpen = useUiStore((s) => s.paletteOpen);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   const activeElicitation = useRunsStore((s) => s.activeElicitation);
+  const pendingThreadId = useUiStore((s) => s.pendingThreadId);
+  const router = useRouter();
   useGlobalHotkeys(() => setPaletteOpen(true));
+
+  useEffect(() => {
+    if (!pendingThreadId) return;
+    useUiStore.getState().setPendingThread(null);
+    void router.navigate({ to: "/thread/$threadId", params: { threadId: pendingThreadId } });
+  }, [pendingThreadId, router]);
   useEffect(() => {
     void hydrateLayout();
+  }, []);
+
+  // Connection status is a startup chore, not a button: probe enabled providers
+  // in the background and let Settings show the cached result instantly.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    void (async () => {
+      await useUiStore
+        .getState()
+        .loadInstances()
+        .catch(() => undefined);
+      if (cancelled) return;
+      await preflightInstances(useUiStore.getState().instances).catch(() => undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Shrinking the window with both side rails open must not crush the chat.
@@ -49,8 +78,114 @@ function RootLayout() {
     return () => window.removeEventListener("resize", onResize);
   }, [sidebarOpen, rightPanelOpen]);
 
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    items: Array<ContextMenuItem | "separator">;
+  } | null>(null);
+
+  // Kill the WebView's default right-click menu everywhere; show a real one
+  // only where a real action exists (editable text, selected text, links).
+  const openContextMenu = (event: React.MouseEvent) => {
+    if (event.defaultPrevented) return;
+    event.preventDefault();
+    const target = event.target as HTMLElement;
+    const field = target.closest<HTMLInputElement | HTMLTextAreaElement>(
+      "input, textarea, [contenteditable='true']",
+    );
+    const selection = window.getSelection()?.toString() ?? "";
+    const items: Array<ContextMenuItem | "separator"> = [];
+    const mod = navigator.platform.toLowerCase().includes("mac") ? "⌘" : "Ctrl+";
+
+    if (field) {
+      const start = "selectionStart" in field ? (field.selectionStart ?? 0) : 0;
+      const end = "selectionEnd" in field ? (field.selectionEnd ?? 0) : 0;
+      const hasSelection = start !== end || selection.length > 0;
+      const refocus = () => {
+        field.focus();
+        if ("setSelectionRange" in field) field.setSelectionRange(start, end);
+      };
+      items.push(
+        {
+          id: "cut",
+          label: "Cut",
+          shortcut: `${mod}X`,
+          disabled: !hasSelection || field.readOnly,
+          onSelect: () => {
+            refocus();
+            document.execCommand("cut");
+          },
+        },
+        {
+          id: "copy",
+          label: "Copy",
+          shortcut: `${mod}C`,
+          disabled: !hasSelection,
+          onSelect: () => {
+            refocus();
+            document.execCommand("copy");
+          },
+        },
+        {
+          id: "paste",
+          label: "Paste",
+          shortcut: `${mod}V`,
+          disabled: field.readOnly,
+          onSelect: () => {
+            void navigator.clipboard
+              .readText()
+              .then((text) => {
+                refocus();
+                document.execCommand("insertText", false, text);
+              })
+              .catch(() => undefined);
+          },
+        },
+        {
+          id: "select-all",
+          label: "Select All",
+          shortcut: `${mod}A`,
+          onSelect: () => {
+            field.focus();
+            field.select();
+          },
+        },
+      );
+    } else if (selection) {
+      items.push({
+        id: "copy-selection",
+        label: "Copy",
+        shortcut: `${mod}C`,
+        onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
+      });
+    } else {
+      const link = target.closest<HTMLAnchorElement>("a[href^='http']");
+      if (link?.href) {
+        items.push({
+          id: "open-link",
+          label: "Open link",
+          onSelect: () => void openExternalUrl(link.href).catch(() => undefined),
+        });
+        items.push({
+          id: "copy-link",
+          label: "Copy link",
+          onSelect: () => void navigator.clipboard.writeText(link.href).catch(() => undefined),
+        });
+      }
+    }
+
+    if (items.length === 0) {
+      setContextMenu(null);
+      return;
+    }
+    setContextMenu({ x: event.clientX, y: event.clientY, items });
+  };
+
   return (
-    <div className="relative flex h-screen flex-col overflow-hidden bg-canvas text-text-primary">
+    <div
+      className="relative flex h-screen flex-col overflow-hidden bg-canvas text-text-primary"
+      onContextMenu={openContextMenu}
+    >
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
           <>
@@ -98,6 +233,14 @@ function RootLayout() {
         />
       )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
       <ErrorBanner />
       <FpsOverlay />
     </div>

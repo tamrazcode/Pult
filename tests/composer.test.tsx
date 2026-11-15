@@ -663,7 +663,7 @@ describe("composer", () => {
     expect(ariaLabel).toContain("Sonnet 4");
     expect(ariaLabel).toContain("High");
 
-    expect(trigger.querySelector('svg[data-provider-logo="claude"]')).toBeTruthy();
+    expect(trigger.querySelector('[data-provider-logo="claude"]')).toBeTruthy();
     expect(within(trigger).getByText("Sonnet 4")).toBeTruthy();
     const reasoningSpan = within(trigger).getByText("High");
     expect(reasoningSpan.className).toContain("text-text-tertiary");
@@ -705,10 +705,10 @@ describe("composer", () => {
         />
       </>,
     );
-    expect(container.querySelector('svg[data-provider-logo="claude"]')).toBeTruthy();
-    expect(container.querySelector('svg[data-provider-logo="codex"]')).toBeTruthy();
-    expect(container.querySelector('svg[data-provider-logo="gemini"]')).toBeTruthy();
-    expect(container.querySelector('svg[data-provider-logo="opencode"]')).toBeTruthy();
+    expect(container.querySelector('[data-provider-logo="claude"]')).toBeTruthy();
+    expect(container.querySelector('[data-provider-logo="codex"]')).toBeTruthy();
+    expect(container.querySelector('[data-provider-logo="gemini"]')).toBeTruthy();
+    expect(container.querySelector('[data-provider-logo="opencode"]')).toBeTruthy();
   });
 
   it("handles boolean reasoning option with Off/On trigger text and radiogroup toggle", () => {

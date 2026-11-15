@@ -17,8 +17,11 @@ import { Route as UsageRouteImport } from './routes/usage'
 import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as SettingsAboutRouteImport } from './routes/settings.about'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
+import { Route as SettingsChatRouteImport } from './routes/settings.chat'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
+import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as ThreadThreadIdRouteImport } from './routes/thread.$threadId'
 
@@ -62,14 +65,29 @@ const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   path: '/appearance',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsChatRoute = SettingsChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   id: '/diagnostics',
   path: '/diagnostics',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
+  id: '/general',
+  path: '/general',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   id: '/keybindings',
   path: '/keybindings',
+  getParentRoute: () => SettingsRoute,
+} as any)
+const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
   getParentRoute: () => SettingsRoute,
 } as any)
 const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
@@ -92,8 +110,11 @@ export interface FileRoutesByFullPath {
   '/welcome': typeof WelcomeRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
 }
@@ -106,8 +127,11 @@ export interface FileRoutesByTo {
   '/welcome': typeof WelcomeRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
 }
@@ -121,8 +145,11 @@ export interface FileRoutesById {
   '/welcome': typeof WelcomeRoute
   '/settings/about': typeof SettingsAboutRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
+  '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
 }
@@ -137,8 +164,11 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/settings/about'
     | '/settings/appearance'
+    | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
   fileRoutesByTo: FileRoutesByTo
@@ -151,8 +181,11 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/settings/about'
     | '/settings/appearance'
+    | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
   id:
@@ -165,8 +198,11 @@ export interface FileRouteTypes {
     | '/welcome'
     | '/settings/about'
     | '/settings/appearance'
+    | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
   fileRoutesById: FileRoutesById
@@ -239,6 +275,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsAppearanceRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/chat': {
+      id: '/settings/chat'
+      path: '/chat'
+      fullPath: '/settings/chat'
+      preLoaderRoute: typeof SettingsChatRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/diagnostics': {
       id: '/settings/diagnostics'
       path: '/diagnostics'
@@ -246,11 +289,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsDiagnosticsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/general': {
+      id: '/settings/general'
+      path: '/general'
+      fullPath: '/settings/general'
+      preLoaderRoute: typeof SettingsGeneralRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/keybindings': {
       id: '/settings/keybindings'
       path: '/keybindings'
       fullPath: '/settings/keybindings'
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
+    '/settings/projects': {
+      id: '/settings/projects'
+      path: '/projects'
+      fullPath: '/settings/projects'
+      preLoaderRoute: typeof SettingsProjectsRouteImport
       parentRoute: typeof SettingsRoute
     }
     '/settings/providers': {
@@ -273,16 +330,22 @@ declare module '@tanstack/react-router' {
 interface SettingsRouteChildren {
   SettingsAboutRoute: typeof SettingsAboutRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
+  SettingsChatRoute: typeof SettingsChatRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
 }
 
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAboutRoute: SettingsAboutRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsChatRoute: SettingsChatRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
 }
 

@@ -1,6 +1,15 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { Check, ChevronDown, Layers, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Layers,
+  Plus,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Star,
+} from "lucide-react";
 import { runsSetConfigOption, runsSetMode, runsSetPermissionMode } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import type {
@@ -300,28 +309,12 @@ function BooleanOptionPill({
   );
 }
 
-const STATUS_DOT_CLASSES: Record<InstanceInfo["status"], string> = {
-  stopped: "bg-text-tertiary",
-  starting: "bg-text-tertiary",
-  running: "bg-success",
-  crashed: "bg-danger",
-  needs_auth: "bg-warning",
-};
-
 /**
  * Controls that parameterize the NEXT message (§6.1 composer control bar):
  * which agent runs it, in which session mode, with how much freedom. They
  * live beside the composer — not in the header — because that is where the
  * decision happens: write → pick who/how → send.
  */
-
-/** Short provider origin for the picker's right badge (T3-style rows). */
-function providerLabel(inst: { driver: string; command: string; args: string[] }): string {
-  if (inst.driver === "mock") return "built-in";
-  const pkg = inst.args.find((a) => a.includes("@") || a.includes("/") || a.includes(".mjs"));
-  if (pkg) return pkg.split("/").pop() ?? pkg;
-  return inst.command.replace(/\.(exe|cmd|bat)$/i, "");
-}
 
 /**
  * One composer popover for provider, model and reasoning. The trigger keeps
@@ -341,12 +334,17 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const setSelectedInstanceId = useUiStore((s) => s.setSelectedInstanceId);
   const loadInstances = useUiStore((s) => s.loadInstances);
   const [open, setOpen] = useState(false);
+  const [modelQuery, setModelQuery] = useState("");
   const rootRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   useEffect(() => {
     if (isTauri()) void loadInstances();
   }, [loadInstances]);
+
+  useEffect(() => {
+    if (!open) setModelQuery("");
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -400,21 +398,15 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     // Stay open: provider, model and reasoning are one decision.
   };
 
-  const modelRow = (item: SessionConfigSelectOption) => (
-    <button
-      key={item.value}
-      type="button"
-      onClick={() => modelOption && pickConfig(modelOption.id, item.value)}
-      aria-pressed={item.value === modelValue}
-      className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
-    >
-      <span className="min-w-0 flex-1 truncate">{item.name}</span>
-      {item.value === modelValue && <Check size={12} className="shrink-0 text-accent" />}
-    </button>
-  );
-
   const providers = instances.filter((inst) => inst.enabled || inst.id === selected?.id);
   const ariaLabel = `${selected?.displayName ?? "No agent"} · ${modelLabel}${reasoningLabel ? ` · ${reasoningLabel}` : ""}`;
+  const favoriteModels = useSettingsStore((s) => s.favoriteModels);
+  const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel);
+  const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
+  const modelItems = modelOption ? flattenSelectOptions(modelOption.options) : [];
+  const visibleModels = modelItems.filter((item) =>
+    item.name.toLowerCase().includes(modelQuery.trim().toLowerCase()),
+  );
 
   return (
     <div ref={rootRef} className="relative min-w-0">
@@ -444,105 +436,173 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             data-composer-submenu
             role="dialog"
             aria-label="Provider, model, and reasoning"
-            className="absolute right-0 bottom-full z-50 mb-2 max-h-[min(70vh,560px)] w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+            onKeyDown={(event) => {
+              if (!modelOption || !(event.ctrlKey || event.metaKey)) return;
+              const index = Number(event.key) - 1;
+              if (!Number.isInteger(index) || index < 0 || index >= visibleModels.length) return;
+              event.preventDefault();
+              pickConfig(modelOption.id, visibleModels[index].value);
+            }}
+            className="absolute right-0 bottom-full z-50 mb-2 max-h-[min(70vh,560px)] w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
           >
-            <section className="border-b border-border-subtle pb-1">
-              <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                Provider
-              </p>
-              {providers.length === 0 ? (
-                <p className="px-3 py-2 text-xs text-text-tertiary">No agent instances detected</p>
-              ) : (
-                providers.map((inst) => (
-                  <button
-                    key={inst.id}
-                    type="button"
-                    onClick={() => switchProvider(inst)}
-                    aria-pressed={inst.id === selected?.id}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
-                  >
-                    <ProviderLogo instance={inst} />
-                    <span className="min-w-0 flex-1 truncate">{inst.displayName}</span>
-                    <span className="shrink-0 rounded-full bg-active px-1.5 text-xs text-text-tertiary">
-                      {providerLabel(inst)}
-                    </span>
-                    <span
-                      className={`h-1.5 w-1.5 shrink-0 rounded-full ${STATUS_DOT_CLASSES[inst.status]}`}
-                    />
-                    {inst.id === selected?.id && (
-                      <Check size={12} className="shrink-0 text-accent" />
-                    )}
-                  </button>
-                ))
-              )}
-            </section>
-
-            <section className="border-b border-border-subtle pb-1">
-              <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                Model
-              </p>
-              {modelOption ? (
-                isGroupedSelectOptions(modelOption.options) ? (
-                  modelOption.options.map((group) => (
-                    <Fragment key={group.group}>
-                      <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">
-                        {group.name}
-                      </p>
-                      {group.options.map(modelRow)}
-                    </Fragment>
-                  ))
+            <div className="border-b border-border-subtle px-2 py-1.5">
+              <p className="sr-only">Provider</p>
+              <div className="flex items-center gap-1">
+                {providers.length === 0 ? (
+                  <p className="px-1 py-1 text-xs text-text-tertiary">
+                    No agent instances detected
+                  </p>
                 ) : (
-                  modelOption.options.map(modelRow)
+                  providers.map((inst) => (
+                    <button
+                      key={inst.id}
+                      type="button"
+                      title={inst.displayName}
+                      aria-label={inst.displayName}
+                      aria-pressed={inst.id === selected?.id}
+                      onClick={() => switchProvider(inst)}
+                      className={`flex h-7 w-7 items-center justify-center rounded-md transition ${
+                        inst.id === selected?.id
+                          ? "bg-active ring-1 ring-accent/50"
+                          : "hover:bg-hover"
+                      }`}
+                    >
+                      <ProviderLogo instance={inst} className="h-4 w-4" />
+                    </button>
+                  ))
+                )}
+                <span className="flex-1" />
+                <button
+                  type="button"
+                  aria-label="Add provider"
+                  title="Add provider"
+                  onClick={() => {
+                    setOpen(false);
+                    void router.navigate({ to: "/settings/providers" });
+                  }}
+                  className="flex h-7 w-7 items-center justify-center rounded-md text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                >
+                  <Plus size={14} />
+                </button>
+              </div>
+            </div>
+
+            {modelOption && modelItems.length > 0 && (
+              <div className="relative border-b border-border-subtle px-2 py-1.5">
+                <p className="sr-only">Model</p>
+                <Search
+                  size={12}
+                  className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-text-tertiary"
+                />
+                <input
+                  value={modelQuery}
+                  onChange={(event) => setModelQuery(event.target.value)}
+                  placeholder="Search models…"
+                  aria-label="Search models"
+                  className="h-7 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-6 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+                />
+              </div>
+            )}
+
+            <div className="py-1">
+              {modelOption ? (
+                visibleModels.length === 0 ? (
+                  <p className="px-3 py-2 text-xs text-text-tertiary">No models match</p>
+                ) : (
+                  visibleModels.map((item, index) => {
+                    const active = item.value === modelValue;
+                    const favorite = favorites.includes(item.value);
+                    return (
+                      <div
+                        key={item.value}
+                        className="group flex items-center gap-1 px-2 transition hover:bg-hover"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => modelOption && pickConfig(modelOption.id, item.value)}
+                          aria-pressed={active}
+                          className="flex min-w-0 flex-1 items-center gap-2 px-1 py-1.5 text-left text-sm text-text-secondary"
+                        >
+                          <span className="min-w-0 flex-1 truncate">{item.name}</span>
+                          {active && <Check size={12} className="shrink-0 text-accent" />}
+                        </button>
+                        {index < 9 && (
+                          <span className="shrink-0 rounded-(--radius-sm) bg-active px-1.5 py-0.5 text-xs text-text-tertiary">
+                            Ctrl {index + 1}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          aria-label={favorite ? "Unfavorite model" : "Favorite model"}
+                          title={favorite ? `Unfavorite ${item.name}` : `Favorite ${item.name}`}
+                          onClick={() => selected && toggleFavoriteModel(selected.id, item.value)}
+                          className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-active ${
+                            favorite ? "text-warning" : "text-text-tertiary"
+                          }`}
+                        >
+                          <Star size={11} fill={favorite ? "currentColor" : "none"} />
+                        </button>
+                      </div>
+                    );
+                  })
                 )
               ) : (
                 <p className="px-3 py-2 text-xs text-text-tertiary">
                   Default model (provider-managed)
                 </p>
               )}
-            </section>
+            </div>
 
             {reasoningOptions.length > 0 && (
-              <section className="border-b border-border-subtle pb-2">
-                <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                  Reasoning
-                </p>
+              <section className="border-t border-border-subtle px-3 py-2">
+                <p className="sr-only">Reasoning</p>
                 {reasoningOptions.map((option) => {
                   const value = pickerConfigValue(option, activeRun, liveOptions, desired);
+                  const values =
+                    option.type === "boolean"
+                      ? [
+                          { value: false as ConfigOptionValue, name: "Off" },
+                          { value: true as ConfigOptionValue, name: "On" },
+                        ]
+                      : flattenSelectOptions(option.options).map((item) => ({
+                          value: item.value as ConfigOptionValue,
+                          name: item.name,
+                        }));
                   return (
-                    <div key={option.id} className="px-3 pb-1">
-                      {option.name.toLowerCase() !== "reasoning" && (
-                        <p className="pt-1 pb-1 text-xs text-text-secondary">{option.name}</p>
-                      )}
+                    <div key={option.id} className="pb-1">
+                      <div className="flex items-center justify-between pb-2">
+                        <span className="text-xs text-text-tertiary">Select effort</span>
+                      </div>
                       <div
                         role="radiogroup"
                         aria-label={option.name}
-                        className="flex flex-wrap gap-1"
+                        className="relative flex items-start justify-between px-1"
                       >
-                        {option.type === "boolean"
-                          ? [false, true].map((candidate) => (
-                              <button
-                                key={String(candidate)}
-                                type="button"
-                                role="radio"
-                                aria-checked={value === candidate}
-                                onClick={() => pickConfig(option.id, candidate)}
-                                className={reasoningPillClass(value === candidate)}
-                              >
-                                {candidate ? "On" : "Off"}
-                              </button>
-                            ))
-                          : flattenSelectOptions(option.options).map((item) => (
-                              <button
-                                key={item.value}
-                                type="button"
-                                role="radio"
-                                aria-checked={value === item.value}
-                                onClick={() => pickConfig(option.id, item.value)}
-                                className={reasoningPillClass(value === item.value)}
-                              >
-                                {item.name}
-                              </button>
-                            ))}
+                        <span
+                          aria-hidden
+                          className="absolute top-1.5 right-2 left-2 h-px bg-border-strong"
+                        />
+                        {values.map((candidate) => (
+                          <span
+                            key={String(candidate.value)}
+                            className="relative z-10 flex flex-col items-center gap-1"
+                          >
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-label={candidate.name}
+                              aria-checked={value === candidate.value}
+                              title={candidate.name}
+                              onClick={() => pickConfig(option.id, candidate.value)}
+                              className={`h-3 w-3 rounded-full border transition ${
+                                value === candidate.value
+                                  ? "border-accent bg-accent"
+                                  : "border-border-strong bg-surface hover:bg-hover"
+                              }`}
+                            />
+                            <span className="text-xs text-text-tertiary">{candidate.name}</span>
+                          </span>
+                        ))}
                       </div>
                     </div>
                   );
@@ -556,7 +616,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                 setOpen(false);
                 void router.navigate({ to: "/settings/providers" });
               }}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+              className="flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 text-left text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               Manage providers…
             </button>
@@ -572,14 +632,6 @@ function reasoningLabelFor(option: SessionConfigOption, value: ConfigOptionValue
   return (
     flattenSelectOptions(option.options).find((item) => item.value === value)?.name ?? String(value)
   );
-}
-
-function reasoningPillClass(active: boolean): string {
-  return `rounded-(--radius-sm) border px-2 py-0.5 text-xs transition ${
-    active
-      ? "border-accent/50 bg-accent/10 text-text-primary"
-      : "border-border-subtle bg-surface text-text-tertiary hover:bg-hover hover:text-text-secondary"
-  }`;
 }
 
 export function AgentModePicker({ threadId }: { threadId?: string }) {

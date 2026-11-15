@@ -16,6 +16,7 @@ import { isTauri } from "../../lib/tauri";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
+import { useSettingsStore } from "../../stores/settings";
 import { PanelToggleButtons, WindowControls } from "../layout/WindowChrome";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
 
@@ -247,7 +248,12 @@ export function ChatHeader({
               </button>
               <button
                 role="menuitem"
-                onClick={() => act(() => setConfirmDelete(true))}
+                onClick={() =>
+                  act(() => {
+                    if (useSettingsStore.getState().confirmDeleteThread) setConfirmDelete(true);
+                    else removeThread();
+                  })
+                }
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-danger transition hover:bg-hover"
               >
                 <Trash2 size={13} /> Delete thread
