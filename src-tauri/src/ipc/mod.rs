@@ -404,6 +404,7 @@ pub async fn runs_dispatch(
     if let Some(mode) = mode.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
         runtime.set_mode(&thread_id, mode)?;
     }
+    runtime.clear_stale_provider_config(&thread_id, &instance_id)?;
     if let Some(config) = config_options.as_ref().filter(|c| !c.is_empty()) {
         runtime.merge_desired_config(&thread_id, config)?;
     }

@@ -1711,3 +1711,394 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
     let _ = std::fs::remove_dir_all(&global_sandbox);
 }
 
+#[test]
+fn session_config_value_valid_accepts_only_advertised_values() {
+    use crate::protocol::types::{
+        ConfigOptionValue, SessionConfigOption, SessionConfigOptionKind,
+        SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions,
+    };
+
+    let options = vec![
+        SessionConfigOption {
+            id: "model".to_string(),
+            name: "Model".to_string(),
+            description: None,
+            category: Some("model".to_string()),
+            meta: None,
+            kind: SessionConfigOptionKind::Select {
+                current_value: "gpt-5".to_string(),
+                options: SessionConfigSelectOptions::Grouped(vec![SessionConfigSelectGroup {
+                    group: "primary".to_string(),
+                    name: "Primary".to_string(),
+                    options: vec![
+                        SessionConfigSelectOption {
+                            value: "gpt-5".to_string(),
+                            name: "GPT-5".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                        SessionConfigSelectOption {
+                            value: "o3".to_string(),
+                            name: "o3".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                    ],
+                    meta: None,
+                }]),
+            },
+        },
+        SessionConfigOption {
+            id: "reasoning_effort".to_string(),
+            name: "Reasoning effort".to_string(),
+            description: None,
+            category: Some("reasoning".to_string()),
+            meta: None,
+            kind: SessionConfigOptionKind::Select {
+                current_value: "medium".to_string(),
+                options: SessionConfigSelectOptions::Flat(vec![
+                    SessionConfigSelectOption {
+                        value: "low".to_string(),
+                        name: "Low".to_string(),
+                        description: None,
+                        meta: None,
+                    },
+                    SessionConfigSelectOption {
+                        value: "medium".to_string(),
+                        name: "Medium".to_string(),
+                        description: None,
+                        meta: None,
+                    },
+                ]),
+            },
+        },
+        SessionConfigOption {
+            id: "web_search".to_string(),
+            name: "Web search".to_string(),
+            description: None,
+            category: Some("other".to_string()),
+            meta: None,
+            kind: SessionConfigOptionKind::Boolean {
+                current_value: false,
+            },
+        },
+    ];
+
+    assert!(super::session_config_value_valid(
+        &options,
+        "model",
+        &ConfigOptionValue::String("o3".into()),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "model",
+        &ConfigOptionValue::String("claude-sonnet-4".into()),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "model",
+        &ConfigOptionValue::Bool(true),
+    ));
+
+    assert!(super::session_config_value_valid(
+        &options,
+        "reasoning_effort",
+        &ConfigOptionValue::String("low".into()),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "reasoning_effort",
+        &ConfigOptionValue::String("high".into()),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "reasoning_effort",
+        &ConfigOptionValue::Bool(false),
+    ));
+
+    assert!(super::session_config_value_valid(
+        &options,
+        "web_search",
+        &ConfigOptionValue::Bool(true),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "web_search",
+        &ConfigOptionValue::String("true".into()),
+    ));
+
+    assert!(!super::session_config_value_valid(
+        &options,
+        "unknown_id",
+        &ConfigOptionValue::String("anything".into()),
+    ));
+    assert!(!super::session_config_value_valid(
+        &options,
+        "unknown_id",
+        &ConfigOptionValue::Bool(true),
+    ));
+}
+
+#[test]
+fn clear_stale_provider_config_keeps_only_values_the_new_instance_advertises() {
+    use crate::protocol::types::{
+        AgentCapabilities, ConfigOptionValue, SessionConfigOption, SessionConfigOptionKind,
+        SessionConfigSelectOption, SessionConfigSelectOptions,
+    };
+
+    let (runtime, _sink) = mock_runtime();
+    let thread = thread_record("th");
+    runtime.store().create_thread(&thread).expect("create thread");
+
+    let mut seed = super::DesiredConfigMap::new();
+    seed.insert("model".to_string(), ConfigOptionValue::String("gpt-5".into()));
+    seed.insert(
+        "thinking_level".to_string(),
+        ConfigOptionValue::String("high".into()),
+    );
+    seed.insert("effort".to_string(), ConfigOptionValue::String("max".into()));
+    seed.insert("web_search".to_string(), ConfigOptionValue::Bool(true));
+    runtime
+        .merge_desired_config("th", &seed)
+        .expect("seed desired config");
+
+    runtime.cache_capabilities("inst-b", &AgentCapabilities::default(), vec![], vec![]);
+    runtime.update_cached_config_options(
+        "inst-b",
+        vec![
+            SessionConfigOption {
+                id: "model".to_string(),
+                name: "Model".to_string(),
+                description: None,
+                category: Some("model".to_string()),
+                meta: None,
+                kind: SessionConfigOptionKind::Select {
+                    current_value: "gpt-5".to_string(),
+                    options: SessionConfigSelectOptions::Flat(vec![
+                        SessionConfigSelectOption {
+                            value: "gpt-5".to_string(),
+                            name: "GPT-5".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                        SessionConfigSelectOption {
+                            value: "o3".to_string(),
+                            name: "o3".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                    ]),
+                },
+            },
+            SessionConfigOption {
+                id: "reasoning_effort".to_string(),
+                name: "Reasoning effort".to_string(),
+                description: None,
+                category: Some("reasoning".to_string()),
+                meta: None,
+                kind: SessionConfigOptionKind::Select {
+                    current_value: "medium".to_string(),
+                    options: SessionConfigSelectOptions::Flat(vec![
+                        SessionConfigSelectOption {
+                            value: "low".to_string(),
+                            name: "Low".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                        SessionConfigSelectOption {
+                            value: "medium".to_string(),
+                            name: "Medium".to_string(),
+                            description: None,
+                            meta: None,
+                        },
+                    ]),
+                },
+            },
+            SessionConfigOption {
+                id: "web_search".to_string(),
+                name: "Web search".to_string(),
+                description: None,
+                category: Some("other".to_string()),
+                meta: None,
+                kind: SessionConfigOptionKind::Boolean {
+                    current_value: false,
+                },
+            },
+        ],
+    );
+
+    runtime
+        .clear_stale_provider_config("th", "inst-b")
+        .expect("clear against inst-b");
+
+    let after_b = runtime.desired_config("th");
+    assert_eq!(
+        after_b.get("model"),
+        Some(&ConfigOptionValue::String("gpt-5".into()))
+    );
+    assert!(!after_b.contains_key("thinking_level"));
+    assert!(!after_b.contains_key("effort"));
+    assert_eq!(
+        after_b.get("web_search"),
+        Some(&ConfigOptionValue::Bool(true))
+    );
+
+    runtime
+        .clear_stale_provider_config("th", "inst-c")
+        .expect("clear against uncached inst-c");
+    assert_eq!(runtime.desired_config("th"), after_b);
+}
+
+#[tokio::test]
+async fn invalid_model_value_is_not_sent_to_the_mock_agent() {
+    use crate::protocol::types::ConfigOptionValue;
+
+    let (runtime, sink, sandbox, run_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-invalid-model-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let mut thread = thread_record("th-invalid-model");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+
+        runtime
+            .set_config_option(
+                "th-invalid-model",
+                "model",
+                ConfigOptionValue::String("model-a-only".into()),
+            )
+            .await
+            .expect("persist invalid model");
+        runtime
+            .set_config_option(
+                "th-invalid-model",
+                "thinking_level",
+                ConfigOptionValue::String("high".into()),
+            )
+            .await
+            .expect("persist thinking_level");
+
+        let run = runtime
+            .dispatch(&thread, "hello", &[], "mock")
+            .expect("dispatch");
+        (runtime, sink, sandbox, run.id)
+    };
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs("th-invalid-model")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs("th-invalid-model").unwrap();
+    let run = runs.iter().find(|r| r.id == run_id).expect("run");
+    assert_eq!(run.status, "finished", "run must stay healthy");
+
+    let kinds = kinds_of(&runtime, &run_id);
+    assert!(
+        !kinds.iter().any(|k| matches!(
+            k,
+            EventKind::Notice { message, .. }
+                if message.contains("model-a-only") || message.contains("The agent rejected model")
+        )),
+        "invalid model must not be sent to agent; got {kinds:?}"
+    );
+    assert!(kinds.iter().any(|k| matches!(
+        k,
+        EventKind::RunFinished { stop_reason, error: None } if stop_reason == "end_turn"
+    )));
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn dispatch_records_effort_for_thinking_level_and_effort_ids() {
+    use crate::protocol::types::ConfigOptionValue;
+
+    let (runtime, sink, sandbox, run1, run2) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-effort-ids-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+
+        let mut thread1 = thread_record("th-effort-thinking");
+        thread1.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime
+            .store()
+            .create_thread(&thread1)
+            .expect("create thread 1");
+        runtime
+            .set_config_option(
+                "th-effort-thinking",
+                "thinking_level",
+                ConfigOptionValue::String("high".into()),
+            )
+            .await
+            .expect("set thinking_level");
+        let run1 = runtime
+            .dispatch(&thread1, "one", &[], "mock")
+            .expect("dispatch 1");
+
+        let mut thread2 = thread_record("th-effort-max");
+        thread2.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime
+            .store()
+            .create_thread(&thread2)
+            .expect("create thread 2");
+        runtime
+            .set_config_option(
+                "th-effort-max",
+                "effort",
+                ConfigOptionValue::String("max".into()),
+            )
+            .await
+            .expect("set effort");
+        let run2 = runtime
+            .dispatch(&thread2, "two", &[], "mock")
+            .expect("dispatch 2");
+
+        (runtime, sink, sandbox, run1, run2)
+    };
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        let done1 = runtime
+            .store()
+            .list_runs("th-effort-thinking")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false);
+        let done2 = runtime
+            .store()
+            .list_runs("th-effort-max")
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false);
+        done1 && done2
+    })
+    .await;
+    pump.abort();
+
+    assert_eq!(run1.effort.as_deref(), Some("high"));
+    assert_eq!(run2.effort.as_deref(), Some("max"));
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}

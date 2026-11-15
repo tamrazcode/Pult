@@ -741,6 +741,55 @@ impl AgentRuntime {
         })
     }
 
+    /// The last advertised option set, cloned so callers can validate without
+    /// holding the runtime lock across awaits.
+    fn config_options_for(&self, instance_id: &str) -> Option<Vec<SessionConfigOption>> {
+        let inner = self.inner.lock().expect("runtime lock poisoned");
+        inner
+            .capabilities
+            .get(instance_id)
+            .map(|caps| caps.config_options.clone())
+    }
+
+    /// Keeps only persisted picks the newly selected provider advertises.
+    /// No cached options means no safe judgement: leave the picks untouched
+    /// so a pick made before the first handshake is never lost.
+    pub fn clear_stale_provider_config(
+        &self,
+        thread_id: &str,
+        instance_id: &str,
+    ) -> Result<(), crate::PultError> {
+        let Some(options) = self.config_options_for(instance_id) else {
+            return Ok(());
+        };
+        let config = self.desired_config(thread_id);
+        if config.is_empty() {
+            return Ok(());
+        }
+        let filtered: DesiredConfigMap = config
+            .iter()
+            .filter(|(id, value)| session_config_value_valid(&options, id, value))
+            .map(|(id, value)| (id.clone(), value.clone()))
+            .collect();
+        self.save_desired_config(thread_id, &filtered)
+    }
+
+    /// Applies the same advertised-value filter used by the run loop.
+    fn filter_config_for_instance(
+        &self,
+        instance_id: &str,
+        config: &DesiredConfigMap,
+    ) -> DesiredConfigMap {
+        match self.config_options_for(instance_id) {
+            Some(options) => config
+                .iter()
+                .filter(|(id, value)| session_config_value_valid(&options, id, value))
+                .map(|(id, value)| (id.clone(), value.clone()))
+                .collect(),
+            None => config.clone(),
+        }
+    }
+
     /// Replaces the cached config options from a `set_config_option` reply or
     /// a live `config_option_update`.
     fn update_cached_config_options(&self, instance_id: &str, config_options: Vec<SessionConfigOption>) {
@@ -785,9 +834,11 @@ impl AgentRuntime {
         }
 
         let desired = self.desired_config(&thread.id);
-        let model = desired_string(&desired, "model");
-        let effort = desired_string(&desired, "thought_level")
-            .or_else(|| desired_string(&desired, "reasoning_effort"));
+        let effective_config = self.filter_config_for_instance(instance_id, &desired);
+        let model = desired_string(&effective_config, "model");
+        let effort = effort_id_order()
+            .iter()
+            .find_map(|id| desired_string(&effective_config, id));
         let run = RunRecord {
             id: format!("run-{}-{}", now_millis(), thread.id),
             thread_id: thread.id.clone(),
@@ -847,7 +898,7 @@ impl AgentRuntime {
         let text = text.to_string();
         let prompt_images = images.to_vec();
         let mode = run.mode.clone();
-        let config = self.desired_config(&thread.id);
+        let config = effective_config;
         tokio::spawn(async move {
             let outcome = run_turn(RunTask {
                 runtime: this,
@@ -1440,12 +1491,18 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // first because agents narrow dependent options (thought level) when the
     // model changes.
     let advertised_config = runtime.config_option_ids(&instance_id);
+    let cached_config = runtime.config_options_for(&instance_id);
     let mut picks: Vec<(String, ConfigOptionValue)> = config
         .into_iter()
         .filter(|(id, _)| {
             advertised_config
                 .as_ref()
                 .is_none_or(|ids| ids.contains(id))
+        })
+        .filter(|(id, value)| {
+            cached_config
+                .as_ref()
+                .is_none_or(|options| session_config_value_valid(options, id, value))
         })
         .collect();
     picks.sort_by_key(|(id, _)| config_apply_order(id));
@@ -1555,6 +1612,20 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             }
                         }
                         AnswerPayload::ConfigOption { config_id, value } => {
+                            if let Some(options) = runtime.config_options_for(&instance_id) {
+                                if !session_config_value_valid(&options, &config_id, &value) {
+                                    tracing::warn!(target: "pult::runtime",
+                                        config = %config_id, "live config value is no longer advertised");
+                                    let flushed = batcher.push(EventKind::Notice {
+                                        level: "warning".to_string(),
+                                        message: format!(
+                                            "The agent no longer offers {config_id}={value:?}"
+                                        ),
+                                    });
+                                    let _ = persist_event_batch(&runtime, &run_id, flushed);
+                                    continue;
+                                }
+                            }
                             match conn
                                 .set_config_option(&session_id, &config_id, value)
                                 .await
@@ -2233,12 +2304,53 @@ fn desired_string(config: &DesiredConfigMap, id: &str) -> Option<String> {
     }
 }
 
+/// Every id agents have used for the reasoning/thought level.
+fn effort_id_order() -> &'static [&'static str] {
+    &[
+        "thought_level",
+        "thinking_level",
+        "reasoning_effort",
+        "effort",
+        "reasoning",
+    ]
+}
+
+/// True when the value is one the option actually advertises right now.
+fn session_config_value_valid(
+    options: &[SessionConfigOption],
+    id: &str,
+    value: &ConfigOptionValue,
+) -> bool {
+    let Some(option) = options.iter().find(|option| option.id == id) else {
+        return false;
+    };
+    match (&option.kind, value) {
+        (
+            crate::protocol::types::SessionConfigOptionKind::Select { options, .. },
+            ConfigOptionValue::String(value),
+        ) => match options {
+            crate::protocol::types::SessionConfigSelectOptions::Flat(items) => {
+                items.iter().any(|item| &item.value == value)
+            }
+            crate::protocol::types::SessionConfigSelectOptions::Grouped(groups) => groups
+                .iter()
+                .flat_map(|group| group.options.iter())
+                .any(|item| &item.value == value),
+        },
+        (
+            crate::protocol::types::SessionConfigOptionKind::Boolean { .. },
+            ConfigOptionValue::Bool(_),
+        ) => true,
+        _ => false,
+    }
+}
+
 /// Application order: `model` first (agents narrow dependent options when it
 /// changes), then thought level, then the rest.
 fn config_apply_order(id: &str) -> u8 {
     match id {
         "model" => 0,
-        "thought_level" | "reasoning_effort" => 1,
+        "thought_level" | "thinking_level" | "reasoning_effort" | "effort" | "reasoning" => 1,
         _ => 2,
     }
 }
