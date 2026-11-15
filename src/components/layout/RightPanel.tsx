@@ -30,6 +30,11 @@ export function RightPanel({ width }: { width: number }) {
   const surfacesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    // A file preview belongs to the thread it was opened from.
+    useUiStore.setState({ filePreview: null });
+  }, [activeThreadId]);
+
+  useEffect(() => {
     if (!surfacesOpen) return;
     const onPointer = (event: MouseEvent) => {
       if (!surfacesRef.current?.contains(event.target as Node)) setSurfacesOpen(false);
@@ -123,7 +128,7 @@ export function RightPanel({ width }: { width: number }) {
               <PullRequestsList />
             </div>
           ) : (
-            <FilesPanel threadId={activeThreadId} />
+            <FilesPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
           )}
         </Suspense>
       </div>

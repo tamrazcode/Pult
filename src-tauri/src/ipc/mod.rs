@@ -1063,6 +1063,10 @@ pub async fn workspace_read_text(
         let base = root
             .canonicalize()
             .map_err(|e| PultError::internal(format!("workspace: {e}")))?;
+        if path.starts_with("\\\\") || path.starts_with("//") || std::path::Path::new(&path).is_absolute()
+        {
+            return Err(PultError::internal("path escapes workspace"));
+        }
         let target = base.join(&path);
         let target = target
             .canonicalize()
@@ -1097,15 +1101,40 @@ pub struct ProviderUpdate {
     pub managed: bool,
 }
 
-fn npm_outdated() -> std::collections::BTreeMap<String, (Option<String>, Option<String>)> {
-    let mut command = std::process::Command::new("cmd");
-    command.args(["/c", "npm", "outdated", "-g", "--json"]);
+fn npm_command(args: &[&str]) -> std::process::Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/c", "npm"]);
+        command.args(args);
         command.creation_flags(0x0800_0000);
+        command
     }
-    let Ok(output) = command.output() else {
+    #[cfg(not(windows))]
+    {
+        let mut command = std::process::Command::new("npm");
+        command.args(args);
+        command
+    }
+}
+
+fn instance_uses_package(instance: &crate::config::InstanceSpec, package: &str) -> bool {
+    let package = package.to_ascii_lowercase();
+    let command = instance.command.to_ascii_lowercase().replace('\\', "/");
+    if command == package || command.ends_with(&format!("/{package}")) {
+        return true;
+    }
+    instance.args.iter().any(|arg| {
+        let arg = arg.to_ascii_lowercase().replace('\\', "/");
+        arg == package
+            || arg.contains(&format!("/{package}/"))
+            || arg.contains(&format!("/{package}@"))
+    })
+}
+
+fn npm_outdated() -> std::collections::BTreeMap<String, (Option<String>, Option<String>)> {
+    let Ok(output) = npm_command(&["outdated", "-g", "--json"]).output() else {
         return Default::default();
     };
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
@@ -1131,10 +1160,9 @@ fn match_updates(
     instances
         .iter()
         .map(|instance| {
-            let haystack = format!("{} {}", instance.command, instance.args.join(" "));
             let package = outdated
                 .keys()
-                .find(|package| haystack.contains(package.as_str()))
+                .find(|package| instance_uses_package(instance, package))
                 .cloned();
             let found = package.as_ref().and_then(|pkg| outdated.get(pkg));
             ProviderUpdate {
@@ -1146,6 +1174,7 @@ fn match_updates(
                 managed: found.is_some(),
             }
         })
+        .filter(|update| update.managed)
         .collect()
 }
 
@@ -1174,10 +1203,9 @@ pub async fn providers_update_install(
         .clone();
     tokio::task::spawn_blocking(move || {
         let outdated = npm_outdated();
-        let haystack = format!("{} {}", instance.command, instance.args.join(" "));
         let package = outdated
             .keys()
-            .find(|package| haystack.contains(package.as_str()))
+            .find(|package| instance_uses_package(&instance, package))
             .cloned()
             .ok_or_else(|| PultError::internal("no managed update for this provider"))?;
         if !package
@@ -1186,14 +1214,8 @@ pub async fn providers_update_install(
         {
             return Err(PultError::internal("unsafe package name"));
         }
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/c", "npm", "install", "-g", &format!("{package}@latest")]);
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x0800_0000);
-        }
-        let output = command
+        let install = format!("{package}@latest");
+        let output = npm_command(&["install", "-g", &install])
             .output()
             .map_err(|e| PultError::internal(format!("npm install failed: {e}")))?;
         if !output.status.success() {

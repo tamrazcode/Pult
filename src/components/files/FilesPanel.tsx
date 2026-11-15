@@ -15,7 +15,7 @@ import { useThreadsStore } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
 import { useUiStore } from "../../stores/ui";
 
-const IMAGE_EXT = /\.(png|jpe?g|webp|gif|bmp|svg)$/i;
+const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 
 function relativeToFull(root: string, path: string): string {
   return `${root.replace(/[\\/]+$/, "")}\\${path.replace(/\//g, "\\")}`;
@@ -139,6 +139,10 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
 
   useEffect(() => {
     if (!threadId || !selected) return;
+    if (!root) {
+      setError("Workspace folder not resolved for this thread");
+      return;
+    }
     let cancelled = false;
     setPreview(null);
     setImage(null);
@@ -232,7 +236,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
         </div>
         <EditorButton
           onOpen={(editor) => {
-            if (!selected) return;
+            if (!selected || !root) return;
             void openInEditor(relativeToFull(root, selected), editor).catch((err) =>
               setError(String(err)),
             );

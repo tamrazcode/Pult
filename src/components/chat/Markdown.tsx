@@ -291,16 +291,23 @@ function fileUrlToPath(src: string): string {
 
 /** Maps a local Markdown link to a workspace-relative preview path. */
 function localPreviewPath(href: string): string | null {
-  if (/^(https?:|mailto:|#)/i.test(href)) return null;
+  if (/^(https?:|mailto:|javascript:|data:|#)/i.test(href)) return null;
   let path = href;
   if (path.startsWith("file://")) path = fileUrlToPath(path);
   const threads = useThreadsStore.getState();
   const thread = threads.threads.find((candidate) => candidate.id === threads.activeThreadId);
   const root = thread?.workspace;
   if (root && /^[a-zA-Z]:[\\/]/.test(path)) {
-    const normalized = path.replace(/\//g, "\\");
-    if (!normalized.startsWith(root.replace(/[\\/]+$/, ""))) return null;
-    path = normalized.slice(root.length).replace(/^[\\/]+/, "");
+    const normalized = path.replace(/\//g, "\\").toLowerCase();
+    const normalizedRoot = root
+      .replace(/[\\/]+$/, "")
+      .replace(/\//g, "\\")
+      .toLowerCase();
+    if (normalized !== normalizedRoot && !normalized.startsWith(`${normalizedRoot}\\`)) return null;
+    path = path
+      .replace(/\//g, "\\")
+      .slice(normalizedRoot.length)
+      .replace(/^[\\/]+/, "");
   }
   return path.replace(/^\.\//, "").replace(/\\/g, "/") || null;
 }
