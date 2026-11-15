@@ -438,8 +438,20 @@ export function Sidebar({ width }: { width: number }) {
             placeholder="Search threads"
             aria-label="Search threads"
             type="search"
-            className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+            className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-8 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
+          <button
+            type="button"
+            aria-label="Filter threads"
+            aria-haspopup="menu"
+            aria-expanded={filterOpen}
+            onClick={() => setFilterOpen((open) => !open)}
+            className={`absolute top-1/2 right-1 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover hover:text-text-secondary ${
+              filter === "all" ? "text-text-tertiary" : "bg-active text-text-primary"
+            }`}
+          >
+            <SlidersHorizontal size={13} />
+          </button>
         </div>
         <button
           type="button"
@@ -450,47 +462,33 @@ export function Sidebar({ width }: { width: number }) {
         >
           <RefreshCw size={14} />
         </button>
-        <div>
-          <button
-            type="button"
-            aria-label="Filter threads"
-            aria-haspopup="menu"
-            aria-expanded={filterOpen}
-            onClick={() => setFilterOpen((open) => !open)}
-            className={`flex h-8 w-8 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover hover:text-text-secondary ${
-              filter === "all" ? "text-text-tertiary" : "bg-active text-text-primary"
-            }`}
+        {filterOpen && (
+          <div
+            role="menu"
+            aria-label="Filters"
+            className="absolute top-full left-0 z-30 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-xl"
           >
-            <SlidersHorizontal size={14} />
-          </button>
-          {filterOpen && (
-            <div
-              role="menu"
-              aria-label="Filters"
-              className="absolute top-full left-0 z-30 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-xl"
-            >
-              {FILTERS.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  role="menuitemradio"
-                  aria-checked={filter === option.id}
-                  onClick={() => {
-                    setFilter(option.id);
-                    setFilterOpen(false);
-                  }}
-                  className={`flex w-full items-center px-3 py-1.5 text-left text-xs ${
-                    filter === option.id
-                      ? "bg-active text-text-primary"
-                      : "text-text-secondary hover:bg-hover"
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+            {FILTERS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                role="menuitemradio"
+                aria-checked={filter === option.id}
+                onClick={() => {
+                  setFilter(option.id);
+                  setFilterOpen(false);
+                }}
+                className={`flex w-full items-center px-3 py-1.5 text-left text-xs ${
+                  filter === option.id
+                    ? "bg-active text-text-primary"
+                    : "text-text-secondary hover:bg-hover"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        )}
         <button
           type="button"
           aria-label="New project"
