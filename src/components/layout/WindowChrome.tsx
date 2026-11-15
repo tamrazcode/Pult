@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
+import { Copy, Minus, PanelLeft, PanelRight, PanelTop, Square, X } from "lucide-react";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
 
@@ -9,8 +9,10 @@ import { useUiStore } from "../../stores/ui";
 export function PanelToggleButtons(): ReactElement {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
+  const projectWidgetOpen = useUiStore((s) => s.projectWidgetOpen);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
+  const toggleProjectWidget = useUiStore((s) => s.toggleProjectWidget);
 
   return (
     <>
@@ -19,6 +21,12 @@ export function PanelToggleButtons(): ReactElement {
         onClick={toggleSidebar}
         label="Toggle sidebar"
         icon={<PanelLeft size={15} />}
+      />
+      <HeaderToggle
+        active={projectWidgetOpen && !rightPanelOpen}
+        onClick={toggleProjectWidget}
+        label="Toggle project info"
+        icon={<PanelTop size={15} />}
       />
       <HeaderToggle
         active={rightPanelOpen}

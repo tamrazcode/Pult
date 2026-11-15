@@ -9,6 +9,7 @@ const {
   runsDispatch,
   runsRespondPermission,
   runsQueueRemove,
+  runsQueueUpdate,
   workspaceFiles,
   runsSetMode,
   runsSetConfigOption,
@@ -26,6 +27,7 @@ const {
   runsDispatch: vi.fn(),
   runsRespondPermission: vi.fn(),
   runsQueueRemove: vi.fn(),
+  runsQueueUpdate: vi.fn(),
   workspaceFiles: vi.fn(),
   runsSetMode: vi.fn(),
   runsSetConfigOption: vi.fn(),
@@ -47,6 +49,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     runsDispatch,
     runsRespondPermission,
     runsQueueRemove,
+    runsQueueUpdate,
     workspaceFiles,
     runsSetMode,
     runsSetConfigOption,
@@ -129,6 +132,7 @@ describe("composer", () => {
     runsDispatch.mockReset().mockResolvedValue({ run: null, queued: false, queueId: null });
     runsRespondPermission.mockReset().mockResolvedValue(undefined);
     runsQueueRemove.mockReset().mockResolvedValue(undefined);
+    runsQueueUpdate.mockReset().mockResolvedValue(undefined);
     workspaceFiles.mockReset().mockResolvedValue([]);
     runsSetMode.mockReset().mockResolvedValue(undefined);
     runsSetConfigOption.mockReset().mockResolvedValue(undefined);
@@ -423,7 +427,7 @@ describe("composer", () => {
 
     const { container } = render(<Composer threadId="th" />);
 
-    const attach = screen.getByLabelText("Attach images");
+    const attach = screen.getByLabelText("Attach files");
     expect(attach.querySelector("svg.lucide-paperclip")).toBeTruthy();
     expect(attach.querySelector("svg.lucide-plus")).toBeNull();
 
@@ -1180,13 +1184,13 @@ describe("composer", () => {
     expect(container.textContent).not.toContain("C:\\work\\alpha");
     expect(container.textContent).not.toContain("No workspace selected");
 
-    expect(screen.getByLabelText("Attach images")).toBeTruthy();
+    expect(screen.getByLabelText("Attach files")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Claude Code/ })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Composer options" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 
-  it("renders queued row with Edit and Remove controls and loads item into textarea on Edit", () => {
+  it("renders queued row with drag handle, Steer, Edit, and Remove controls and edits inline via runsQueueUpdate", async () => {
     useRunsStore.setState({
       queueByThread: {
         th: [
@@ -1205,12 +1209,28 @@ describe("composer", () => {
     render(<Composer threadId="th" />);
 
     expect(screen.getByText("follow up")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /reorder queued message/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /steer queued message/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /remove queued message/i })).toBeInTheDocument();
+
     const editBtn = screen.getByRole("button", { name: /edit queued message/i });
     fireEvent.click(editBtn);
 
-    expect(runsQueueRemove).toHaveBeenCalledWith("th", "q1");
-    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("follow up");
+    expect(runsQueueRemove).not.toHaveBeenCalled();
+    const inlineInput = screen.getByRole("textbox", {
+      name: /queued message text/i,
+    }) as HTMLInputElement;
+    expect(inlineInput.value).toBe("follow up");
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+
+    fireEvent.change(inlineInput, { target: { value: "updated follow up" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(runsQueueUpdate).toHaveBeenCalledWith("th", "q1", "updated follow up"),
+    );
+    expect(runsQueueRemove).not.toHaveBeenCalled();
   });
 
   it("shows 'Queue message' button when running run has typed text and 'Stop run' when empty", async () => {

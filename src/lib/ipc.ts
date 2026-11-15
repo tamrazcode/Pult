@@ -201,6 +201,31 @@ export function workspaceReadText(threadId: string, path: string): Promise<strin
   return invokeRequired<string>("workspace_read_text", { threadId, path });
 }
 
+/** Raw HTML for the built-in browser surface. */
+export function workspaceReadHtml(threadId: string, path: string): Promise<string> {
+  return invokeRequired<string>("workspace_read_html", { threadId, path });
+}
+
+export interface BrowserTarget {
+  kind: "url" | "file";
+  target: string;
+}
+
+export interface EmbedCheck {
+  embeddable: boolean;
+  reason?: string | null;
+}
+
+/** Classifies a browser target as an http(s) URL or a workspace HTML file. */
+export function browserValidateTarget(target: string): Promise<BrowserTarget> {
+  return invokeRequired<BrowserTarget>("browser_validate_target", { target });
+}
+
+/** Checks X-Frame-Options / CSP before mounting an iframe. */
+export function browserCheckFrameHeaders(url: string): Promise<EmbedCheck> {
+  return invokeRequired<EmbedCheck>("browser_check_frame_headers", { url });
+}
+
 /**
  * Workspace-relative files for composer `@` mentions (build/VCS dirs are
  * skipped server-side). Empty outside Tauri.
@@ -261,6 +286,21 @@ export interface ElicitationRequestPayload {
 /** Removes one message from the thread's queue (composer row ✕). */
 export function runsQueueRemove(threadId: string, queueId: string): Promise<void> {
   return invokeRequired<void>("runs_queue_remove", { threadId, queueId });
+}
+
+/** Rewrites one queued message in place. */
+export function runsQueueUpdate(threadId: string, queueId: string, text: string): Promise<void> {
+  return invokeRequired<void>("runs_queue_update", { threadId, queueId, text });
+}
+
+/** Persists the queue order after a drag. */
+export function runsQueueReorder(threadId: string, queueIds: string[]): Promise<void> {
+  return invokeRequired<void>("runs_queue_reorder", { threadId, queueIds });
+}
+
+/** Sends a queued message now, interrupting the active run. */
+export function runsQueueSteer(threadId: string, queueId: string): Promise<void> {
+  return invokeRequired<void>("runs_queue_steer", { threadId, queueId });
 }
 
 /** Switches the thread's permission mode (also stored as the default). */

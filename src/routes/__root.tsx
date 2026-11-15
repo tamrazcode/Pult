@@ -8,11 +8,20 @@ import { ErrorBanner, RouteErrorCard } from "../components/ui/ErrorBanner";
 import { ContextMenu, type ContextMenuItem } from "../components/ui/ContextMenu";
 import { FpsOverlay } from "../components/ui/FpsOverlay";
 import { ResizeHandle } from "../components/ui/ResizeHandle";
-import { openExternalUrl, providersWarmup, runsRespondElicitation } from "../lib/ipc";
+import {
+  ipcErrorMessage,
+  openExternalUrl,
+  openInEditor,
+  providersWarmup,
+  runsRespondElicitation,
+} from "../lib/ipc";
+import { classifyMarkdownHref } from "../lib/links";
 import { preflightInstances } from "../lib/providerChecks";
 import { isTauri } from "../lib/tauri";
 import { useRunsStore } from "../stores/runs";
 import { useProjectsStore } from "../stores/projects";
+import { useSettingsStore } from "../stores/settings";
+import { useThreadsStore } from "../stores/threads";
 import { hydrateLayout, useUiStore } from "../stores/ui";
 
 export const Route = createRootRoute({
@@ -174,25 +183,60 @@ function RootLayout() {
           },
         },
       );
-    } else if (selection) {
-      items.push({
-        id: "copy-selection",
-        label: "Copy",
-        shortcut: `${mod}C`,
-        onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
-      });
     } else {
-      const link = target.closest<HTMLAnchorElement>("a[href^='http']");
-      if (link?.href) {
+      const link = target.closest<HTMLAnchorElement>("a[href]");
+      const rawHref = link?.getAttribute("href") ?? "";
+      const threads = useThreadsStore.getState();
+      const workspace =
+        threads.threads.find((candidate) => candidate.id === threads.activeThreadId)?.workspace ??
+        null;
+      const classified = rawHref ? classifyMarkdownHref(rawHref, workspace) : null;
+      const fail = (err: unknown) =>
+        useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+
+      if (classified?.kind === "external") {
+        items.push(
+          {
+            id: "open-browser",
+            label: "Open in browser",
+            onSelect: () => void openExternalUrl(classified.url).catch(fail),
+          },
+          {
+            id: "copy-link",
+            label: "Copy link",
+            onSelect: () =>
+              void navigator.clipboard.writeText(classified.url).catch(() => undefined),
+          },
+        );
+      } else if (classified?.kind === "workspace") {
+        items.push(
+          {
+            id: "reveal",
+            label: "Reveal in File Explorer",
+            onSelect: () => void openInEditor(classified.fullPath, "explorer").catch(fail),
+          },
+          {
+            id: "open-editor",
+            label: "Open in editor",
+            onSelect: () =>
+              void openInEditor(
+                classified.fullPath,
+                useSettingsStore.getState().preferredEditor,
+              ).catch(fail),
+          },
+          {
+            id: "copy-path",
+            label: "Copy path",
+            onSelect: () =>
+              void navigator.clipboard.writeText(classified.fullPath).catch(() => undefined),
+          },
+        );
+      } else if (selection) {
         items.push({
-          id: "open-link",
-          label: "Open link",
-          onSelect: () => void openExternalUrl(link.href).catch(() => undefined),
-        });
-        items.push({
-          id: "copy-link",
-          label: "Copy link",
-          onSelect: () => void navigator.clipboard.writeText(link.href).catch(() => undefined),
+          id: "copy-selection",
+          label: "Copy",
+          shortcut: `${mod}C`,
+          onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
         });
       }
     }

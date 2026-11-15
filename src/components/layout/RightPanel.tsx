@@ -1,8 +1,8 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { FileDiff, FolderTree, GitPullRequest, Plus, Terminal } from "lucide-react";
+import { FileDiff, FolderTree, Globe2, Plus, Terminal } from "lucide-react";
 import { FilesPanel } from "../files/FilesPanel";
+import { BrowserPanel } from "../browser/BrowserPanel";
 import { PullRequestsList } from "../git/PullRequestsList";
-import { ProjectCard } from "./ProjectCard";
 import { isTauri } from "../../lib/tauri";
 
 const DiffPanel = lazy(() =>
@@ -16,11 +16,26 @@ import { useUiStore } from "../../stores/ui";
 import type { RightPanelTab } from "../../stores/ui";
 
 const TABS: { id: RightPanelTab; label: string; icon: typeof FileDiff }[] = [
-  { id: "diff", label: "Diff", icon: FileDiff },
-  { id: "files", label: "Files", icon: FolderTree },
+  { id: "browser", label: "Browser", icon: Globe2 },
   { id: "terminal", label: "Terminal", icon: Terminal },
-  { id: "pull-requests", label: "Pull requests", icon: GitPullRequest },
+  { id: "files", label: "Files", icon: FolderTree },
+  { id: "diff", label: "Diff", icon: FileDiff },
 ];
+
+const SHORTCUTS: Record<RightPanelTab, string> = {
+  browser: "B",
+  terminal: "T",
+  files: "F",
+  diff: "D",
+  "pull-requests": "P",
+};
+
+const DISABLED_SURFACES = [
+  { label: "Pull request", shortcut: "P", reason: "PR surface coming soon" },
+  { label: "Linked pull requests", shortcut: "L", reason: "Requires linked PR data" },
+  { label: "Device", shortcut: "M", reason: "Device bridge is not connected" },
+  { label: "Side chat", shortcut: "S", reason: "Side chat is not supported yet" },
+] as const;
 
 export function RightPanel({ width }: { width: number }) {
   const tab = useUiStore((s) => s.rightPanelTab);
@@ -49,6 +64,20 @@ export function RightPanel({ width }: { width: number }) {
       window.removeEventListener("keydown", onKey);
     };
   }, [surfacesOpen]);
+
+  useEffect(() => {
+    if (!surfacesOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      const target = { b: "browser", t: "terminal", f: "files", d: "diff" } as const;
+      const tab = target[event.key.toLowerCase() as keyof typeof target];
+      if (!tab) return;
+      event.preventDefault();
+      setTab(tab);
+      setSurfacesOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [surfacesOpen, setTab]);
 
   return (
     <aside
@@ -92,7 +121,7 @@ export function RightPanel({ width }: { width: number }) {
               role="menu"
               aria-label="Open a surface"
               title="Open a surface"
-              className="absolute top-full right-0 z-40 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+              className="absolute top-full right-0 z-40 mt-1 w-64 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
             >
               {TABS.map(({ id, label, icon: Icon }) => (
                 <button
@@ -108,6 +137,25 @@ export function RightPanel({ width }: { width: number }) {
                   }`}
                 >
                   <Icon size={13} /> {label}
+                  <kbd className="ml-auto rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
+                    {SHORTCUTS[id]}
+                  </kbd>
+                </button>
+              ))}
+              {DISABLED_SURFACES.map((surface) => (
+                <button
+                  key={surface.label}
+                  type="button"
+                  role="menuitem"
+                  disabled
+                  title={surface.reason}
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-tertiary opacity-60"
+                >
+                  {surface.label}
+                  <kbd className="ml-auto rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
+                    {surface.shortcut}
+                  </kbd>
+                  <span className="text-xs">{surface.reason}</span>
                 </button>
               ))}
             </div>
@@ -115,12 +163,12 @@ export function RightPanel({ width }: { width: number }) {
         </div>
       </div>
 
-      <ProjectCard threadId={activeThreadId} />
-
       <div className="flex min-h-0 flex-1 flex-col">
         <Suspense fallback={<p className="p-3 text-xs text-text-tertiary">Loading surface…</p>}>
           {tab === "diff" ? (
             <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
+          ) : tab === "browser" ? (
+            <BrowserPanel threadId={activeThreadId} />
           ) : tab === "terminal" ? (
             <TerminalPanel threadId={activeThreadId} />
           ) : tab === "pull-requests" ? (

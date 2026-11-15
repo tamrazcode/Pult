@@ -2163,3 +2163,76 @@ async fn dispatch_records_effort_for_thinking_level_and_effort_ids() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+#[tokio::test]
+async fn steer_queue_item_cancels_active_run_and_starts_next() {
+    let (runtime, sink, sandbox, run1, q2_id) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-queue-steer-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_DELAY_MS", "200")])]);
+
+        let mut thread = thread_record("th-steer");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+
+        let first = runtime.send(&thread, "active run", &[], "mock").expect("send 1");
+        let run1 = first.run.expect("immediate run 1");
+        let second = runtime.send(&thread, "queued first", &[], "mock").expect("send 2");
+        let third = runtime.send(&thread, "steered item", &[], "mock").expect("send 3");
+        assert!(second.queued);
+        assert!(third.queued);
+        let q2_id = third.queue_id.expect("q2 id");
+        (runtime, sink, sandbox, run1, q2_id)
+    };
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    // Wait until run 1 has registered its live connection and started streaming.
+    wait_for(Duration::from_secs(5), || {
+        runtime
+            .store()
+            .load_events(&run1.id)
+            .map(|events| {
+                events
+                    .iter()
+                    .any(|e| matches!(e.kind, EventKind::AgentThoughtDelta { .. }))
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    runtime.steer("th-steer", &q2_id).expect("steer");
+
+    wait_for(Duration::from_secs(15), || {
+        runtime
+            .store()
+            .list_runs("th-steer")
+            .map(|runs| runs.len() >= 3 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs("th-steer").unwrap();
+    let cancelled_run1 = runs.iter().find(|r| r.id == run1.id).expect("run 1");
+    assert_eq!(cancelled_run1.status, "cancelled");
+
+    let run2 = runs.iter().find(|r| r.idx == 1).expect("run 2");
+    let run2_kinds = kinds_of(&runtime, &run2.id);
+    assert!(
+        run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "steered item")),
+        "steered item must dispatch next after cancelling active run; got {run2_kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}

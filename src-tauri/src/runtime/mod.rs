@@ -786,6 +786,24 @@ impl AgentRuntime {
             .cloned()
     }
 
+    /// Sends a queued message now: move it ahead of the queue and cancel the
+    /// active run so the queue drain picks it next. Best-effort cancel.
+    pub fn steer(self: &Arc<Self>, thread_id: &str, queue_id: &str) -> Result<(), crate::PultError> {
+        self.store.move_queue_item_to_head(thread_id, queue_id)?;
+        self.emit_queue_updated(thread_id);
+        if let Some(run_id) = self.active_run_for(thread_id) {
+            if let Err(err) = self.cancel(&run_id) {
+                tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed");
+                if self.active_run_for(thread_id).is_none() {
+                    self.auto_dispatch_queue(thread_id);
+                }
+            }
+        } else {
+            self.auto_dispatch_queue(thread_id);
+        }
+        Ok(())
+    }
+
     /// Pushes the thread's current queue to the UI ("queue:update").
     pub fn emit_queue_updated(&self, thread_id: &str) {
         let items = self.store.list_queue(thread_id).unwrap_or_default();

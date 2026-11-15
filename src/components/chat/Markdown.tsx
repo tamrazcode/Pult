@@ -18,7 +18,8 @@ import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { HighlighterCore } from "shiki/core";
 import { Check, Copy } from "lucide-react";
-import { openExternalUrl, readImageDataUrl } from "../../lib/ipc";
+import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
+import { classifyMarkdownHref } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
@@ -290,26 +291,11 @@ function fileUrlToPath(src: string): string {
 }
 
 /** Maps a local Markdown link to a workspace-relative preview path. */
-function localPreviewPath(href: string): string | null {
-  if (/^(https?:|mailto:|javascript:|data:|#)/i.test(href)) return null;
-  let path = href;
-  if (path.startsWith("file://")) path = fileUrlToPath(path);
+function activeWorkspaceRoot(): string | null {
   const threads = useThreadsStore.getState();
-  const thread = threads.threads.find((candidate) => candidate.id === threads.activeThreadId);
-  const root = thread?.workspace;
-  if (root && /^[a-zA-Z]:[\\/]/.test(path)) {
-    const normalized = path.replace(/\//g, "\\").toLowerCase();
-    const normalizedRoot = root
-      .replace(/[\\/]+$/, "")
-      .replace(/\//g, "\\")
-      .toLowerCase();
-    if (normalized !== normalizedRoot && !normalized.startsWith(`${normalizedRoot}\\`)) return null;
-    path = path
-      .replace(/\//g, "\\")
-      .slice(normalizedRoot.length)
-      .replace(/^[\\/]+/, "");
-  }
-  return path.replace(/^\.\//, "").replace(/\\/g, "/") || null;
+  return (
+    threads.threads.find((candidate) => candidate.id === threads.activeThreadId)?.workspace ?? null
+  );
 }
 
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
@@ -368,27 +354,56 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
 const COMPONENTS: Components = {
   a: ({ href, children, node, ...props }) => {
     void node;
-    const external = typeof href === "string" && /^https?:\/\//i.test(href);
+    const desktop = isTauri();
+    const link = classifyMarkdownHref(href, activeWorkspaceRoot());
+    const openWorkspace = () => {
+      if (link.kind !== "workspace") return;
+      if (link.isDir) {
+        void openInEditor(link.fullPath, "explorer").catch((err) =>
+          useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
+        );
+      } else {
+        useUiStore.getState().openFilePreview(link.relativePath);
+      }
+    };
+    const openExternal = () => {
+      if (link.kind !== "external") return;
+      void openExternalUrl(link.url).catch((err) =>
+        useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
+      );
+    };
     return (
       <a
         {...props}
         href={href}
-        target="_blank"
+        data-link-href={href}
+        target={desktop ? undefined : "_blank"}
         rel="noreferrer noopener"
         onClick={(event) => {
           if (!href) return;
-          if (external) {
-            if (!isTauri()) return;
+          if (link.kind === "external") {
+            if (!desktop) return;
             event.preventDefault();
-            void openExternalUrl(href).catch((err) =>
-              console.error("open_external_url failed", err),
-            );
+            openExternal();
             return;
           }
-          const path = localPreviewPath(href);
-          if (path && isTauri()) {
+          if (link.kind === "workspace") {
             event.preventDefault();
-            useUiStore.getState().openFilePreview(path);
+            openWorkspace();
+            return;
+          }
+          if (link.kind === "unsupported" && /^(javascript|data|vbscript):/i.test(href)) {
+            event.preventDefault();
+          }
+        }}
+        onAuxClick={(event) => {
+          if (event.button !== 1 || !desktop) return;
+          if (link.kind === "external") {
+            event.preventDefault();
+            openExternal();
+          } else if (link.kind === "workspace") {
+            event.preventDefault();
+            openWorkspace();
           }
         }}
       >

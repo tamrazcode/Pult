@@ -1,7 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowUp, ListPlus, MoreHorizontal, Paperclip, Square, X } from "lucide-react";
+import {
+  ArrowUp,
+  Check,
+  CornerUpRight,
+  FileText,
+  GripVertical,
+  ListPlus,
+  MoreHorizontal,
+  Paperclip,
+  Pencil,
+  Square,
+  X,
+} from "lucide-react";
 import { Button } from "../ui/button";
 import {
   AgentModePicker,
@@ -15,6 +27,9 @@ import {
   runsCancel,
   runsDispatch,
   runsQueueRemove,
+  runsQueueReorder,
+  runsQueueSteer,
+  runsQueueUpdate,
   runsRespondPermission,
   workspaceFiles,
 } from "../../lib/ipc";
@@ -97,6 +112,16 @@ interface ImageChip {
   preview: string;
 }
 
+interface FileChip {
+  name: string;
+  text: string;
+  truncated: boolean;
+}
+
+const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENT_TEXT = 200_000;
+const MAX_ATTACHMENT_BYTES = 5_000_000;
+
 function chipFromDataUrl(dataUrl: string): ImageChip | null {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return null;
@@ -113,6 +138,39 @@ function fileToChip(file: File): Promise<ImageChip | null> {
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
+}
+
+function readFileText(file: File): Promise<string> {
+  if (typeof file.text === "function") return file.text();
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => resolve("");
+    reader.readAsText(file);
+  });
+}
+
+async function fileToTextChip(file: File): Promise<FileChip | null> {
+  if (file.size > MAX_ATTACHMENT_BYTES) return null;
+  const raw = await readFileText(file);
+  if (raw.length === 0 || raw.includes("\0")) return null;
+  return {
+    name: file.name,
+    text: raw.slice(0, MAX_ATTACHMENT_TEXT),
+    truncated: raw.length > MAX_ATTACHMENT_TEXT,
+  };
+}
+
+/** Text files travel inside the prompt; the agent sees a name and a fence. */
+function withFileAttachments(text: string, files: FileChip[]): string {
+  if (files.length === 0) return text;
+  const blocks = files
+    .map(
+      (file) =>
+        `Attached file: ${file.name}${file.truncated ? " (truncated)" : ""}\n\`\`\`\n${file.text}\n\`\`\``,
+    )
+    .join("\n\n");
+  return [text, blocks].filter(Boolean).join("\n\n");
 }
 
 /** One overflow menu for every secondary control; one permission control inside. */
@@ -185,6 +243,10 @@ export function Composer({ threadId }: { threadId?: string }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [chips, setChips] = useState<ImageChip[]>([]);
+  const [fileChips, setFileChips] = useState<FileChip[]>([]);
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
+  const [editQueueText, setEditQueueText] = useState("");
+  const [draggingQueueId, setDraggingQueueId] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
@@ -325,6 +387,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   const resetDraft = useCallback(() => {
     setValue("");
     setChips([]);
+    setFileChips([]);
     setMention(null);
     setMentionFiles([]);
     requestAnimationFrame(autosize);
@@ -357,7 +420,11 @@ export function Composer({ threadId }: { threadId?: string }) {
 
   const handleSend = useCallback(() => {
     const text = value.trim();
-    if ((!text && chips.length === 0) || busy || awaitingDecision) return;
+    if ((!text && chips.length === 0 && fileChips.length === 0) || busy || awaitingDecision) return;
+    if (chips.length > 0 && !imageCapable) {
+      setError("This agent does not accept images — remove them or switch providers.");
+      return;
+    }
     if (!isTauri()) {
       // Plain-browser dev: no backend; keep the M0 input-clearing behavior.
       resetDraft();
@@ -389,6 +456,8 @@ export function Composer({ threadId }: { threadId?: string }) {
     setBusy(true);
     setError(null);
     const images: ImageInput[] = chips.map(({ data, mimeType }) => ({ data, mimeType }));
+    const promptText = withFileAttachments(text, fileChips);
+    const pendingText = text || `Attached: ${fileChips.map((file) => file.name).join(", ")}`;
     void (async () => {
       try {
         if (!threadId) {
@@ -411,7 +480,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           const targetWorktree = project?.worktreeStrategy === "worktree";
           const thread = await useThreadsStore
             .getState()
-            .createThread(project?.id ?? null, text.slice(0, 40), {
+            .createThread(project?.id ?? null, pendingText.slice(0, 40), {
               workspace: targetWorkspace,
               worktree: targetWorktree,
             });
@@ -428,10 +497,10 @@ export function Composer({ threadId }: { threadId?: string }) {
           }
           // Show the bubble immediately, then navigate and dispatch; a failure
           // clears it and surfaces in the global banner (the composer unmounts).
-          useRunsStore.getState().setPendingUser(thread.id, text, images);
+          useRunsStore.getState().setPendingUser(thread.id, pendingText, images);
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           try {
-            await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
+            await dispatchRun(thread.id, promptText, images, pendingMode, pendingConfig);
           } catch (err) {
             useRunsStore.getState().clearPendingUser(thread.id);
             useUiStore
@@ -450,9 +519,9 @@ export function Composer({ threadId }: { threadId?: string }) {
             threadId,
             selectedInstance?.configOptions,
           );
-          useRunsStore.getState().setPendingUser(threadId, text, images);
+          useRunsStore.getState().setPendingUser(threadId, pendingText, images);
           try {
-            await dispatchRun(threadId, text, images, modeForSend(desired, threadId), config);
+            await dispatchRun(threadId, promptText, images, modeForSend(desired, threadId), config);
           } catch (err) {
             useRunsStore.getState().clearPendingUser(threadId);
             throw err;
@@ -469,6 +538,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, [
     value,
     chips,
+    fileChips,
     busy,
     awaitingDecision,
     threadId,
@@ -477,7 +547,31 @@ export function Composer({ threadId }: { threadId?: string }) {
     dispatchRun,
     selectedInstance,
     selectedInstanceId,
+    imageCapable,
   ]);
+
+  const saveQueueEdit = useCallback(() => {
+    if (!threadId || !editingQueueId) return;
+    const text = editQueueText.trim();
+    if (!text) return;
+    void runsQueueUpdate(threadId, editingQueueId, text)
+      .then(() => setEditingQueueId(null))
+      .catch((err) => setError(ipcErrorMessage(err)));
+  }, [threadId, editingQueueId, editQueueText]);
+
+  const reorderQueue = useCallback(
+    (targetId: string, sourceId: string | null) => {
+      if (!threadId || !sourceId || sourceId === targetId) return;
+      const ids = (queue ?? []).map((item) => item.id);
+      const from = ids.indexOf(sourceId);
+      const to = ids.indexOf(targetId);
+      if (from < 0 || to < 0) return;
+      ids.splice(to, 0, ...ids.splice(from, 1));
+      void runsQueueReorder(threadId, ids).catch((err) => setError(ipcErrorMessage(err)));
+      setDraggingQueueId(null);
+    },
+    [threadId, queue],
+  );
 
   const handleStop = useCallback(() => {
     if (!activeRun || activeRun.status !== "running") return;
@@ -550,24 +644,55 @@ export function Composer({ threadId }: { threadId?: string }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [pendingApproval, runIdForApproval]);
 
-  const handlePaste = useCallback(
-    async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      if (!imageCapable) return;
-      const files = Array.from(e.clipboardData.files).filter((f) => f.type.startsWith("image/"));
-      if (files.length === 0) return;
-      e.preventDefault();
-      const imported = await Promise.all(files.slice(0, 4).map(fileToChip));
-      setChips((prev) => [...prev, ...imported.filter((c): c is ImageChip => c !== null)]);
+  const attachFiles = useCallback(
+    async (picked: FileList | File[] | null) => {
+      if (!picked) return;
+      const list = Array.from(picked);
+      if (list.length === 0) return;
+
+      const room = MAX_ATTACHMENTS - chips.length - fileChips.length;
+      if (room <= 0) {
+        setError(`Up to ${MAX_ATTACHMENTS} attachments at once.`);
+        return;
+      }
+      if (list.length > room) setError(`Up to ${MAX_ATTACHMENTS} attachments at once.`);
+      const accepted = list.slice(0, room);
+      const images = accepted.filter((file) => file.type.startsWith("image/"));
+      const docs = accepted.filter((file) => !file.type.startsWith("image/"));
+
+      if (images.length > 0 && !imageCapable) {
+        setError("This agent does not accept images — attach text files instead.");
+      }
+      const importedImages = imageCapable
+        ? (await Promise.all(images.map(fileToChip))).filter(
+            (chip): chip is ImageChip => chip !== null,
+          )
+        : [];
+      const importedDocs = (await Promise.all(docs.map(fileToTextChip))).filter(
+        (chip): chip is FileChip => chip !== null,
+      );
+      if (docs.length > 0 && importedDocs.length === 0) {
+        setError("Only text files up to 5 MB can be attached.");
+      }
+      if (importedImages.length > 0) {
+        setChips((prev) => [...prev, ...importedImages]);
+      }
+      if (importedDocs.length > 0) {
+        setFileChips((prev) => [...prev, ...importedDocs]);
+      }
     },
-    [imageCapable],
+    [chips.length, fileChips.length, imageCapable],
   );
 
-  const handleAttach = useCallback(async (files: FileList | null) => {
-    if (!files) return;
-    const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
-    const imported = await Promise.all(images.slice(0, 4).map(fileToChip));
-    setChips((prev) => [...prev, ...imported.filter((c): c is ImageChip => c !== null)]);
-  }, []);
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const files = Array.from(e.clipboardData.files);
+      if (files.length === 0) return;
+      e.preventDefault();
+      void attachFiles(files);
+    },
+    [attachFiles],
+  );
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionOpen) {
@@ -635,7 +760,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   };
 
   return (
-    <div className="shrink-0 px-3 pb-5 sm:px-6">
+    <div className="shrink-0 px-6 pb-5">
       {pendingApproval && (
         <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-(--radius-md) border border-warning bg-warning/10 px-3 py-1.5">
           <span className="min-w-0 flex-1 truncate text-xs text-warning">
@@ -689,37 +814,109 @@ export function Composer({ threadId }: { threadId?: string }) {
           {queue.map((item) => (
             <div
               key={item.id}
-              className="flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5"
+              draggable={editingQueueId !== item.id}
+              onDragStart={(event) => {
+                setDraggingQueueId(item.id);
+                event.dataTransfer?.setData("text/plain", item.id);
+              }}
+              onDragEnd={() => setDraggingQueueId(null)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                reorderQueue(item.id, event.dataTransfer?.getData("text/plain") || draggingQueueId);
+              }}
+              className={`flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5 ${
+                draggingQueueId === item.id ? "opacity-60" : ""
+              }`}
             >
-              <span aria-hidden className="text-text-tertiary">
-                ⠿
-              </span>
-              <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
               <button
                 type="button"
-                aria-label="Edit queued message"
-                onClick={() => {
-                  runsQueueRemove(threadId, item.id).catch((err) =>
-                    console.error("runs_queue_remove failed", err),
-                  );
-                  setValue(item.text);
-                  textareaRef.current?.focus();
-                }}
-                className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                aria-label="Reorder queued message"
+                title="Drag to reorder"
+                className="flex h-5 w-4 cursor-grab items-center justify-center text-text-tertiary"
               >
-                <ArrowUp size={11} /> Edit
+                <GripVertical size={13} />
               </button>
-              <button
-                onClick={() =>
-                  runsQueueRemove(threadId, item.id).catch((err) =>
-                    console.error("runs_queue_remove failed", err),
-                  )
-                }
-                aria-label="Remove queued message"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-              >
-                <X size={12} />
-              </button>
+              {editingQueueId === item.id ? (
+                <input
+                  autoFocus
+                  value={editQueueText}
+                  onChange={(event) => setEditQueueText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      saveQueueEdit();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setEditingQueueId(null);
+                    }
+                  }}
+                  aria-label="Queued message text"
+                  className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 py-0.5 text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                />
+              ) : (
+                <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
+              )}
+              {editingQueueId === item.id ? (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Save"
+                    onClick={saveQueueEdit}
+                    className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-success transition hover:bg-hover"
+                  >
+                    <Check size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Cancel"
+                    onClick={() => setEditingQueueId(null)}
+                    className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Steer queued message"
+                    title="Send now, interrupting the current run"
+                    onClick={() =>
+                      runsQueueSteer(threadId, item.id).catch((err) =>
+                        setError(ipcErrorMessage(err)),
+                      )
+                    }
+                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <CornerUpRight size={11} /> Steer
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Edit queued message"
+                    onClick={() => {
+                      setEditingQueueId(item.id);
+                      setEditQueueText(item.text);
+                    }}
+                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <Pencil size={11} /> Edit
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Remove queued message"
+                    onClick={() =>
+                      runsQueueRemove(threadId, item.id).catch((err) =>
+                        console.error("runs_queue_remove failed", err),
+                      )
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <X size={12} />
+                  </button>
+                </>
+              )}
             </div>
           ))}
           <p className="px-1 text-xs text-text-tertiary">Keep typing to queue another message</p>
@@ -728,7 +925,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       <div className="relative mx-auto w-full max-w-3xl">
         <div
           aria-hidden
-          className="pointer-events-none absolute -inset-x-1 top-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border border-border-subtle bg-surface-raised"
+          className="pointer-events-none absolute -inset-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border border-border-subtle bg-surface-raised"
         />
         <div className="relative rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer-lift) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
           {runActive && (
@@ -798,6 +995,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               {chips.map((chip, i) => (
                 <div
                   key={`${chip.preview.slice(-16)}-${i}`}
+                  data-image-chip
                   className="group relative h-14 w-14 overflow-hidden rounded-(--radius-md) border border-border-subtle"
                 >
                   <img src={chip.preview} alt="Attached" className="h-full w-full object-cover" />
@@ -809,6 +1007,29 @@ export function Composer({ threadId }: { threadId?: string }) {
                     <X size={10} />
                   </button>
                 </div>
+              ))}
+            </div>
+          )}
+          {fileChips.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
+              {fileChips.map((file, i) => (
+                <span
+                  key={`${file.name}-${i}`}
+                  data-file-chip
+                  className="flex max-w-[240px] items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1 text-xs text-text-secondary"
+                >
+                  <FileText size={12} className="shrink-0 text-text-tertiary" />
+                  <span className="truncate">{file.name}</span>
+                  {file.truncated && <span className="shrink-0 text-warning">truncated</span>}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${file.name}`}
+                    onClick={() => setFileChips((prev) => prev.filter((_, j) => j !== i))}
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
               ))}
             </div>
           )}
@@ -834,40 +1055,28 @@ export function Composer({ threadId }: { threadId?: string }) {
             className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
           />
           <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
-            {imageCapable ? (
-              <label
-                title="Attach images"
-                aria-label="Attach images"
-                className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-              >
-                <Paperclip size={15} />
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    void handleAttach(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-              </label>
-            ) : (
-              <span
-                role="img"
-                aria-label="Images are not supported by this agent"
-                title="This agent does not accept images"
-                className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary/40"
-              >
-                <Paperclip size={15} />
-              </span>
-            )}
+            <label
+              title="Attach files"
+              aria-label="Attach files"
+              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <Paperclip size={15} />
+              <input
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  void attachFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+            </label>
             <ModePill threadId={threadId} />
             <div className="flex-1" />
             <ProviderModelPicker threadId={threadId} />
             <ComposerOverflowMenu threadId={threadId} />
             {runActive ? (
-              value.trim() || chips.length > 0 ? (
+              value.trim() || chips.length > 0 || fileChips.length > 0 ? (
                 <button
                   type="button"
                   onClick={handleSend}
@@ -895,7 +1104,11 @@ export function Composer({ threadId }: { threadId?: string }) {
                 onClick={handleSend}
                 aria-label="Send message"
                 title="Send message"
-                disabled={(!value.trim() && chips.length === 0) || awaitingDecision || busy}
+                disabled={
+                  (!value.trim() && chips.length === 0 && fileChips.length === 0) ||
+                  awaitingDecision ||
+                  busy
+                }
                 className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
               >
                 <ArrowUp size={14} />

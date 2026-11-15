@@ -73,8 +73,85 @@ impl Store {
         })
     }
 
-    /// Pops the oldest queued message for a thread, if any (auto-dispatch).
-    /// One DELETE…RETURNING statement: two concurrent dispatchers can never
+    /// Replaces the text of one queued message (inline edit).
+    pub fn update_queue_item_text(&self, item_id: &str, text: &str) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE queue_items SET text = ?1 WHERE id = ?2",
+                    params![text, item_id],
+                )
+                .map_err(|e| sql("update_queue_item_text update", e))?;
+            if changed == 0 {
+                return Err(PultError::internal("queue item not found"));
+            }
+            Ok(())
+        })
+    }
+
+    /// Rewrites the whole queue order; `created_at` becomes the position.
+    pub fn reorder_queue_items(&self, thread_id: &str, ids: &[String]) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("SELECT id FROM queue_items WHERE thread_id = ?1")
+                .map_err(|e| sql("reorder_queue_items select", e))?;
+            let current: Vec<String> = stmt
+                .query_map(params![thread_id], |row| row.get(0))
+                .map_err(|e| sql("reorder_queue_items query", e))?
+                .collect::<Result<_, _>>()
+                .map_err(|e| sql("reorder_queue_items row", e))?;
+            let mut seen = std::collections::HashSet::new();
+            if current.len() != ids.len()
+                || ids
+                    .iter()
+                    .any(|id| !current.contains(id) || !seen.insert(id.as_str()))
+            {
+                return Err(PultError::internal("queue order does not match the queue"));
+            }
+
+            conn.execute("BEGIN IMMEDIATE", [])
+                .map_err(|e| sql("reorder_queue_items begin", e))?;
+            for (index, id) in ids.iter().enumerate() {
+                if let Err(err) = conn.execute(
+                    "UPDATE queue_items SET created_at = ?1 WHERE id = ?2 AND thread_id = ?3",
+                    params![index as i64, id, thread_id],
+                ) {
+                    let _ = conn.execute("ROLLBACK", []);
+                    return Err(sql("reorder_queue_items update", err));
+                }
+            }
+            conn.execute("COMMIT", [])
+                .map_err(|e| sql("reorder_queue_items commit", e))?;
+            Ok(())
+        })
+    }
+
+    /// Moves one item ahead of the rest so auto-dispatch picks it first.
+    pub fn move_queue_item_to_head(
+        &self,
+        thread_id: &str,
+        item_id: &str,
+    ) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let changed = conn
+                .execute(
+                    "UPDATE queue_items
+                     SET created_at = (
+                         SELECT COALESCE(MIN(created_at), 0) - 1
+                         FROM queue_items WHERE thread_id = ?1
+                     )
+                     WHERE id = ?2 AND thread_id = ?1",
+                    params![thread_id, item_id],
+                )
+                .map_err(|e| sql("move_queue_item_to_head update", e))?;
+            if changed == 0 {
+                return Err(PultError::internal("queue item not found"));
+            }
+            Ok(())
+        })
+    }
+
+    /// Pops the oldest queued message for a thread, if any (auto-dispatch).    /// One DELETE…RETURNING statement: two concurrent dispatchers can never
     /// pop the same row (which would run the same message twice).
     pub fn pop_queue_head(&self, thread_id: &str) -> Result<Option<QueueItem>, PultError> {
         self.with_conn(|conn| {
@@ -171,5 +248,104 @@ mod tests {
 
         store.remove_queue_item("q3").unwrap();
         assert!(store.list_queue("t2").unwrap().is_empty());
+    }
+
+    #[test]
+    fn update_queue_item_text_updates_only_target_row_and_errors_on_unknown_id() {
+        use crate::store::records::ThreadRecord;
+        let store = Store::open_in_memory().unwrap();
+        store
+            .create_thread(&ThreadRecord {
+                id: "t1".to_string(),
+                project_id: None,
+                title: "t1".to_string(),
+                status: "draft".to_string(),
+                pinned: false,
+                created_at: 0,
+                updated_at: 0,
+                workspace: None,
+                main_repo: None,
+                worktree_name: None,
+            })
+            .unwrap();
+        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
+        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
+
+        store.update_queue_item_text("q1", "first updated").unwrap();
+        let listed = store.list_queue("t1").unwrap();
+        assert_eq!(
+            listed.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            vec!["first updated", "second"]
+        );
+
+        assert!(store.update_queue_item_text("missing-q", "nope").is_err());
+    }
+
+    #[test]
+    fn reorder_queue_items_changes_order_and_errors_on_unknown_id() {
+        use crate::store::records::ThreadRecord;
+        let store = Store::open_in_memory().unwrap();
+        store
+            .create_thread(&ThreadRecord {
+                id: "t1".to_string(),
+                project_id: None,
+                title: "t1".to_string(),
+                status: "draft".to_string(),
+                pinned: false,
+                created_at: 0,
+                updated_at: 0,
+                workspace: None,
+                main_repo: None,
+                worktree_name: None,
+            })
+            .unwrap();
+        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
+        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
+
+        store
+            .reorder_queue_items("t1", &["q2".to_string(), "q1".to_string()])
+            .unwrap();
+        let listed = store.list_queue("t1").unwrap();
+        assert_eq!(
+            listed.iter().map(|i| i.text.as_str()).collect::<Vec<_>>(),
+            vec!["second", "first"]
+        );
+        assert_eq!(store.pop_queue_head("t1").unwrap().unwrap().id, "q2");
+
+        assert!(store
+            .reorder_queue_items("t1", &["q1".to_string(), "missing-q".to_string()])
+            .is_err());
+    }
+
+    #[test]
+    fn move_queue_item_to_head_puts_item_first_and_errors_on_unknown_id() {
+        use crate::store::records::ThreadRecord;
+        let store = Store::open_in_memory().unwrap();
+        store
+            .create_thread(&ThreadRecord {
+                id: "t1".to_string(),
+                project_id: None,
+                title: "t1".to_string(),
+                status: "draft".to_string(),
+                pinned: false,
+                created_at: 0,
+                updated_at: 0,
+                workspace: None,
+                main_repo: None,
+                worktree_name: None,
+            })
+            .unwrap();
+        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
+        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
+        store.enqueue_queue_item(&item("q3", "t1", "third", 30)).unwrap();
+
+        store.move_queue_item_to_head("t1", "q3").unwrap();
+        let listed = store.list_queue("t1").unwrap();
+        assert_eq!(
+            listed.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["q3", "q1", "q2"]
+        );
+
+        assert!(store.move_queue_item_to_head("t1", "missing-q").is_err());
     }
 }

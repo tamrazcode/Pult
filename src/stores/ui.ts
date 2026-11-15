@@ -3,7 +3,7 @@ import { onAgentProcess, providersInstancesList, settingsGet, settingsSet } from
 import { isTauri } from "../lib/tauri";
 import type { InstanceInfo } from "../lib/types";
 
-export type RightPanelTab = "diff" | "files" | "terminal" | "pull-requests";
+export type RightPanelTab = "browser" | "diff" | "files" | "terminal" | "pull-requests";
 
 /**
  * App-level error with a designed recovery path (§8 M7): agent crash,
@@ -38,6 +38,8 @@ interface UiState {
   rightPanelOpen: boolean;
   rightPanelWidth: number;
   rightPanelTab: RightPanelTab;
+  /** Floating project card in the chat; independent of the right panel. */
+  projectWidgetOpen: boolean;
   instances: InstanceInfo[];
   selectedInstanceId: string | null;
   /** ⌘K command palette visibility (§6.7) — opened from hotkeys and buttons. */
@@ -57,6 +59,8 @@ interface UiState {
   collapsedProjects: string[];
   toggleProjectCollapsed: (projectId: string) => void;
   toggleRightPanel: () => void;
+  toggleProjectWidget: () => void;
+  setProjectWidgetOpen: (open: boolean) => void;
   setRightPanelTab: (tab: RightPanelTab) => void;
   setPaletteOpen: (open: boolean) => void;
   setComposerPrefill: (text: string | null) => void;
@@ -145,6 +149,7 @@ export const useUiStore = create<UiState>((set) => ({
   rightPanelOpen: false,
   rightPanelWidth: 420, // slightly wider than the old fixed w-96
   rightPanelTab: "diff",
+  projectWidgetOpen: true,
   instances: [],
   selectedInstanceId: null,
   instanceByThread: {},
@@ -176,6 +181,8 @@ export const useUiStore = create<UiState>((set) => ({
         sidebarOpen: rightPanelOpen && isNarrowViewport() ? false : s.sidebarOpen,
       };
     }),
+  toggleProjectWidget: () => set((s) => ({ projectWidgetOpen: !s.projectWidgetOpen })),
+  setProjectWidgetOpen: (projectWidgetOpen) => set({ projectWidgetOpen }),
   setRightPanelTab: (tab) =>
     set((s) => ({
       rightPanelTab: tab,

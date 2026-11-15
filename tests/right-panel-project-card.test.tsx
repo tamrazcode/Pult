@@ -1,10 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
-import type { InstanceInfo } from "../src/lib/types";
 
 const {
-  openInEditor,
   gitStatus,
   gitDiffSummary,
   gitDiff,
@@ -15,7 +13,6 @@ const {
   terminalPtyCreate,
   terminalPtyList,
 } = vi.hoisted(() => ({
-  openInEditor: vi.fn(async () => undefined),
   gitStatus: vi.fn(async () => ({
     repoRoot: "C:\\work\\alpha",
     branch: "feat/ui",
@@ -48,7 +45,6 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
   const actual = await importOriginal<typeof IpcModule>();
   return {
     ...actual,
-    openInEditor,
     gitStatus,
     gitDiffSummary,
     gitDiff,
@@ -64,29 +60,10 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 import { RightPanel } from "../src/components/layout/RightPanel";
 import { useGitStore } from "../src/stores/git";
 import { useProjectsStore } from "../src/stores/projects";
-import { useRunsStore } from "../src/stores/runs";
 import { useSettingsStore } from "../src/stores/settings";
 import { useTerminalsStore } from "../src/stores/terminals";
 import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
-
-function makeInstance(id: string, displayName: string): InstanceInfo {
-  return {
-    id,
-    displayName,
-    enabled: true,
-    driver: id,
-    command: id,
-    args: [],
-    env: {},
-    status: "running",
-    promptImage: false,
-    loadSession: true,
-    modes: [],
-    configOptions: [],
-    authMethods: [],
-  };
-}
 
 function seedAlphaProjectWithThread() {
   useProjectsStore.setState({
@@ -122,67 +99,10 @@ function seedAlphaProjectWithThread() {
     unreadIds: [],
     loaded: true,
   });
-
-  useGitStore.setState({
-    byThread: {
-      th: {
-        status: {
-          repoRoot: "C:\\work\\alpha",
-          branch: "feat/ui",
-          upstream: null,
-          ahead: 0,
-          behind: 0,
-          entries: [],
-        },
-        diff: {
-          repoRoot: "C:\\work\\alpha",
-          base: "HEAD",
-          totalAdded: 14,
-          totalRemoved: 3,
-          files: [],
-        },
-        filePatches: {},
-        notRepo: false,
-        loading: false,
-        error: null,
-        commitMessage: "",
-        busy: null,
-        lastCommit: null,
-        lastCommitMessage: null,
-        pushedSha: null,
-        prUrl: null,
-        reviewed: {},
-      },
-    },
-  });
-
-  useRunsStore.setState({
-    runsByThread: {
-      th: [
-        {
-          id: "r1",
-          threadId: "th",
-          idx: 0,
-          status: "finished",
-          instanceId: "claude-code",
-          startedAt: 10,
-        },
-        {
-          id: "r2",
-          threadId: "th",
-          idx: 1,
-          status: "failed",
-          instanceId: "codex",
-          startedAt: 20,
-        },
-      ],
-    },
-  });
 }
 
-describe("RightPanel ProjectCard & surfaces", () => {
+describe("RightPanel surfaces", () => {
   beforeEach(() => {
-    openInEditor.mockClear();
     settingsGet.mockReset().mockResolvedValue(null);
     settingsSet.mockReset().mockResolvedValue(undefined);
     terminalPtyList.mockReset().mockResolvedValue([]);
@@ -190,79 +110,17 @@ describe("RightPanel ProjectCard & surfaces", () => {
     useUiStore.setState({
       rightPanelOpen: true,
       rightPanelTab: "diff",
-      instances: [makeInstance("claude-code", "Claude Code"), makeInstance("codex", "Codex")],
-      selectedInstanceId: "claude-code",
+      instances: [],
+      selectedInstanceId: null,
     });
     useProjectsStore.setState({ projects: [], selectedProjectId: null, loaded: true });
     useThreadsStore.setState({ threads: [], activeThreadId: null, unreadIds: [], loaded: true });
-    useRunsStore.setState({
-      runsByThread: {},
-      viewsByRun: {},
-      appliedEvents: {},
-      commandsByThread: {},
-      queueByThread: {},
-      filesByThread: {},
-    });
     useGitStore.setState({ byThread: {}, viewMode: "unified", ghAvailable: false, prHistory: [] });
     useTerminalsStore.setState({ byThread: {}, activeByThread: {} });
     useSettingsStore.setState({ preferredEditor: "zed" });
   });
 
-  it("renders project name, branch, uncommitted +N -N, and previous agents with failed count", () => {
-    seedAlphaProjectWithThread();
-
-    render(<RightPanel width={360} />);
-
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
-    expect(screen.getAllByText("feat/ui").length).toBeGreaterThan(0);
-    expect(screen.getByText(/Uncommitted/i)).toBeInTheDocument();
-    expect(screen.getByText("+14")).toBeInTheDocument();
-    expect(screen.getByText("-3")).toBeInTheDocument();
-
-    const prevHeading = screen.getByText(/Previous agents/i);
-    const prevArea =
-      prevHeading.closest("section") ??
-      prevHeading.parentElement?.parentElement ??
-      prevHeading.parentElement!;
-    expect(prevArea.textContent).toMatch(/Claude Code|claude-code/i);
-    expect(prevArea.textContent).toMatch(/Codex/i);
-    expect(prevArea.textContent).toMatch(/1\s*failed/i);
-  });
-
-  it("calls openInEditor with workspace path when Open in Zed is clicked", () => {
-    seedAlphaProjectWithThread();
-
-    render(<RightPanel width={360} />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Open in Zed/i }));
-    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "zed");
-  });
-
-  it("shows logos for all editors and switches the preferred editor from the card", () => {
-    seedAlphaProjectWithThread();
-
-    render(<RightPanel width={360} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Choose editor" }));
-    const menu = screen.getByRole("menu", { name: "Editor" });
-    for (const [id, label] of [
-      ["vscode", "VS Code"],
-      ["zed", "Zed"],
-      ["antigravity", "Antigravity"],
-      ["explorer", "File Explorer"],
-    ]) {
-      const item = within(menu).getByRole("menuitem", { name: label });
-      expect(item.querySelector(`img[data-editor-logo="${id}"]`)).toBeTruthy();
-    }
-
-    fireEvent.click(within(menu).getByRole("menuitem", { name: "VS Code" }));
-    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "vscode");
-    expect(useSettingsStore.getState().preferredEditor).toBe("vscode");
-    const primary = screen.getByRole("button", { name: /Open in VS Code/i });
-    expect(primary.querySelector('img[data-editor-logo="vscode"]')).toBeTruthy();
-  });
-
-  it("opens '+' surface menu with Files, Diff, Terminal, Pull requests and switches", () => {
+  it("opens '+' surface menu with Browser, Terminal, Files, Diff and keeps Pull request disabled", () => {
     seedAlphaProjectWithThread();
     useUiStore.setState({ rightPanelOpen: false, rightPanelTab: "diff" });
 
@@ -271,45 +129,24 @@ describe("RightPanel ProjectCard & surfaces", () => {
     const addBtn = screen.getByRole("button", { name: "Open a surface" });
     fireEvent.click(addBtn);
 
-    const menu = screen.getByRole("menu");
+    const menu = screen.getByRole("menu", { name: "Open a surface" });
+    expect(within(menu).getByText("Browser")).toBeInTheDocument();
+    expect(within(menu).getByText("Terminal")).toBeInTheDocument();
     expect(within(menu).getByText("Files")).toBeInTheDocument();
     expect(within(menu).getByText("Diff")).toBeInTheDocument();
-    expect(within(menu).getByText("Terminal")).toBeInTheDocument();
-    expect(within(menu).getByText("Pull requests")).toBeInTheDocument();
-    expect(within(menu).queryByText(/Browser/i)).toBeNull();
-    expect(within(menu).queryByText(/Device/i)).toBeNull();
+    expect(within(menu).getByText("Pull request")).toBeInTheDocument();
+
+    const pullRequestItem = within(menu).getByRole("menuitem", { name: /^Pull request/i });
+    expect(pullRequestItem).toBeDisabled();
 
     fireEvent.click(within(menu).getByText("Terminal"));
     expect(useUiStore.getState().rightPanelTab).toBe("terminal");
-    expect(useUiStore.getState().rightPanelOpen).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Open a surface" }));
-    fireEvent.click(within(screen.getByRole("menu")).getByText("Pull requests"));
-    expect(useUiStore.getState().rightPanelTab).toBe("pull-requests");
-  });
-
-  it("falls back to projectsStore.selectedProjectId when no thread is active on /chat", () => {
-    useProjectsStore.setState({
-      projects: [
-        {
-          id: "p1",
-          name: "Alpha",
-          rootPath: "C:\\work\\alpha",
-          color: "#346bf1",
-          worktreeStrategy: "root",
-          pinned: false,
-          createdAt: 100,
-        },
-      ],
-      selectedProjectId: "p1",
-      loaded: true,
-    });
-    useThreadsStore.setState({ threads: [], activeThreadId: null, loaded: true });
-
-    render(<RightPanel width={360} />);
-
-    expect(screen.getByText("Alpha")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Open in Zed/i }));
-    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "zed");
+    const reopenedMenu = screen.getByRole("menu", { name: "Open a surface" });
+    const reopenedPrItem = within(reopenedMenu).getByRole("menuitem", { name: /^Pull request/i });
+    expect(reopenedPrItem).toBeDisabled();
+    fireEvent.click(reopenedPrItem);
+    expect(useUiStore.getState().rightPanelTab).toBe("terminal");
   });
 });

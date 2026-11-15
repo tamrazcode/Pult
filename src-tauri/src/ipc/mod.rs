@@ -502,6 +502,42 @@ pub fn runs_queue_remove(
 }
 
 #[tauri::command]
+pub fn runs_queue_update(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    queue_id: String,
+    text: String,
+) -> Result<(), PultError> {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return Err(PultError::internal("queue message cannot be empty"));
+    }
+    runtime.store().update_queue_item_text(&queue_id, &text)?;
+    runtime.emit_queue_updated(&thread_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn runs_queue_reorder(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    queue_ids: Vec<String>,
+) -> Result<(), PultError> {
+    runtime.store().reorder_queue_items(&thread_id, &queue_ids)?;
+    runtime.emit_queue_updated(&thread_id);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn runs_queue_steer(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    queue_id: String,
+) -> Result<(), PultError> {
+    runtime.steer(&thread_id, &queue_id)
+}
+
+#[tauri::command]
 pub async fn runs_cancel(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     run_id: String,
@@ -871,10 +907,18 @@ pub fn validate_external_url(url: &str) -> Result<(), PultError> {
         ));
     }
     let lower = trimmed.to_ascii_lowercase();
-    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+    let rest = if let Some(rest) = lower.strip_prefix("https://") {
+        rest
+    } else if let Some(rest) = lower.strip_prefix("http://") {
+        rest
+    } else {
         return Err(PultError::internal(
             "only http(s) links can be opened in the browser",
         ));
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() || host.starts_with(':') {
+        return Err(PultError::internal("URL has no host"));
     }
     Ok(())
 }
@@ -886,8 +930,10 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
     let url = url.trim();
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut command = std::process::Command::new("rundll32.exe");
-        command.arg("url.dll,FileProtocolHandler").arg(url);
+        // explorer.exe launches the default browser without cmd/PowerShell
+        // mangling query strings or percent escapes.
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(url);
         command
     };
     #[cfg(target_os = "macos")]
@@ -946,7 +992,11 @@ pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultEr
     #[cfg(target_os = "windows")]
     let mut command = {
         let mut command = std::process::Command::new("explorer.exe");
-        command.arg(&target);
+        if requested == "explorer" && target.is_file() {
+            command.arg(format!("/select,{}", target.display()));
+        } else {
+            command.arg(&target);
+        }
         command
     };
     #[cfg(target_os = "macos")]
@@ -1345,6 +1395,107 @@ pub async fn providers_update_install(
     })
     .await
     .map_err(|e| PultError::internal(format!("update install failed: {e}")))?
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowserTarget {
+    pub kind: String,
+    pub target: String,
+}
+
+fn validate_browser_target(target: &str) -> Result<BrowserTarget, PultError> {
+    let trimmed = target.trim();
+    if trimmed.is_empty() {
+        return Err(PultError::internal("empty browser target"));
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        validate_external_url(trimmed)?;
+        return Ok(BrowserTarget {
+            kind: "url".to_string(),
+            target: trimmed.to_string(),
+        });
+    }
+    if lower.starts_with("javascript:")
+        || lower.starts_with("data:")
+        || lower.starts_with("vbscript:")
+        || lower.starts_with("file:")
+        || trimmed.starts_with("\\\\")
+        || trimmed.starts_with("//")
+        || std::path::Path::new(trimmed).is_absolute()
+        || trimmed.split(['/', '\\']).any(|part| part == "..")
+        || !(lower.ends_with(".html") || lower.ends_with(".htm"))
+    {
+        return Err(PultError::internal(
+            "only http(s) URLs or workspace HTML files can be previewed",
+        ));
+    }
+    Ok(BrowserTarget {
+        kind: "file".to_string(),
+        target: trimmed.to_string(),
+    })
+}
+
+#[tauri::command]
+pub fn browser_validate_target(target: String) -> Result<BrowserTarget, PultError> {
+    validate_browser_target(&target)
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbedCheck {
+    pub embeddable: bool,
+    pub reason: Option<String>,
+}
+
+#[tauri::command]
+pub fn browser_check_frame_headers(url: String) -> Result<EmbedCheck, PultError> {
+    validate_external_url(&url)?;
+    let output = std::process::Command::new("curl")
+        .args(["-sI", "-L", "--max-time", "5", &url])
+        .output();
+    let Ok(output) = output else {
+        return Ok(EmbedCheck {
+            embeddable: true,
+            reason: None,
+        });
+    };
+    let headers = String::from_utf8_lossy(&output.stdout).to_ascii_lowercase();
+    let xfo = headers
+        .lines()
+        .find(|line| line.starts_with("x-frame-options:"))
+        .unwrap_or("");
+    if xfo.contains("deny") || xfo.contains("sameorigin") {
+        return Ok(EmbedCheck {
+            embeddable: false,
+            reason: Some("Blocked by X-Frame-Options".to_string()),
+        });
+    }
+    let csp = headers
+        .lines()
+        .find(|line| line.starts_with("content-security-policy:") && line.contains("frame-ancestors"))
+        .unwrap_or("");
+    if !csp.is_empty() && !csp.contains("frame-ancestors *") {
+        return Ok(EmbedCheck {
+            embeddable: false,
+            reason: Some("Blocked by Content-Security-Policy frame-ancestors".to_string()),
+        });
+    }
+    Ok(EmbedCheck {
+        embeddable: true,
+        reason: None,
+    })
+}
+
+/// Reads an HTML file from the thread workspace for the browser surface.
+#[tauri::command]
+pub async fn workspace_read_html(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    path: String,
+) -> Result<String, PultError> {
+    workspace_read_text(runtime, thread_id, path).await
 }
 
 /// Reads a local raster image the agent referenced and returns a data URL.
