@@ -241,7 +241,8 @@ async fn worktree_create_remove_roundtrip() {
     assert!(parent_diff.files.is_empty());
     // Removal cleans both the dir and the registration.
     let name = wt_path.file_name().unwrap().to_string_lossy().into_owned();
-    worktree_remove(fx.path(), &name).await.unwrap();
+    // The worktree has an uncommitted change, so removal needs force.
+    worktree_remove(fx.path(), &name, true).await.unwrap();
     assert!(!wt_path.exists());
     let list = git_sync(fx.path(), &["worktree", "list", "--porcelain"]);
     assert!(!list.contains("worktrees/"));
@@ -497,5 +498,39 @@ async fn diff_file_handles_spaces_and_unicode_paths() {
     let one = diff_file(fx.path(), rel, None).await.unwrap();
     assert_eq!(one.path, rel);
     assert_eq!(one.raw, full.files[0].raw);
+}
+
+#[tokio::test]
+async fn worktree_remove_preserves_untracked_file_unless_forced() {
+    let fx = fixture_repo().await;
+    let wt = worktree_create(fx.path(), "dirty-wt").await.unwrap();
+    let wt_path = PathBuf::from(&wt.path);
+    let name = wt_path.file_name().unwrap().to_string_lossy().into_owned();
+
+    let untracked = wt_path.join("untracked-notes.txt");
+    std::fs::write(&untracked, "keep me safe\n").unwrap();
+
+    let dirty: WorktreeDirtyStatus = worktree_dirty_status(&wt_path).await.unwrap();
+    assert!(dirty.dirty);
+    assert_eq!(dirty.untracked, 1);
+    assert_eq!(dirty.modified, 0);
+    assert!(
+        dirty
+            .entries
+            .iter()
+            .any(|e| e.contains("untracked-notes.txt")),
+        "expected untracked-notes.txt in dirty entries, got {:?}",
+        dirty.entries
+    );
+
+    let err = worktree_remove(fx.path(), &name, false).await.unwrap_err();
+    assert_eq!(err_code(&err), "git.worktree_dirty");
+    assert!(
+        untracked.exists(),
+        "untracked file must still exist when force=false"
+    );
+
+    worktree_remove(fx.path(), &name, true).await.unwrap();
+    assert!(!wt_path.exists(), "worktree removed when force=true");
 }
 

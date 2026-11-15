@@ -3,9 +3,10 @@
 //! dispatches it automatically after `run_finished` (§4.2: one active run per
 //! thread, queue behind it).
 
-use rusqlite::params;
+use rusqlite::{params, Row};
 
-use crate::store::records::QueueItem;
+use crate::events::Event;
+use crate::store::records::{QueueItem, RunRecord};
 use crate::store::{sql, Store};
 use crate::PultError;
 
@@ -15,16 +16,22 @@ impl Store {
     pub fn enqueue_queue_item(&self, item: &QueueItem) -> Result<(), PultError> {
         let images = serde_json::to_string(&item.images)
             .map_err(|e| PultError::store(format!("enqueue_queue_item encode images: {e}")))?;
+        let config_options = serde_json::to_string(&item.config_options).map_err(|e| {
+            PultError::store(format!("enqueue_queue_item encode config_options: {e}"))
+        })?;
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO queue_items (id, thread_id, instance_id, text, images, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO queue_items
+                     (id, thread_id, instance_id, text, images, mode, config_options, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     item.id,
                     item.thread_id,
                     item.instance_id,
                     item.text,
                     images,
+                    item.mode,
+                    config_options,
                     item.created_at
                 ],
             )
@@ -33,28 +40,19 @@ impl Store {
         })
     }
 
-    /// The thread's queued messages, oldest first.
+    /// The thread's unclaimed queued messages, oldest first.
     pub fn list_queue(&self, thread_id: &str) -> Result<Vec<QueueItem>, PultError> {
         self.with_conn(|conn| {
             let mut stmt = conn
                 .prepare(
-                    "SELECT id, thread_id, instance_id, text, images, created_at
-                     FROM queue_items WHERE thread_id = ?1
+                    "SELECT id, thread_id, instance_id, text, images, mode, config_options,
+                            created_at
+                     FROM queue_items WHERE thread_id = ?1 AND claiming_run_id IS NULL
                      ORDER BY created_at ASC, rowid ASC",
                 )
                 .map_err(|e| sql("list_queue prepare", e))?;
             let rows = stmt
-                .query_map(params![thread_id], |row| {
-                    let raw: String = row.get(4)?;
-                    Ok(QueueItem {
-                        id: row.get(0)?,
-                        thread_id: row.get(1)?,
-                        instance_id: row.get(2)?,
-                        text: row.get(3)?,
-                        images: serde_json::from_str(&raw).unwrap_or_default(),
-                        created_at: row.get(5)?,
-                    })
-                })
+                .query_map(params![thread_id], queue_item_row)
                 .map_err(|e| sql("list_queue query", e))?;
             let mut items = Vec::new();
             for row in rows {
@@ -151,7 +149,8 @@ impl Store {
         })
     }
 
-    /// Pops the oldest queued message for a thread, if any (auto-dispatch).    /// One DELETE…RETURNING statement: two concurrent dispatchers can never
+    /// Pops the oldest queued message for a thread, if any (auto-dispatch).
+    /// One DELETE…RETURNING statement: two concurrent dispatchers can never
     /// pop the same row (which would run the same message twice).
     pub fn pop_queue_head(&self, thread_id: &str) -> Result<Option<QueueItem>, PultError> {
         self.with_conn(|conn| {
@@ -162,7 +161,8 @@ impl Store {
                          SELECT id FROM queue_items WHERE thread_id = ?1
                          ORDER BY created_at ASC, rowid ASC LIMIT 1
                      )
-                     RETURNING id, thread_id, instance_id, text, images, created_at",
+                     RETURNING id, thread_id, instance_id, text, images, mode, config_options,
+                               created_at",
                 )
                 .map_err(|e| sql("pop_queue_head prepare", e))?;
             let mut rows = stmt
@@ -171,23 +171,165 @@ impl Store {
             let Some(row) = rows.next().map_err(|e| sql("pop_queue_head row", e))? else {
                 return Ok(None);
             };
-            let raw: String = row.get(4).map_err(|e| sql("pop_queue_head images", e))?;
-            Ok(Some(QueueItem {
-                id: row.get(0).map_err(|e| sql("pop_queue_head id", e))?,
-                thread_id: row
-                    .get(1)
-                    .map_err(|e| sql("pop_queue_head thread_id", e))?,
-                instance_id: row
-                    .get(2)
-                    .map_err(|e| sql("pop_queue_head instance_id", e))?,
-                text: row.get(3).map_err(|e| sql("pop_queue_head text", e))?,
-                images: serde_json::from_str(&raw).unwrap_or_default(),
-                created_at: row
-                    .get(5)
-                    .map_err(|e| sql("pop_queue_head created_at", e))?,
-            }))
+            Ok(Some(
+                queue_item_row(row).map_err(|e| sql("pop_queue_head row", e))?,
+            ))
         })
     }
+
+    /// Claims the oldest unclaimed queued message for a thread by stamping
+    /// `claim_token` on it, without deleting it. A second claim while the
+    /// first is unreleased returns `None`, so two dispatchers cannot run the
+    /// same message twice; the row only leaves the queue in
+    /// [`Store::commit_claimed_queue_run`].
+    pub fn claim_queue_head(
+        &self,
+        thread_id: &str,
+        claim_token: &str,
+    ) -> Result<Option<QueueItem>, PultError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "UPDATE queue_items SET claiming_run_id = ?2
+                     WHERE id = (
+                         SELECT id FROM queue_items
+                         WHERE thread_id = ?1 AND claiming_run_id IS NULL
+                         ORDER BY created_at ASC, rowid ASC LIMIT 1
+                     )
+                       AND claiming_run_id IS NULL
+                     RETURNING id, thread_id, instance_id, text, images, mode, config_options,
+                               created_at",
+                )
+                .map_err(|e| sql("claim_queue_head prepare", e))?;
+            let mut rows = stmt
+                .query(params![thread_id, claim_token])
+                .map_err(|e| sql("claim_queue_head query", e))?;
+            let Some(row) = rows.next().map_err(|e| sql("claim_queue_head row", e))? else {
+                return Ok(None);
+            };
+            Ok(Some(
+                queue_item_row(row).map_err(|e| sql("claim_queue_head row", e))?,
+            ))
+        })
+    }
+
+    /// Drops a claim so the row shows up in `list_queue` again (dispatch
+    /// failed before the run committed).
+    pub fn release_queue_claim(&self, queue_id: &str) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            conn.execute(
+                "UPDATE queue_items SET claiming_run_id = NULL WHERE id = ?1",
+                params![queue_id],
+            )
+            .map_err(|e| sql("release_queue_claim update", e))?;
+            Ok(())
+        })
+    }
+
+    /// Commits a claimed queue item: inserts the run, its first event, and
+    /// deletes the queue row in ONE transaction. Any failure rolls all three
+    /// back, so the message survives a failed dispatch.
+    pub fn commit_claimed_queue_run(
+        &self,
+        queue_id: &str,
+        run: &RunRecord,
+        user_event: &Event,
+    ) -> Result<(), PultError> {
+        let (kind, payload) = encode_event(user_event)?;
+        self.with_conn(|conn| {
+            conn.execute("BEGIN IMMEDIATE", [])
+                .map_err(|e| sql("commit_claimed_queue_run begin", e))?;
+            let write = (|| -> Result<(), PultError> {
+                conn.execute(
+                    "INSERT INTO runs (id, thread_id, idx, status, instance_id, model, mode, effort,
+                                       started_at, stopped_at, stop_reason, error)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    params![
+                        run.id,
+                        run.thread_id,
+                        run.idx,
+                        run.status,
+                        run.instance_id,
+                        run.model,
+                        run.mode,
+                        run.effort,
+                        run.started_at,
+                        run.stopped_at,
+                        run.stop_reason,
+                        run.error,
+                    ],
+                )
+                .map_err(|e| sql("commit_claimed_queue_run insert run", e))?;
+                conn.execute(
+                    "INSERT INTO events (id, run_id, seq, ts, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        user_event.id,
+                        user_event.run_id,
+                        user_event.seq as i64,
+                        user_event.ts,
+                        kind,
+                        payload
+                    ],
+                )
+                .map_err(|e| sql("commit_claimed_queue_run insert event", e))?;
+                conn.execute("DELETE FROM queue_items WHERE id = ?1", params![queue_id])
+                    .map_err(|e| sql("commit_claimed_queue_run delete queue row", e))?;
+                Ok(())
+            })();
+            match write {
+                Ok(()) => conn
+                    .execute("COMMIT", [])
+                    .map(|_| ())
+                    .map_err(|e| sql("commit_claimed_queue_run commit", e)),
+                Err(err) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    Err(err)
+                }
+            }
+        })
+    }
+}
+
+/// One queue row in SELECT order (see the column list in the queries above).
+fn queue_item_row(row: &Row<'_>) -> rusqlite::Result<QueueItem> {
+    let images: String = row.get(4)?;
+    let config_options: String = row.get(6)?;
+    Ok(QueueItem {
+        id: row.get(0)?,
+        thread_id: row.get(1)?,
+        instance_id: row.get(2)?,
+        text: row.get(3)?,
+        images: serde_json::from_str(&images).unwrap_or_default(),
+        mode: row.get(5)?,
+        config_options: serde_json::from_str(&config_options).unwrap_or_default(),
+        created_at: row.get(7)?,
+    })
+}
+
+/// Splits an `EventKind` into its stored columns (serde tag + payload JSON),
+/// mirroring `store::events::split_kind` for the transactional insert.
+fn encode_event(event: &Event) -> Result<(String, String), PultError> {
+    let value = serde_json::to_value(&event.kind).map_err(|e| {
+        PultError::store(format!("commit_claimed_queue_run encode kind ({}): {e}", event.id))
+    })?;
+    let kind = value["kind"]
+        .as_str()
+        .ok_or_else(|| {
+            PultError::store(format!(
+                "commit_claimed_queue_run: event {} has no kind tag",
+                event.id
+            ))
+        })?
+        .to_string();
+    let payload = serde_json::to_string(value.get("payload").unwrap_or(&serde_json::Value::Null))
+        .map_err(|e| {
+        PultError::store(format!(
+            "commit_claimed_queue_run encode payload ({}): {e}",
+            event.id
+        ))
+    })?;
+    Ok((kind, payload))
 }
 
 #[cfg(test)]
@@ -205,6 +347,8 @@ mod tests {
                 data: "aGk=".to_string(),
                 mime_type: "image/png".to_string(),
             }],
+            mode: None,
+            config_options: Default::default(),
             created_at,
         }
     }

@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 
 /** Full-window image preview; Escape or a backdrop click closes it. */
@@ -11,12 +11,33 @@ export function ImageLightbox({
   alt?: string;
   onClose: () => void;
 }) {
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const restoreRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    restoreRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeRef.current?.focus();
+    return () => {
+      // Escape/backdrop closed the dialog: give the keyboard back to the
+      // thumbnail that opened it.
+      if (restoreRef.current?.isConnected) restoreRef.current.focus();
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      onClose();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        onClose();
+        return;
+      }
+      // Only Close is focusable here; Tab must not reach the UI behind.
+      if (event.key === "Tab") {
+        event.preventDefault();
+        closeRef.current?.focus();
+      }
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
@@ -33,6 +54,7 @@ export function ImageLightbox({
       onClick={onClose}
     >
       <button
+        ref={closeRef}
         type="button"
         aria-label="Close image preview"
         onClick={onClose}

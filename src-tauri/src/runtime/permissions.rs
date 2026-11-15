@@ -107,16 +107,26 @@ fn in_workspace(root: &std::path::Path, path: &str) -> bool {
 }
 
 /// Resolve a permission request under the active mode (§5.5). Remembered
-/// decisions (allow_always) win over the mode's scope checks.
+/// decisions (allow_always) auto-resolve only outside `supervised`, while
+/// the request stays inside the workspace, and while the remembered option
+/// is still offered with an allow kind.
 pub fn resolve(
     mode: PermissionMode,
     root: &std::path::Path,
     request: &PolicyRequest<'_>,
 ) -> PolicyDecision {
-    // A remembered allow_always for this tool class short-circuits everything.
-    if let Some(option_id) = request.remembered {
-        if request.options.iter().any(|o| o.option_id == option_id) {
-            return PolicyDecision::AutoResolve(option_id.to_string());
+    // A remembered allow_always short-circuits the mode scope only when the
+    // mode is not supervised, nothing escapes the workspace, and the option
+    // still maps to an allow kind (never a reused reject id).
+    if mode != PermissionMode::Supervised && !request.escapes_workspace(root) {
+        if let Some(option_id) = request.remembered {
+            if request
+                .options
+                .iter()
+                .any(|o| o.option_id == option_id && o.kind.starts_with("allow"))
+            {
+                return PolicyDecision::AutoResolve(option_id.to_string());
+            }
         }
     }
     match mode {
@@ -201,12 +211,26 @@ mod tests {
         let options = opts();
         let r = req("edit", &paths, &options, None);
         assert_eq!(resolve(PermissionMode::Supervised, &root(), &r), PolicyDecision::Ask);
-        // remembered allow wins even under supervised (the user chose always)
+
+        // Supervised ALWAYS asks even with a remembered allow_always.
         let r2 = req("edit", &paths, &options, Some("always"));
+        assert_eq!(resolve(PermissionMode::Supervised, &root(), &r2), PolicyDecision::Ask);
+
+        // Remembered allow_always short-circuits outside Supervised inside the workspace
+        // when the remembered option id still maps to an allow* kind.
+        let r_auto_del = req("delete", &paths, &options, Some("always"));
         assert_eq!(
-            resolve(PermissionMode::Supervised, &root(), &r2),
+            resolve(PermissionMode::Auto, &root(), &r_auto_del),
             PolicyDecision::AutoResolve("always".into())
         );
+
+        // Remembered option id that now maps to a reject* kind must not auto-resolve.
+        let reject_now = vec![PolicyOption {
+            option_id: "always".into(),
+            kind: "reject_once".into(),
+        }];
+        let r_reject = req("edit", &paths, &reject_now, Some("always"));
+        assert_eq!(resolve(PermissionMode::Auto, &root(), &r_reject), PolicyDecision::Ask);
     }
 
     #[test]
@@ -294,4 +318,53 @@ mod tests {
         assert_eq!(PermissionMode::from_settings_value(&serde_json::json!("nope")), None);
         assert_eq!(PermissionMode::default_mode(), PermissionMode::Supervised);
     }
+
+    #[test]
+    fn remembered_never_overrides_supervised_or_workspace_escape_or_reject_kind() {
+        let inside = vec!["/repo/src/main.rs".to_string()];
+        let outside = vec!["/repo/../../etc/passwd".to_string()];
+        let options = opts();
+
+        // (a) Supervised always asks even with remembered allow_always.
+        let r_supervised = req("edit", &inside, &options, Some("always"));
+        assert_eq!(
+            resolve(PermissionMode::Supervised, &root(), &r_supervised),
+            PolicyDecision::Ask
+        );
+
+        // (b) AutoEdit with workspace escape asks even with remembered allow_always.
+        let r_escape = req("edit", &outside, &options, Some("always"));
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r_escape),
+            PolicyDecision::Ask
+        );
+
+        // (c) Auto with remembered option whose current kind starts with "reject" must not auto-resolve to it.
+        let reject_only = vec![PolicyOption {
+            option_id: "opt-1".into(),
+            kind: "reject_once".into(),
+        }];
+        let r_reject_only = req("edit", &inside, &reject_only, Some("opt-1"));
+        assert_eq!(
+            resolve(PermissionMode::Auto, &root(), &r_reject_only),
+            PolicyDecision::Ask
+        );
+
+        let mixed = vec![
+            PolicyOption {
+                option_id: "opt-1".into(),
+                kind: "reject_always".into(),
+            },
+            PolicyOption {
+                option_id: "opt-allow".into(),
+                kind: "allow_once".into(),
+            },
+        ];
+        let r_mixed = req("edit", &inside, &mixed, Some("opt-1"));
+        assert_ne!(
+            resolve(PermissionMode::Auto, &root(), &r_mixed),
+            PolicyDecision::AutoResolve("opt-1".into())
+        );
+    }
 }
+

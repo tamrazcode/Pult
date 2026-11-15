@@ -13,6 +13,7 @@
  *                          the first agent_message_chunk (exit code 1)
  *   MOCK_HANG=1            accept initialize/session/new but never answer
  *                          session/prompt
+ *   MOCK_REJECT_LOAD=1     session/load answers JSON-RPC error -32000
  */
 
 import { createInterface } from "node:readline";
@@ -27,6 +28,7 @@ const DELAY_MS = SLOW_TURN ? 300 : Number.parseInt(process.env.MOCK_DELAY_MS ?? 
 const BAD_JSON = process.env.MOCK_BAD_JSON === "1";
 const CRASH_MID_TURN = process.env.MOCK_CRASH_MID_TURN === "1";
 const HANG = process.env.MOCK_HANG === "1";
+const REJECT_LOAD = process.env.MOCK_REJECT_LOAD === "1";
 const SPAWN_LOG = process.env.MOCK_SPAWN_LOG || "";
 
 const PROTOCOL_VERSION = 1;
@@ -762,6 +764,10 @@ function handleSetMode(id, params) {
 function handleLoadSession(id, params) {
   if (!authUnlocked) {
     sendError(id, -32000, "Authentication required");
+    return;
+  }
+  if (REJECT_LOAD) {
+    sendError(id, -32000, "Session load rejected by mock");
     return;
   }
   const sessionId =

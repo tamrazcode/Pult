@@ -999,19 +999,88 @@ async fn ensure_pult_ignored(repo: &Path) -> Result<(), PultError> {
     Ok(())
 }
 
+/// Uncommitted/untracked state of a worktree, used before a destructive
+/// delete so the UI can warn instead of silently discarding user files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeDirtyStatus {
+    pub dirty: bool,
+    pub modified: usize,
+    pub untracked: usize,
+    /// Up to 20 sample paths (relative to the worktree root).
+    pub entries: Vec<String>,
+}
+
+/// Reads `git status --porcelain -z -uall` inside a worktree. Cheap enough to
+/// run on delete; never mutates the worktree.
+pub async fn worktree_dirty_status(worktree_dir: &Path) -> Result<WorktreeDirtyStatus, PultError> {
+    let raw = git(worktree_dir, &["status", "--porcelain=v1", "-z", "-uall"], None).await?;
+    let mut chunks = raw.split('\0').filter(|chunk| !chunk.is_empty());
+    let mut modified = 0usize;
+    let mut untracked = 0usize;
+    let mut entries = Vec::new();
+    while let Some(chunk) = chunks.next() {
+        // `XY path`; renames/copies append the original path as the next chunk.
+        let (code, path) = chunk.split_at(chunk.len().min(2));
+        let path = path.trim_start();
+        if path.is_empty() {
+            continue;
+        }
+        if code.contains('R') || code.contains('C') {
+            let _ = chunks.next();
+        }
+        if code == "??" {
+            untracked += 1;
+        } else {
+            modified += 1;
+        }
+        if entries.len() < 20 {
+            entries.push(path.to_string());
+        }
+    }
+    Ok(WorktreeDirtyStatus {
+        dirty: modified + untracked > 0,
+        modified,
+        untracked,
+        entries,
+    })
+}
+
 /// Removes the worktree and prunes its registration; the branch is kept
-/// (checkpoints and any commits made inside remain reachable).
-pub async fn worktree_remove(repo_dir: &Path, name: &str) -> Result<(), PultError> {
+/// (checkpoints and any commits made inside remain reachable). Without
+/// `force`, a dirty worktree is left untouched and `git.worktree_dirty` is
+/// returned so the caller can ask the user first.
+pub async fn worktree_remove(
+    repo_dir: &Path,
+    name: &str,
+    force: bool,
+) -> Result<(), PultError> {
     let repo = resolve_repo(repo_dir).await?;
     let path = repo.join(".pult").join("worktrees").join(name);
+    if !force && path.exists() {
+        let status = worktree_dirty_status(&path).await?;
+        if status.dirty {
+            return Err(git_err(
+                "git.worktree_dirty",
+                format!(
+                    "worktree has {} modified and {} untracked file(s)",
+                    status.modified, status.untracked
+                ),
+            ));
+        }
+    }
     let abs = path.canonicalize().unwrap_or(path.clone());
-    let result = git(
-        &repo,
-        &["worktree", "remove", "--force", &abs.to_string_lossy()],
-        None,
-    )
-    .await;
-    if result.is_err() {
+    let abs = abs.to_string_lossy().into_owned();
+    let mut args = vec!["worktree", "remove"];
+    if force {
+        args.push("--force");
+    }
+    args.push(&abs);
+    if let Err(err) = git(&repo, &args, None).await {
+        if !force {
+            // Keep the registration: the directory is still the user's data.
+            return Err(err);
+        }
         // Directory gone but still registered (or vice versa) — prune handles both.
         git(&repo, &["worktree", "prune"], None).await?;
         if path.exists() {

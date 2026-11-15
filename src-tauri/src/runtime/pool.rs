@@ -32,6 +32,9 @@ pub struct IdleConn {
     pub events_rx: UnboundedReceiver<EventKind>,
     pub client_requests_rx: UnboundedReceiver<ClientRequest>,
     pub session_id: String,
+    /// Terminal ownership token for this connection. Never the ACP session id:
+    /// two agent processes can report the same remote id.
+    pub owner_token: String,
     pub instance_id: String,
     pub root: PathBuf,
     pub spawn_sig: SpawnSig,
@@ -74,7 +77,7 @@ impl IdlePool {
     /// Kill a warm session and everything it still owns.
     fn kill_idle(&self, entry: IdleConn) {
         entry.conn.kill();
-        self.terminals.release_session(&entry.session_id);
+        self.terminals.release_owner(&entry.owner_token);
     }
 
     pub fn take_matching(
@@ -215,7 +218,7 @@ impl Drop for IdlePool {
         if let Ok(entries) = self.entries.get_mut() {
             for entry in entries.values() {
                 entry.conn.kill();
-                self.terminals.release_session(&entry.session_id);
+                self.terminals.release_owner(&entry.owner_token);
             }
         }
     }
@@ -285,6 +288,7 @@ mod tests {
             events_rx: streams.events_rx,
             client_requests_rx: streams.client_requests_rx,
             session_id: format!("sess-{thread_id}"),
+            owner_token: format!("owner-{thread_id}"),
             instance_id: instance_id.to_string(),
             root: root.to_path_buf(),
             spawn_sig: sig.clone(),

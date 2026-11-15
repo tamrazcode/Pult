@@ -168,6 +168,8 @@ async fn queue_auto_dispatch_failure_keeps_the_message() {
         instance_id: "missing-instance".to_string(),
         text: "keep me".to_string(),
         images: Vec::new(),
+        mode: None,
+        config_options: Default::default(),
         created_at: 1,
     };
     runtime.store().enqueue_queue_item(&item).expect("enqueue");
@@ -201,8 +203,8 @@ async fn queued_message_auto_dispatches_after_run_finished() {
         let thread = thread_record("th-queue");
         runtime.store().create_thread(&thread).expect("create thread");
         // First message starts a run; the second lands in the backend queue.
-        let first = runtime.send(&thread, "first", &[], "mock").expect("send 1");
-        let second = runtime.send(&thread, "second", &[], "mock").expect("send 2");
+        let first = runtime.send(&thread, "first", &[], "mock", None, &Default::default()).expect("send 1");
+        let second = runtime.send(&thread, "second", &[], "mock", None, &Default::default()).expect("send 2");
         Setup {
             runtime,
             sink,
@@ -278,7 +280,7 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-resume");
         runtime.store().create_thread(&thread).expect("create thread");
-        let first = runtime.send(&thread, "hello mock", &[], "mock").expect("send 1");
+        let first = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send 1");
         Setup {
             runtime,
             sink,
@@ -314,7 +316,7 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
     // A fresh process has no memory of session 1; the runtime resumes it via
     // session/load and the mock replays the earlier transcript. The env lock
     // covers the sync dispatch; the pump holds no env dependency.
-    let second = runtime.send(&thread, "second prompt", &[], "mock").expect("send 2");
+    let second = runtime.send(&thread, "second prompt", &[], "mock", None, &Default::default()).expect("send 2");
     let run2 = second.run.expect("immediate run 2");
     wait_for(Duration::from_secs(8), || {
         runtime
@@ -411,7 +413,7 @@ async fn elicitation_round_trip_reaches_the_agent() {
     let pump = spawn_permission_pump(&runtime, &sink);
     let thread = thread_record("th-eli");
     runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "please ask me a question", &[], "mock").expect("send");
+    let sent = runtime.send(&thread, "please ask me a question", &[], "mock", None, &Default::default()).expect("send");
     let run = sent.run.expect("immediate run");
 
     let (run_id, request_id) =
@@ -462,7 +464,7 @@ async fn terminal_callbacks_run_and_report() {
     let pump = spawn_permission_pump(&runtime, &sink);
     let thread = thread_record("th-term");
     runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "run a terminal command for me", &[], "mock").expect("send");
+    let sent = runtime.send(&thread, "run a terminal command for me", &[], "mock", None, &Default::default()).expect("send");
     let run = sent.run.expect("immediate run");
 
     wait_for(Duration::from_secs(12), || {
@@ -500,7 +502,7 @@ async fn auto_edit_resolves_edits_without_ui_prompt() {
     runtime
         .set_permission_mode("th-auto", crate::runtime::permissions::PermissionMode::AutoEdit)
         .expect("set mode");
-    let sent = runtime.send(&thread, "hello mock", &[], "mock").expect("send");
+    let sent = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send");
     let run = sent.run.expect("immediate run");
 
     wait_for(Duration::from_secs(10), || {
@@ -542,7 +544,7 @@ async fn reject_once_round_trip_completes_the_turn() {
     let (runtime, sink) = mock_runtime();
     let thread = thread_record("th-reject");
     runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "hello mock", &[], "mock").expect("send");
+    let sent = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send");
     let run = sent.run.expect("immediate run");
 
     let (run_id, request_id) =
@@ -573,28 +575,52 @@ async fn reject_once_round_trip_completes_the_turn() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-/// allow_always is remembered per (instance, tool class): the next turn under
-/// supervised resolves without surfacing (the remembered chip's backend).
+/// allow_always is remembered per (workspace, instance, tool class): Turn 1
+/// approves under supervised, Turn 2 in workspace A (non-supervised) uses
+/// the remembered option without surfacing, and workspace B still asks.
 #[tokio::test]
 async fn allow_always_is_remembered_for_next_turn() {
+    use crate::runtime::permissions::PermissionMode;
+
     let _env = env_lock();
-    let sandbox = std::env::temp_dir().join("pult-m3-remember");
-    let _ = std::fs::remove_dir_all(&sandbox);
+    let tag = crate::events::now_millis();
+    let ws_a = std::env::temp_dir().join(format!("pult-m3-remember-a-{tag}"));
+    let ws_b = std::env::temp_dir().join(format!("pult-m3-remember-b-{tag}"));
+    let _ = std::fs::remove_dir_all(&ws_a);
+    let _ = std::fs::remove_dir_all(&ws_b);
+    std::fs::create_dir_all(&ws_a).unwrap();
+    std::fs::create_dir_all(&ws_b).unwrap();
+    let ws_a_str = super::clean_verbatim(ws_a.canonicalize().unwrap())
+        .to_string_lossy()
+        .into_owned();
+    let ws_b_str = super::clean_verbatim(ws_b.canonicalize().unwrap())
+        .to_string_lossy()
+        .into_owned();
     std::env::set_var("PULT_MOCK_AGENT", fixture_path());
-    std::env::set_var("PULT_WORKSPACE", &sandbox);
+    std::env::set_var("PULT_WORKSPACE", &ws_a);
 
     let started = std::time::Instant::now();
     eprintln!("[remember] t+{:?} starting", started.elapsed());
     let (runtime, sink) = mock_runtime();
-    let thread = thread_record("th-remember");
-    runtime.store().create_thread(&thread).expect("create thread");
+    let mut thread_a = thread_record("th-remember-a");
+    thread_a.workspace = Some(ws_a_str.clone());
+    let mut thread_b = thread_record("th-remember-b");
+    thread_b.workspace = Some(ws_b_str.clone());
+    runtime.store().create_thread(&thread_a).expect("create thread A");
+    runtime.store().create_thread(&thread_b).expect("create thread B");
+    runtime
+        .set_permission_mode(&thread_a.id, PermissionMode::Supervised)
+        .expect("mode A supervised");
 
-    // Turn 1: answer with the allow_always option.
-    let first = runtime.send(&thread, "hello mock", &[], "mock").expect("send 1");
+    // Turn 1 in workspace A (Supervised): answer with the allow_always option.
+    let first = runtime
+        .send(&thread_a, "hello mock", &[], "mock", None, &Default::default())
+        .expect("send 1");
     let run1 = first.run.expect("immediate run 1");
     eprintln!("[remember] t+{:?} run1 dispatched", started.elapsed());
-    let requested = wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
-    let (run_id, request_id) = requested;
+    let (run_id, request_id) =
+        wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(run_id, run1.id);
     eprintln!("[remember] t+{:?} surfaced for run {run_id}", started.elapsed());
     runtime
         .respond_permission(&run_id, &request_id, Some("mock-allow-always".to_string()))
@@ -602,23 +628,38 @@ async fn allow_always_is_remembered_for_next_turn() {
     wait_for(Duration::from_secs(10), || {
         runtime
             .store()
-            .list_runs("th-remember")
+            .list_runs(&thread_a.id)
             .map(|runs| runs.iter().all(|r| r.status != "running"))
             .unwrap_or(false)
     })
     .await;
-    let _ = run1;
 
-    // Turn 2: the remembered decision auto-resolves before surfacing.
+    assert_eq!(
+        runtime.remembered_for(&ws_a_str, "mock", "edit").as_deref(),
+        Some("mock-allow-always"),
+        "allow_always must be remembered for workspace A"
+    );
+    assert!(
+        runtime.remembered_for(&ws_b_str, "mock", "edit").is_none(),
+        "remembered permission for workspace A must not apply to workspace B"
+    );
+
+    // Turn 2 in workspace A (AutoEdit): the remembered decision auto-resolves
+    // with mock-allow-always (rather than AutoEdit's default allow_once) without surfacing.
     eprintln!("[remember] t+{:?} turn1 settled", started.elapsed());
-    let second = runtime.send(&thread, "second turn", &[], "mock").expect("send 2");
+    runtime
+        .set_permission_mode(&thread_a.id, PermissionMode::AutoEdit)
+        .expect("mode A auto_edit");
+    let second = runtime
+        .send(&thread_a, "second turn", &[], "mock", None, &Default::default())
+        .expect("send 2");
     let run2 = second.run.expect("immediate run 2");
     eprintln!("[remember] t+{:?} run2 dispatched", started.elapsed());
     wait_for(Duration::from_secs(10), || {
         runtime
             .store()
-            .list_runs("th-remember")
-            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .list_runs(&thread_a.id)
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
             .unwrap_or(false)
     })
     .await;
@@ -627,14 +668,46 @@ async fn allow_always_is_remembered_for_next_turn() {
     assert!(
         kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
             if *auto && o == "mock-allow-always")),
-        "the remembered decision must auto-resolve; got {kinds:?}"
+        "the remembered decision must auto-resolve in workspace A; got {kinds:?}"
     );
     assert!(
         !sink_events(&sink).iter().any(|(e, payload)| e == "permission:request"
             && payload["runId"].as_str() == Some(run2.id.as_str())),
-        "turn 2 must not surface the request again"
+        "turn 2 in workspace A must not surface the request again"
     );
-    let _ = std::fs::remove_dir_all(&sandbox);
+
+    // Workspace B: must NOT use workspace A's remembered decision (Ask).
+    runtime
+        .set_permission_mode(&thread_b.id, PermissionMode::Supervised)
+        .expect("mode B supervised");
+    let third = runtime
+        .send(&thread_b, "turn in B", &[], "mock", None, &Default::default())
+        .expect("send B");
+    let run_b = third.run.expect("immediate run B");
+    let (b_run_id, b_request_id) =
+        wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(b_run_id, run_b.id, "workspace B must surface permission request (Ask)");
+    runtime
+        .respond_permission(&b_run_id, &b_request_id, Some("mock-allow".to_string()))
+        .expect("allow in B");
+    wait_for(Duration::from_secs(10), || {
+        runtime
+            .store()
+            .list_runs(&thread_b.id)
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+
+    let b_kinds = kinds_of(&runtime, &run_b.id);
+    assert!(
+        b_kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
+            if !*auto && o == "mock-allow")),
+        "workspace B must ask instead of applying workspace A's remembered allow; got {b_kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&ws_a);
+    let _ = std::fs::remove_dir_all(&ws_b);
 }
 
 use crate::runtime::write_file_sandboxed;
@@ -1208,7 +1281,7 @@ async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
     let pump = spawn_permission_pump(&runtime, &sink);
 
     let first = runtime
-        .send(&thread, "first turn", &[], "mock")
+        .send(&thread, "first turn", &[], "mock", None, &Default::default())
         .expect("send 1");
     let run1 = first.run.expect("run 1");
     wait_for(Duration::from_secs(8), || {
@@ -1224,7 +1297,7 @@ async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
     .await;
 
     let second = runtime
-        .send(&thread, "second turn", &[], "mock")
+        .send(&thread, "second turn", &[], "mock", None, &Default::default())
         .expect("send 2");
     let run2 = second.run.expect("run 2");
     wait_for(Duration::from_secs(8), || {
@@ -1284,7 +1357,7 @@ async fn cancelling_run_kills_process_and_leaves_pool_empty() {
         .expect("create thread");
 
     let sent = runtime
-        .send(&thread, "cancel me", &[], "mock")
+        .send(&thread, "cancel me", &[], "mock", None, &Default::default())
         .expect("send");
     let run = sent.run.expect("run");
 
@@ -1343,7 +1416,7 @@ async fn two_threads_keep_independent_sessions() {
     let pump = spawn_permission_pump(&runtime, &sink);
 
     let run_a1 = runtime
-        .send(&thread_a, "alpha-one", &[], "mock")
+        .send(&thread_a, "alpha-one", &[], "mock", None, &Default::default())
         .unwrap()
         .run
         .unwrap();
@@ -1360,7 +1433,7 @@ async fn two_threads_keep_independent_sessions() {
     .await;
 
     let run_b1 = runtime
-        .send(&thread_b, "beta-one", &[], "mock")
+        .send(&thread_b, "beta-one", &[], "mock", None, &Default::default())
         .unwrap()
         .run
         .unwrap();
@@ -1378,7 +1451,7 @@ async fn two_threads_keep_independent_sessions() {
 
     // Resume each thread on its own pooled process without spawning extra PIDs.
     let run_a2 = runtime
-        .send(&thread_a, "alpha-two", &[], "mock")
+        .send(&thread_a, "alpha-two", &[], "mock", None, &Default::default())
         .unwrap()
         .run
         .unwrap();
@@ -1392,7 +1465,7 @@ async fn two_threads_keep_independent_sessions() {
     .await;
 
     let run_b2 = runtime
-        .send(&thread_b, "beta-two", &[], "mock")
+        .send(&thread_b, "beta-two", &[], "mock", None, &Default::default())
         .unwrap()
         .run
         .unwrap();
@@ -1477,7 +1550,7 @@ async fn set_instances_invalidates_pooled_entries_for_instance() {
         .expect("create thread");
 
     let pump = spawn_permission_pump(&runtime, &sink);
-    let sent = runtime.send(&thread, "park me", &[], "mock").expect("send");
+    let sent = runtime.send(&thread, "park me", &[], "mock", None, &Default::default()).expect("send");
     let run = sent.run.expect("run");
 
     wait_for(Duration::from_secs(8), || {
@@ -1558,7 +1631,7 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
         .expect("set thought_level high");
 
     let first = runtime
-        .send(&thread, "first turn", &[], "mock")
+        .send(&thread, "first turn", &[], "mock", None, &Default::default())
         .expect("send 1");
     let run1 = first.run.expect("run 1");
     wait_for(Duration::from_secs(8), || {
@@ -1584,7 +1657,7 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
         .expect("set model mock-v1");
 
     let second = runtime
-        .send(&thread, "second turn", &[], "mock")
+        .send(&thread, "second turn", &[], "mock", None, &Default::default())
         .expect("send 2");
     let run2 = second.run.expect("run 2");
     wait_for(Duration::from_secs(8), || {
@@ -2185,10 +2258,10 @@ async fn steer_queue_item_cancels_active_run_and_starts_next() {
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
         runtime.store().create_thread(&thread).expect("create thread");
 
-        let first = runtime.send(&thread, "active run", &[], "mock").expect("send 1");
+        let first = runtime.send(&thread, "active run", &[], "mock", None, &Default::default()).expect("send 1");
         let run1 = first.run.expect("immediate run 1");
-        let second = runtime.send(&thread, "queued first", &[], "mock").expect("send 2");
-        let third = runtime.send(&thread, "steered item", &[], "mock").expect("send 3");
+        let second = runtime.send(&thread, "queued first", &[], "mock", None, &Default::default()).expect("send 2");
+        let third = runtime.send(&thread, "steered item", &[], "mock", None, &Default::default()).expect("send 3");
         assert!(second.queued);
         assert!(third.queued);
         let q2_id = third.queue_id.expect("q2 id");
@@ -2234,6 +2307,535 @@ async fn steer_queue_item_cancels_active_run_and_starts_next() {
             .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "steered item")),
         "steered item must dispatch next after cancelling active run; got {run2_kinds:?}"
     );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn terminal_without_cwd_runs_in_thread_workspace_including_spaces() {
+    use crate::protocol::types::CreateTerminalParams;
+    use crate::runtime::terminals::TerminalRegistry;
+
+    let tag = crate::events::now_millis();
+    let root_with_space = std::env::temp_dir().join(format!("pult ws space {tag}"));
+    std::fs::create_dir_all(&root_with_space).expect("create workspace with spaces");
+    let canonical_root =
+        super::clean_verbatim(root_with_space.canonicalize().expect("canonicalize"));
+
+    let registry = TerminalRegistry::default();
+    let owner = registry.new_owner_token();
+
+    #[cfg(windows)]
+    let (command, args) = ("cmd".to_string(), vec!["/c".to_string(), "cd".to_string()]);
+    #[cfg(not(windows))]
+    let (command, args) = ("sh".to_string(), vec!["-c".to_string(), "pwd".to_string()]);
+
+    let params = CreateTerminalParams {
+        session_id: "sess-cwd".to_string(),
+        command,
+        args,
+        cwd: None,
+        env: Vec::new(),
+        output_byte_limit: None,
+        meta: None,
+    };
+
+    let created = super::handle_terminal_create(&registry, &owner, &canonical_root, &params)
+        .expect("terminal created");
+    let terminal_id = created["terminalId"]
+        .as_str()
+        .expect("terminalId")
+        .to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    let out = loop {
+        let out = registry.output(&terminal_id, &owner).expect("output");
+        if out.get("exitStatus").and_then(|v| v.as_object()).is_some() {
+            break out;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for terminal exitStatus: {out:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+
+    assert_eq!(out["exitStatus"]["exitCode"], 0);
+    let stdout = out["output"].as_str().expect("output text");
+    let expected = canonical_root.to_string_lossy();
+    assert!(
+        stdout.to_lowercase().contains(&expected.to_lowercase()),
+        "expected stdout {stdout:?} to contain workspace root {expected:?}"
+    );
+    let _ = registry.release(&terminal_id, &owner);
+    let _ = std::fs::remove_dir_all(&root_with_space);
+}
+
+#[tokio::test]
+async fn resolve_session_emits_notice_on_load_failure() {
+    let (runtime, sink, sandbox, thread, run) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-load-fail-notice-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_REJECT_LOAD", "1")])]);
+
+        let mut thread = thread_record("th-load-fail-notice");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .upsert_session_ref(&thread.id, "mock", "stale-session-ref")
+            .expect("seed session_ref");
+
+        let run = runtime
+            .dispatch(&thread, "hello after reset", &[], "mock")
+            .expect("dispatch");
+        (runtime, sink, sandbox, thread, run)
+    };
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let events = runtime.store().load_events(&run.id).expect("load events");
+    let notice_idx = events
+        .iter()
+        .position(|e| matches!(&e.kind, EventKind::Notice { level, .. } if level == "warning"));
+    let msg_idx = events
+        .iter()
+        .position(|e| matches!(&e.kind, EventKind::AgentMessageDelta { .. }));
+    assert!(
+        notice_idx.is_some(),
+        "expected persisted warning Notice event on session/load failure; got {events:?}"
+    );
+    assert!(
+        msg_idx.is_some(),
+        "expected AgentMessageDelta event; got {events:?}"
+    );
+    assert!(
+        notice_idx.unwrap() < msg_idx.unwrap(),
+        "warning Notice must appear before first AgentMessageDelta; got {events:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn remembered_permission_is_scoped_to_workspace_and_respects_supervised() {
+    use crate::runtime::permissions::PermissionMode;
+
+    let tag = crate::events::now_millis();
+    let ws_a = std::env::temp_dir().join(format!("pult-perm-scope-a-{tag}"));
+    let ws_b = std::env::temp_dir().join(format!("pult-perm-scope-b-{tag}"));
+    let _ = std::fs::remove_dir_all(&ws_a);
+    let _ = std::fs::remove_dir_all(&ws_b);
+    std::fs::create_dir_all(&ws_a).unwrap();
+    std::fs::create_dir_all(&ws_b).unwrap();
+    let ws_a_str = super::clean_verbatim(ws_a.canonicalize().unwrap())
+        .to_string_lossy()
+        .into_owned();
+    let ws_b_str = super::clean_verbatim(ws_b.canonicalize().unwrap())
+        .to_string_lossy()
+        .into_owned();
+
+    let (runtime, sink, thread_a, thread_b, run_a1) = {
+        let _env = env_lock();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &ws_a);
+
+        let (runtime, sink) = mock_runtime();
+        let mut thread_a = thread_record("th-perm-a");
+        thread_a.workspace = Some(ws_a_str.clone());
+        let mut thread_b = thread_record("th-perm-b");
+        thread_b.workspace = Some(ws_b_str.clone());
+        runtime.store().create_thread(&thread_a).expect("thread A");
+        runtime.store().create_thread(&thread_b).expect("thread B");
+        runtime
+            .set_permission_mode(&thread_a.id, PermissionMode::Supervised)
+            .expect("mode A supervised");
+        runtime
+            .set_permission_mode(&thread_b.id, PermissionMode::Supervised)
+            .expect("mode B supervised");
+
+        let run_a1 = runtime
+            .dispatch(&thread_a, "turn a1", &[], "mock")
+            .expect("dispatch a1");
+        (runtime, sink, thread_a, thread_b, run_a1)
+    };
+
+    let (req_run, req_id) = wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(req_run, run_a1.id);
+    runtime
+        .respond_permission(&req_run, &req_id, Some("mock-allow-always".to_string()))
+        .expect("allow always in A");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread_a.id)
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+
+    assert_eq!(
+        runtime.remembered_for(&ws_a_str, "mock", "edit").as_deref(),
+        Some("mock-allow-always"),
+        "allow_always must be remembered for workspace A"
+    );
+    assert!(
+        runtime.remembered_for(&ws_b_str, "mock", "edit").is_none(),
+        "remembered permission from workspace A must not leak to workspace B"
+    );
+
+    // Workspace B must Ask.
+    let run_b = {
+        let _env = env_lock();
+        runtime
+            .dispatch(&thread_b, "turn b1", &[], "mock")
+            .expect("dispatch b1")
+    };
+    let (b_req_run, b_req_id) =
+        wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(
+        b_req_run, run_b.id,
+        "workspace B must surface permission request (Ask)"
+    );
+    runtime
+        .respond_permission(&b_req_run, &b_req_id, Some("mock-allow".to_string()))
+        .expect("allow in B");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread_b.id)
+            .map(|runs| runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    let b_kinds = kinds_of(&runtime, &run_b.id);
+    assert!(
+        b_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::ApprovalResponse { auto, .. } if !*auto)),
+        "workspace B must not auto-resolve using workspace A's remembered decision; got {b_kinds:?}"
+    );
+
+    // Supervised mode in workspace A must still Ask despite remembered allow_always.
+    runtime
+        .set_permission_mode(&thread_a.id, PermissionMode::Supervised)
+        .expect("keep A supervised");
+    let run_a2 = {
+        let _env = env_lock();
+        runtime
+            .dispatch(&thread_a, "turn a2", &[], "mock")
+            .expect("dispatch a2")
+    };
+    let (a2_req_run, a2_req_id) =
+        wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(
+        a2_req_run, run_a2.id,
+        "Supervised in workspace A must surface permission request (Ask)"
+    );
+    runtime
+        .respond_permission(&a2_req_run, &a2_req_id, Some("mock-allow".to_string()))
+        .expect("allow in A2");
+    wait_for(Duration::from_secs(8), || {
+        runtime
+            .store()
+            .list_runs(&thread_a.id)
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    let a2_kinds = kinds_of(&runtime, &run_a2.id);
+    assert!(
+        a2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::ApprovalResponse { auto, .. } if !*auto)),
+        "Supervised in A must not auto-resolve via remembered decision; got {a2_kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&ws_a);
+    let _ = std::fs::remove_dir_all(&ws_b);
+}
+
+#[test]
+fn corrupt_config_toml_populates_config_error() {
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-corrupt-config-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    let pult_dir = sandbox.join(".pult");
+    std::fs::create_dir_all(&pult_dir).unwrap();
+    std::fs::write(pult_dir.join("config.toml"), "instances = [unterminated").unwrap();
+
+    let _home = HomeEnvGuard::redirect(&sandbox);
+    let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+    let sink = Arc::new(TestSink::default());
+    let runtime = AgentRuntime::new(store, sink);
+
+    let err = runtime.config_error();
+    assert!(
+        err.as_deref().is_some_and(|s| !s.is_empty()),
+        "malformed config.toml must populate config_error(); got {err:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn deleting_thread_prevents_finalize_run_from_dispatching_queued_message() {
+    let (runtime, sink, sandbox, thread, run_a) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-delete-guard-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let mut thread = thread_record("th-del-guard");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+
+        let first = runtime
+            .send(&thread, "run A", &[], "mock", None, &Default::default())
+            .expect("send A");
+        let run_a = first.run.expect("run A");
+        let second = runtime
+            .send(&thread, "queued B", &[], "mock", None, &Default::default())
+            .expect("send B");
+        assert!(second.queued, "message B must queue behind active run A");
+        (runtime, sink, sandbox, thread, run_a)
+    };
+
+    // Wait until run A parks on permission so we deterministically mark deletion before finalize_run.
+    let (req_run, req_id) = wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(req_run, run_a.id);
+
+    runtime.begin_delete_thread(&thread.id);
+    runtime
+        .respond_permission(&req_run, &req_id, Some("mock-allow".to_string()))
+        .expect("allow run A");
+
+    wait_for(Duration::from_secs(8), || {
+        runtime.active_run_for(&thread.id).is_none()
+            && runtime
+                .store()
+                .list_runs(&thread.id)
+                .map(|runs| runs.iter().all(|r| r.status != "running"))
+                .unwrap_or(false)
+    })
+    .await;
+
+    let runs = runtime.store().list_runs(&thread.id).expect("list runs");
+    assert_eq!(
+        runs.len(),
+        1,
+        "begin_delete_thread must prevent finalize_run from dispatching queued message B; got {runs:?}"
+    );
+    let queue = runtime.store().list_queue(&thread.id).expect("list queue");
+    assert_eq!(
+        queue.len(),
+        1,
+        "queued message B must remain in queue while thread is deleting"
+    );
+    assert_eq!(queue[0].text, "queued B");
+
+    runtime.finish_delete_thread(&thread.id);
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn queued_messages_keep_per_message_model_and_mode_without_mutating_active_run() {
+    use crate::protocol::types::{ConfigOptionValue, SessionConfigOptionKind};
+    use crate::runtime::DesiredConfigMap;
+
+    let (runtime, sink, sandbox, thread, run_a) = {
+        let _env = env_lock();
+        let sandbox = std::env::temp_dir().join(format!(
+            "pult-queue-snapshot-{}",
+            crate::events::now_millis()
+        ));
+        let _ = std::fs::remove_dir_all(&sandbox);
+        std::fs::create_dir_all(&sandbox).unwrap();
+        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+        std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+        let (runtime, sink) = mock_runtime();
+        let mut thread = thread_record("th-queue-snap");
+        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+        runtime.store().create_thread(&thread).expect("create thread");
+
+        let mut cfg_a = DesiredConfigMap::new();
+        cfg_a.insert("model".to_string(), ConfigOptionValue::String("mock-fast".into()));
+        let first = runtime
+            .send(&thread, "msg A", &[], "mock", Some("code"), &cfg_a)
+            .expect("send A");
+        let run_a = first.run.expect("run A");
+        (runtime, sink, sandbox, thread, run_a)
+    };
+
+    // Wait until run A has applied its own config/mode and parked on permission.
+    let (req_run, req_id) = wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(req_run, run_a.id);
+
+    let mut cfg_b = DesiredConfigMap::new();
+    cfg_b.insert("model".to_string(), ConfigOptionValue::String("mock-pro".into()));
+    let out_b = runtime
+        .send(&thread, "msg B", &[], "mock", Some("architect"), &cfg_b)
+        .expect("send B");
+    assert!(out_b.queued);
+
+    let mut cfg_c = DesiredConfigMap::new();
+    cfg_c.insert("model".to_string(), ConfigOptionValue::String("mock-v1".into()));
+    let out_c = runtime
+        .send(&thread, "msg C", &[], "mock", Some("code"), &cfg_c)
+        .expect("send C");
+    assert!(out_c.queued);
+
+    // Queuing B and C must not mutate active run A's desired_config/mode.
+    assert_eq!(
+        runtime.desired_config(&thread.id).get("model"),
+        Some(&ConfigOptionValue::String("mock-fast".into()))
+    );
+    assert_eq!(runtime.desired_mode(&thread.id).as_deref(), Some("code"));
+
+    let pump = spawn_permission_pump(&runtime, &sink);
+    runtime
+        .respond_permission(&req_run, &req_id, Some("mock-allow".to_string()))
+        .expect("allow run A");
+
+    wait_for(Duration::from_secs(15), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.len() == 3 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs(&thread.id).expect("list runs");
+    assert_eq!(runs.len(), 3);
+    assert_eq!(runs[0].id, run_a.id);
+    assert_eq!(runs[0].model.as_deref(), Some("mock-fast"));
+    assert_eq!(runs[0].mode.as_deref(), Some("code"));
+
+    assert_eq!(runs[1].model.as_deref(), Some("mock-pro"));
+    assert_eq!(runs[1].mode.as_deref(), Some("architect"));
+
+    assert_eq!(runs[2].model.as_deref(), Some("mock-v1"));
+    assert_eq!(runs[2].mode.as_deref(), Some("code"));
+
+    // Verify run A never received B/C's mode or model updates while running.
+    let run_a_kinds = kinds_of(&runtime, &runs[0].id);
+    assert!(
+        !run_a_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::ModeChange { mode_id } if mode_id == "architect")),
+        "active run A must not receive queued B's mode; got {run_a_kinds:?}"
+    );
+    assert!(
+        !run_a_kinds.iter().any(|k| matches!(
+            k,
+            EventKind::ConfigOptions { options }
+                if options.iter().any(|o| o.id == "model" && matches!(
+                    &o.kind,
+                    SessionConfigOptionKind::Select { current_value, .. }
+                        if current_value == "mock-pro" || current_value == "mock-v1"
+                ))
+        )),
+        "active run A must not receive queued B/C's model config; got {run_a_kinds:?}"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn cancel_escalates_to_kill_when_agent_ignores_cancel() {
+    struct GraceEnvGuard(Option<std::ffi::OsString>);
+    impl Drop for GraceEnvGuard {
+        fn drop(&mut self) {
+            match &self.0 {
+                Some(v) => std::env::set_var("PULT_CANCEL_GRACE_MS", v),
+                None => std::env::remove_var("PULT_CANCEL_GRACE_MS"),
+            }
+        }
+    }
+
+    let _env = env_lock();
+    let _grace = GraceEnvGuard(std::env::var_os("PULT_CANCEL_GRACE_MS"));
+    std::env::set_var("PULT_CANCEL_GRACE_MS", "80");
+
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-cancel-escalate-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_HANG", "1")])]);
+    let mut thread = thread_record("th-cancel-escalate");
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread).expect("create thread");
+
+    let run = runtime
+        .dispatch(&thread, "hang forever", &[], "mock")
+        .expect("dispatch");
+
+    wait_for(Duration::from_secs(8), || {
+        sink_events(&sink)
+            .iter()
+            .any(|(ev, payload)| ev == "agent:process" && payload["kind"] == "running")
+    })
+    .await;
+
+    let cancel_started = std::time::Instant::now();
+    runtime
+        .cancel_with_force(&run.id, false)
+        .expect("cancel_with_force");
+
+    wait_for(Duration::from_secs(3), || {
+        runtime.active_run_for(&thread.id).is_none()
+            && runtime
+                .store()
+                .list_runs(&thread.id)
+                .map(|runs| runs.iter().any(|r| r.id == run.id && r.status == "cancelled"))
+                .unwrap_or(false)
+    })
+    .await;
+
+    assert!(
+        cancel_started.elapsed() < Duration::from_secs(3),
+        "cancel escalation took too long: {:?}",
+        cancel_started.elapsed()
+    );
+    let runs = runtime.store().list_runs(&thread.id).expect("list runs");
+    assert_eq!(runs[0].status, "cancelled");
+    assert_eq!(runtime.pool.stats().idle, 0);
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }

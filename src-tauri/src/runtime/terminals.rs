@@ -18,8 +18,9 @@ const DEFAULT_RING_BYTES: u64 = 1 << 20; // 1 MiB
 
 struct TerminalState {
     child: Child,
-    /// Run that created this terminal: released when that agent goes away.
-    owner_session: String,
+    /// Connection that created this terminal: released when that agent goes
+    /// away. A token, not the ACP session id — two processes may collide.
+    owner_token: String,
     /// Combined stdout+stderr bytes, truncated from the front on the cap.
     buffer: Vec<u8>,
     /// True once the buffer was truncated (the agent should know).
@@ -37,6 +38,7 @@ type SharedState = Arc<Mutex<TerminalState>>;
 pub struct TerminalRegistry {
     inner: Mutex<HashMap<String, SharedState>>,
     next_id: std::sync::atomic::AtomicU64,
+    next_owner: std::sync::atomic::AtomicU64,
 }
 
 /// Typed failure for terminal operations (JSON-RPC `-32002`-style resource
@@ -55,11 +57,22 @@ fn hide_console(cmd: &mut Command) {
 fn hide_console(_cmd: &mut Command) {}
 
 impl TerminalRegistry {
+    /// Mints a token that owns the terminals of one live agent connection.
+    /// Unique per connection even when remote ACP session ids collide.
+    pub fn new_owner_token(&self) -> String {
+        format!(
+            "owner-{}-{}",
+            crate::events::now_millis(),
+            self.next_owner
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        )
+    }
+
     /// Spawns the process and starts pumping output into the ring. `cwd` is
     /// sandbox-checked by the caller.
     pub fn create(
         &self,
-        session_id: &str,
+        owner_token: &str,
         command: &str,
         args: &[String],
         cwd: Option<&PathBuf>,
@@ -93,7 +106,7 @@ impl TerminalRegistry {
         );
         let state: SharedState = Arc::new(Mutex::new(TerminalState {
             child,
-            owner_session: session_id.to_string(),
+            owner_token: owner_token.to_string(),
             buffer: Vec::new(),
             truncated: false,
             byte_cap: cap,
@@ -147,47 +160,57 @@ impl TerminalRegistry {
         .unwrap_or_default())
     }
 
-    fn state_for(&self, terminal_id: &str) -> Option<SharedState> {
-        self.inner
+    /// Entry for a terminal the caller owns. Foreign ids look exactly like
+    /// unknown ones: no probing other sessions' terminals.
+    fn state_for(&self, terminal_id: &str, owner_token: &str) -> Option<SharedState> {
+        let state = self
+            .inner
             .lock()
             .expect("terminal registry lock")
             .get(terminal_id)
-            .cloned()
+            .cloned()?;
+        let owned = state.lock().expect("terminal lock").owner_token == owner_token;
+        owned.then_some(state)
     }
 
     /// `terminal/output` — current ring contents + exit status when finished.
-    pub fn output(&self, terminal_id: &str) -> crate::drivers::acp::ClientReply {
-        let Some(state) = self.state_for(terminal_id) else {
+    /// Polls `try_wait` too: an agent that only polls output still learns that
+    /// the command exited. The status is reported once the pipes are drained,
+    /// so the first `exitStatus` never precedes the last bytes.
+    pub fn output(&self, terminal_id: &str, owner_token: &str) -> crate::drivers::acp::ClientReply {
+        let Some(state) = self.state_for(terminal_id, owner_token) else {
             return term_error(format!("unknown terminal: {terminal_id}"));
         };
-        let guard = state.lock().expect("terminal lock");
-        let output = String::from_utf8_lossy(&guard.buffer).into_owned();
+        let mut guard = state.lock().expect("terminal lock");
+        poll_exit(&mut guard);
+        let exit_status = if guard.pipes_left == 0 {
+            guard.exit.clone()
+        } else {
+            None
+        };
         serde_json::to_value(TerminalOutputResult {
-            output,
+            output: String::from_utf8_lossy(&guard.buffer).into_owned(),
             truncated: guard.truncated,
-            exit_status: guard.exit.clone(),
+            exit_status,
         })
         .map_err(|e| RpcError::new(ERR_INTERNAL, e.to_string()))
     }
 
     /// `terminal/wait_for_exit` — polls `try_wait` so the terminal lock is
     /// never held across an await (kill stays responsive).
-    pub async fn wait_for_exit(&self, terminal_id: &str) -> crate::drivers::acp::ClientReply {
-        let Some(state) = self.state_for(terminal_id) else {
+    pub async fn wait_for_exit(
+        &self,
+        terminal_id: &str,
+        owner_token: &str,
+    ) -> crate::drivers::acp::ClientReply {
+        let Some(state) = self.state_for(terminal_id, owner_token) else {
             return term_error(format!("unknown terminal: {terminal_id}"));
         };
         let exit = loop {
             {
                 let mut guard = state.lock().expect("terminal lock");
+                poll_exit(&mut guard);
                 if let Some(exit) = guard.exit.clone() {
-                    break exit;
-                }
-                if let Ok(Some(status)) = guard.child.try_wait() {
-                    let exit = TerminalExitStatus {
-                        exit_code: status.code().map(|c| u32::try_from(c).unwrap_or(u32::MAX)),
-                        signal: None, // signals are a unix notion; Windows reports none
-                    };
-                    guard.exit = Some(exit.clone());
                     break exit;
                 }
             }
@@ -210,8 +233,8 @@ impl TerminalRegistry {
     }
 
     /// `terminal/kill` — terminate without releasing the entry.
-    pub fn kill(&self, terminal_id: &str) -> crate::drivers::acp::ClientReply {
-        let Some(state) = self.state_for(terminal_id) else {
+    pub fn kill(&self, terminal_id: &str, owner_token: &str) -> crate::drivers::acp::ClientReply {
+        let Some(state) = self.state_for(terminal_id, owner_token) else {
             return term_error(format!("unknown terminal: {terminal_id}"));
         };
         let mut guard = state.lock().expect("terminal lock");
@@ -220,28 +243,31 @@ impl TerminalRegistry {
     }
 
     /// `terminal/release` — kill and free the registry entry.
-    pub fn release(&self, terminal_id: &str) -> crate::drivers::acp::ClientReply {
-        let released = self
-            .inner
-            .lock()
-            .expect("terminal registry lock")
-            .remove(terminal_id);
-        match released {
+    pub fn release(&self, terminal_id: &str, owner_token: &str) -> crate::drivers::acp::ClientReply {
+        let mut guard = self.inner.lock().expect("terminal registry lock");
+        let owned = guard
+            .get(terminal_id)
+            .map(|state| state.lock().expect("terminal lock").owner_token == owner_token)
+            .unwrap_or(false);
+        if !owned {
+            return term_error(format!("unknown terminal: {terminal_id}"));
+        }
+        match guard.remove(terminal_id) {
             Some(state) => {
-                let mut guard = state.lock().expect("terminal lock");
-                let _ = guard.child.start_kill();
+                let mut entry = state.lock().expect("terminal lock");
+                let _ = entry.child.start_kill();
                 Ok(serde_json::json!({}))
             }
             None => term_error(format!("unknown terminal: {terminal_id}")),
         }
     }
 
-    /// Drops every terminal created by a session (the agent is gone).
-    pub fn release_session(&self, session_id: &str) {
+    /// Drops every terminal owned by a connection (the agent is gone).
+    pub fn release_owner(&self, owner_token: &str) {
         let mut guard = self.inner.lock().expect("terminal registry lock");
         let ids: Vec<String> = guard
             .iter()
-            .filter(|(_, state)| state.lock().expect("terminal lock").owner_session == session_id)
+            .filter(|(_, state)| state.lock().expect("terminal lock").owner_token == owner_token)
             .map(|(id, _)| id.clone())
             .collect();
         for id in ids {
@@ -251,6 +277,20 @@ impl TerminalRegistry {
             }
         }
     }
+}
+
+/// Records the child's exit once, without ever holding the lock across an
+/// await. Shared by `output` and `wait_for_exit`.
+fn poll_exit(state: &mut TerminalState) -> Option<TerminalExitStatus> {
+    if state.exit.is_none() {
+        if let Ok(Some(status)) = state.child.try_wait() {
+            state.exit = Some(TerminalExitStatus {
+                exit_code: status.code().map(|c| u32::try_from(c).unwrap_or(u32::MAX)),
+                signal: None, // signals are a unix notion; Windows reports none
+            });
+        }
+    }
+    state.exit.clone()
 }
 
 /// Trim the ring from the front, keeping a char boundary. Truncation must
@@ -284,7 +324,7 @@ mod tests {
                     .unwrap()
                     .block_on(async { cmd.spawn().unwrap() })
             },
-            owner_session: "run-test".to_string(),
+            owner_token: "owner-test".to_string(),
             buffer,
             truncated: false,
             byte_cap: cap,
@@ -316,9 +356,10 @@ mod tests {
     #[tokio::test]
     async fn create_output_wait_kill_round_trip() {
         let registry = TerminalRegistry::default();
+        let owner = registry.new_owner_token();
         let created = registry
             .create(
-                "run-test",
+                &owner,
                 "cmd",
                 &["/c".into(), "echo hi".into()],
                 None,
@@ -329,35 +370,43 @@ mod tests {
         let terminal_id = created["terminalId"].as_str().expect("terminalId").to_string();
 
         // wait_for_exit resolves with a 0 exit code; output sees the echo.
-        let waited = registry.wait_for_exit(&terminal_id).await.expect("wait");
+        let waited = registry
+            .wait_for_exit(&terminal_id, &owner)
+            .await
+            .expect("wait");
         assert_eq!(waited["exitCode"], 0);
-        let out = registry.output(&terminal_id).expect("output");
+        let out = registry.output(&terminal_id, &owner).expect("output");
         let text = out["output"].as_str().expect("output text");
         assert!(
             text.trim().contains("hi"),
             "expected the echo in output, got {text:?}"
         );
 
-        let released = registry.release(&terminal_id).expect("release");
+        let released = registry
+            .release(&terminal_id, &owner)
+            .expect("release");
         assert_eq!(released, serde_json::json!({}));
-        let err = registry.output(&terminal_id).unwrap_err();
+        let err = registry.output(&terminal_id, &owner).unwrap_err();
         assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
     }
 
     #[test]
     fn unknown_terminal_is_a_typed_resource_error() {
         let registry = TerminalRegistry::default();
-        let err = registry.output("nope").unwrap_err();
+        let owner = registry.new_owner_token();
+        let err = registry.output("nope", &owner).unwrap_err();
         assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
     }
 
     #[tokio::test]
-    async fn release_session_only_drops_that_sessions_terminals() {
+    async fn release_owner_drops_only_that_owners_terminals() {
         let registry = TerminalRegistry::default();
-        let make = |session_id: &'static str| {
+        let token_a = registry.new_owner_token();
+        let token_b = registry.new_owner_token();
+        let make = |owner: &str| {
             registry
                 .create(
-                    session_id,
+                    owner,
                     "cmd",
                     &["/c".into(), "ping -n 10 127.0.0.1 >nul".into()],
                     None,
@@ -369,15 +418,112 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
-        let mine = make("session-a");
-        let other = make("session-b");
+        let mine = make(&token_a);
+        let other = make(&token_b);
 
-        registry.release_session("session-a");
-        assert_eq!(registry.output(&mine).unwrap_err().code, ERR_RESOURCE_NOT_FOUND);
-        assert!(
-            registry.output(&other).is_ok(),
-            "other session keeps its terminal"
+        registry.release_owner(&token_a);
+        assert_eq!(
+            registry.output(&mine, &token_a).unwrap_err().code,
+            ERR_RESOURCE_NOT_FOUND
         );
-        registry.release_session("session-b");
+        assert!(
+            registry.output(&other, &token_b).is_ok(),
+            "other owner keeps its terminal"
+        );
+        registry.release_owner(&token_b);
+    }
+
+    #[tokio::test]
+    async fn terminal_owner_isolation_blocks_foreign_access_and_colliding_session_ids() {
+        let registry = TerminalRegistry::default();
+        let token_a = registry.new_owner_token();
+        let token_b = registry.new_owner_token();
+        assert_ne!(token_a, token_b);
+
+        #[cfg(windows)]
+        let (cmd, args) = ("cmd", vec!["/c".into(), "ping -n 10 127.0.0.1 >nul".into()]);
+        #[cfg(not(windows))]
+        let (cmd, args) = ("sh", vec!["-c".into(), "sleep 10".into()]);
+
+        let term_a = registry
+            .create(&token_a, cmd, &args, None, &[], None)
+            .expect("terminal A created")["terminalId"]
+            .as_str()
+            .expect("terminalId A")
+            .to_string();
+        let term_b = registry
+            .create(&token_b, cmd, &args, None, &[], None)
+            .expect("terminal B created")["terminalId"]
+            .as_str()
+            .expect("terminalId B")
+            .to_string();
+
+        for err in [
+            registry.output(&term_a, &token_b).unwrap_err(),
+            registry.wait_for_exit(&term_a, &token_b).await.unwrap_err(),
+            registry.kill(&term_a, &token_b).unwrap_err(),
+            registry.release(&term_a, &token_b).unwrap_err(),
+        ] {
+            assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
+            assert!(
+                err.message.starts_with("unknown terminal"),
+                "expected 'unknown terminal...', got {:?}",
+                err.message
+            );
+        }
+
+        assert!(registry.output(&term_a, &token_a).is_ok());
+
+        registry.release_owner(&token_a);
+        let err = registry.output(&term_a, &token_a).unwrap_err();
+        assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
+        assert!(err.message.starts_with("unknown terminal"));
+
+        assert!(
+            registry.output(&term_b, &token_b).is_ok(),
+            "release_owner(token_a) must leave owner B's terminal alive"
+        );
+        registry.release_owner(&token_b);
+    }
+
+    #[tokio::test]
+    async fn output_polls_exit_status_without_wait_for_exit() {
+        let registry = TerminalRegistry::default();
+        let token = registry.new_owner_token();
+
+        #[cfg(windows)]
+        let (cmd, args) = ("cmd", vec!["/c".into(), "echo ok".into()]);
+        #[cfg(not(windows))]
+        let (cmd, args) = ("sh", vec!["-c".into(), "echo ok".into()]);
+
+        let created = registry
+            .create(&token, cmd, &args, None, &[], None)
+            .expect("terminal created");
+        let terminal_id = created["terminalId"]
+            .as_str()
+            .expect("terminalId")
+            .to_string();
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let out = loop {
+            let out = registry.output(&terminal_id, &token).expect("output");
+            if out.get("exitStatus").and_then(|v| v.as_object()).is_some() {
+                break out;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for output() to poll exitStatus: {out:?}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        };
+
+        assert_eq!(out["exitStatus"]["exitCode"], 0);
+        let text = out["output"].as_str().expect("output text");
+        assert!(
+            text.contains("ok"),
+            "expected 'ok' in output, got {text:?}"
+        );
+        registry.release(&terminal_id, &token).expect("release");
     }
 }
+

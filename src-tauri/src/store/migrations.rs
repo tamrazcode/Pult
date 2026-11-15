@@ -11,7 +11,13 @@ use super::sql;
 type MigrationFn = fn(&Connection) -> Result<(), PultError>;
 
 /// Ordered list: entry `i` upgrades the schema from version `i` to `i + 1`.
-const MIGRATIONS: &[MigrationFn] = &[migration_1, migration_2, migration_3, migration_4];
+const MIGRATIONS: &[MigrationFn] = &[
+    migration_1,
+    migration_2,
+    migration_3,
+    migration_4,
+    migration_5,
+];
 
 /// Applies every migration newer than the stored `user_version`.
 pub(super) fn run(conn: &mut Connection) -> Result<(), PultError> {
@@ -148,4 +154,19 @@ fn migration_4(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 4: projects.pinned", e))
+}
+
+/// Version 5: queued messages snapshot the settings (`mode`,
+/// `config_options`) they were queued with; `claiming_run_id` marks the row a
+/// dispatcher has claimed but not yet committed (a crash between claim and
+/// commit restores the message on boot).
+fn migration_5(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE queue_items ADD COLUMN mode TEXT;
+        ALTER TABLE queue_items ADD COLUMN config_options TEXT NOT NULL DEFAULT '{}';
+        ALTER TABLE queue_items ADD COLUMN claiming_run_id TEXT;
+        "#,
+    )
+    .map_err(|e| sql("migration 5: queue snapshot + claim", e))
 }

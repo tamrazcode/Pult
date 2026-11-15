@@ -210,6 +210,16 @@ pub struct PermissionRequestPayload {
     pub options: Vec<AppPermissionOption>,
 }
 
+/// One persisted allow_always decision, scoped to a workspace.
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RememberedPermission {
+    pub workspace: String,
+    pub instance_id: String,
+    pub tool_kind: String,
+    pub option_id: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ThreadUpdatedPayload {
@@ -227,6 +237,8 @@ pub struct ProcessEventPayload {
 struct RunState {
     conn: Arc<AcpConn>,
     session_id: String,
+    /// Terminal ownership token for this live connection.
+    owner_token: String,
     /// Which configured instance owns this run (diagnostics, M6).
     instance_id: String,
 }
@@ -265,6 +277,10 @@ struct Inner {
     answer_queues: HashMap<String, mpsc::UnboundedSender<(String, AnswerPayload)>>,
     /// thread_id → active run_id (§4.2: at most one active run per thread).
     threads_working: HashMap<String, String>,
+    /// Threads being deleted: no new runs and no queue drain while present.
+    deleting_threads: std::collections::HashSet<String>,
+    /// Runs whose Stop was pressed (grace timer or force kill in flight).
+    cancelling_runs: std::collections::HashSet<String>,
     /// instance_id → capabilities observed at the last handshake.
     capabilities: HashMap<String, CachedCaps>,
     /// thread_id → permission mode override (settings default otherwise).
@@ -279,6 +295,9 @@ struct Inner {
     warming: std::collections::HashSet<String>,
     /// The agent matrix (§4.5 config.toml instances; mock fallback).
     instances: Vec<crate::config::InstanceSpec>,
+    /// Read/parse failure of config.toml; surfaced in Settings instead of
+    /// looking like a normal empty install.
+    config_error: Option<String>,
 }
 
 pub struct AgentRuntime {
@@ -300,6 +319,13 @@ pub(crate) fn clean_verbatim(path: PathBuf) -> PathBuf {
     PathBuf::from(s.replace(r"\\?\", ""))
 }
 
+/// Stable key for workspace-scoped settings (remembered permissions).
+fn workspace_key(root: &Path) -> String {
+    clean_verbatim(root.to_path_buf())
+        .to_string_lossy()
+        .into_owned()
+}
+
 impl AgentRuntime {
     pub fn new(store: Arc<Store>, sink: Arc<dyn EventSink>) -> Self {
         // Runs live only as long as the process: threads left in a run-state
@@ -310,7 +336,14 @@ impl AgentRuntime {
             Err(err) => tracing::warn!(target: "pult::runtime", error = %err, "orphaned run-state reset failed"),
         }
         let home = crate::pult_home();
-        let mut instances = crate::config::load_instances(&home);
+        let (mut instances, config_error) = match crate::config::load_instances_checked(&home) {
+            Ok(instances) => (instances, None),
+            Err(err) => {
+                tracing::error!(target: "pult::runtime", error = %err,
+                    "config.toml could not be read; using the dev mock");
+                (Vec::new(), Some(err))
+            }
+        };
         if instances.is_empty() {
             instances.push(crate::config::mock_spec());
         }
@@ -323,6 +356,8 @@ impl AgentRuntime {
                 runs: HashMap::new(),
                 answer_queues: HashMap::new(),
                 threads_working: HashMap::new(),
+                deleting_threads: std::collections::HashSet::new(),
+                cancelling_runs: std::collections::HashSet::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
                 terminals,
@@ -330,6 +365,7 @@ impl AgentRuntime {
                 warm: HashMap::new(),
                 warming: std::collections::HashSet::new(),
                 instances,
+                config_error,
             }),
             pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals),
         }
@@ -594,11 +630,21 @@ impl AgentRuntime {
         for id in old_ids.iter().chain(specs.iter().map(|spec| &spec.id)) {
             self.pool.invalidate_instance(id);
         }
+        {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.instances = specs;
+            // A successful save replaces the broken file we complained about.
+            inner.config_error = None;
+        }
+        Ok(())
+    }
+
+    /// Last config.toml read/parse failure, if any (Settings banner).
+    pub fn config_error(&self) -> Option<String> {
         self.inner
             .lock()
-            .expect("runtime lock poisoned")
-            .instances = specs;
-        Ok(())
+            .ok()
+            .and_then(|inner| inner.config_error.clone())
     }
 
     /// Diagnostics (§8 M6): last raw protocol frames from any live run of
@@ -725,25 +771,59 @@ impl AgentRuntime {
     /// Queue-aware send (§6.1 composer semantics): if the thread is working,
     /// the message is stored and auto-dispatches when the active run ends;
     /// otherwise it starts a run immediately.
+    #[allow(clippy::too_many_arguments)]
     pub fn send(
         self: &Arc<Self>,
         thread: &ThreadRecord,
         text: &str,
         images: &[ImageInput],
         instance_id: &str,
+        mode: Option<&str>,
+        config: &DesiredConfigMap,
     ) -> Result<SendOutcome, crate::PultError> {
+        if self.thread_deleting(&thread.id) {
+            return Err(crate::PultError::with_code(
+                "thread.deleting",
+                "thread is being deleted",
+            ));
+        }
+        // Snapshot the effective settings for THIS message: desired picks plus
+        // the ones the composer sent with it.
+        let mut snapshot = self.desired_config(&thread.id);
+        for (id, value) in config {
+            snapshot.insert(id.clone(), value.clone());
+        }
+        let mode = mode.map(str::to_string);
         let active = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
             inner.threads_working.get(&thread.id).cloned()
         };
         if active.is_none() {
-            match self.dispatch(thread, text, images, instance_id) {
+            match self.dispatch_with(
+                thread,
+                text,
+                images,
+                instance_id,
+                mode.clone(),
+                Some(snapshot.clone()),
+                None,
+            ) {
                 Ok(run) => {
+                    // Persist the picker state only after this message owns the
+                    // thread; a queued message must not rewrite the active run.
+                    if let Some(mode) = &mode {
+                        let key = format!("thread_mode:{}", thread.id);
+                        let _ = self.store.set_setting(
+                            &key,
+                            &serde_json::Value::String(mode.clone()),
+                        );
+                    }
+                    self.save_desired_config(&thread.id, &snapshot)?;
                     return Ok(SendOutcome {
                         run: Some(run),
                         queued: false,
                         queue_id: None,
-                    })
+                    });
                 }
                 // Lost the race to a concurrent send: queue behind its run
                 // instead of refusing the message.
@@ -760,6 +840,8 @@ impl AgentRuntime {
             instance_id: instance_id.to_string(),
             text: text.to_string(),
             images: images.to_vec(),
+            mode,
+            config_options: snapshot.into_iter().collect(),
             created_at: now_millis(),
         };
         self.store.enqueue_queue_item(&item)?;
@@ -784,6 +866,31 @@ impl AgentRuntime {
             .threads_working
             .get(thread_id)
             .cloned()
+    }
+
+    /// Marks a thread as being deleted: no new runs, no queue drain.
+    pub fn begin_delete_thread(&self, thread_id: &str) {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .deleting_threads
+            .insert(thread_id.to_string());
+    }
+
+    pub fn finish_delete_thread(&self, thread_id: &str) {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .deleting_threads
+            .remove(thread_id);
+    }
+
+    fn thread_deleting(&self, thread_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .deleting_threads
+            .contains(thread_id)
     }
 
     /// Sends a queued message now: move it ahead of the queue and cancel the
@@ -1009,12 +1116,39 @@ impl AgentRuntime {
         images: &[ImageInput],
         instance_id: &str,
     ) -> Result<RunRecord, crate::PultError> {
+        self.dispatch_with(thread, text, images, instance_id, None, None, None)
+    }
+
+    /// `dispatch` with optional per-message settings. A queued message carries
+    /// the mode/config it was written with, so later picker changes cannot
+    /// rewrite it. `claim_queue_id` makes the run row, the user message and the
+    /// queue-row delete one transaction (C09).
+    #[allow(clippy::too_many_arguments)]
+    fn dispatch_with(
+        self: &Arc<Self>,
+        thread: &ThreadRecord,
+        text: &str,
+        images: &[ImageInput],
+        instance_id: &str,
+        mode_override: Option<String>,
+        config_override: Option<DesiredConfigMap>,
+        claim_queue_id: Option<&str>,
+    ) -> Result<RunRecord, crate::PultError> {
+        if self.thread_deleting(&thread.id) {
+            return Err(crate::PultError::with_code(
+                "thread.deleting",
+                "thread is being deleted",
+            ));
+        }
         let spawn_config = self.spawn_config_for(instance_id)?;
         // Resolve the folder before creating the run so a missing workspace is
         // an immediate typed error, not a failed run record.
         let root = self.workspace_root_for(thread)?;
 
-        let desired = self.desired_config(&thread.id);
+        let desired = match config_override {
+            Some(config) => config,
+            None => self.desired_config(&thread.id),
+        };
         let effective_config = self.filter_config_for_instance(instance_id, &desired);
         let model = desired_string(&effective_config, "model");
         let effort = effort_id_order()
@@ -1027,18 +1161,32 @@ impl AgentRuntime {
             status: "running".to_string(),
             instance_id: instance_id.to_string(),
             model,
-            mode: self.desired_mode(&thread.id),
+            mode: mode_override.or_else(|| self.desired_mode(&thread.id)),
             effort,
             started_at: now_millis(),
             stopped_at: None,
             stop_reason: None,
             error: None,
         };
+        let user_event = Event::new(
+            run.id.clone(),
+            self.store.next_seq(&run.id)?,
+            EventKind::UserMessage {
+                text: text.to_string(),
+                images: images.to_vec(),
+            },
+        );
         // Register before the DB write so a threads_get landing in between
         // sees the run as live instead of a zombie. Check-and-insert under one
         // lock: two concurrent dispatches must not both start a run.
         {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            if inner.deleting_threads.contains(&thread.id) {
+                return Err(crate::PultError::with_code(
+                    "thread.deleting",
+                    "thread is being deleted",
+                ));
+            }
             if inner.threads_working.contains_key(&thread.id) {
                 return Err(crate::PultError::with_code(
                     "thread.busy",
@@ -1049,23 +1197,22 @@ impl AgentRuntime {
                 .threads_working
                 .insert(thread.id.clone(), run.id.clone());
         }
-        if let Err(err) = self.store.create_run(&run) {
-            self.rollback_run(&run.id, &thread.id);
-            return Err(err);
-        }
-        let user_event = match self.store.next_seq(&run.id) {
-            Ok(seq) => Event::new(
-                run.id.clone(),
-                seq,
-                EventKind::UserMessage {
-                    text: text.to_string(),
-                    images: images.to_vec(),
-                },
-            ),
-            Err(err) => return Err(self.abort_run_start(&run, &thread.id, err)),
-        };
-        if let Err(err) = self.store.append_event(&user_event) {
-            return Err(self.abort_run_start(&run, &thread.id, err));
+        if let Some(queue_id) = claim_queue_id {
+            if let Err(err) = self
+                .store
+                .commit_claimed_queue_run(queue_id, &run, &user_event)
+            {
+                self.rollback_run(&run.id, &thread.id);
+                return Err(err);
+            }
+        } else {
+            if let Err(err) = self.store.create_run(&run) {
+                self.rollback_run(&run.id, &thread.id);
+                return Err(err);
+            }
+            if let Err(err) = self.store.append_event(&user_event) {
+                return Err(self.abort_run_start(&run, &thread.id, err));
+            }
         }
 
         let (answers_tx, answers_rx) = mpsc::unbounded_channel::<(String, AnswerPayload)>();
@@ -1142,37 +1289,100 @@ impl AgentRuntime {
     }
 
     /// Stop button / Esc: cancel the active run's prompt turn (§5.3).
-    pub fn cancel(&self, run_id: &str) -> Result<(), crate::PultError> {
-        let (conn, session_id) = {
-            let inner = self.inner.lock().expect("runtime lock poisoned");
-            match inner.runs.get(run_id) {
-                Some(state) => (Arc::clone(&state.conn), state.session_id.clone()),
-                None => {
-                    return Err(crate::PultError::internal(format!("run {run_id} is not active")))
-                }
-            }
+    pub fn cancel(self: &Arc<Self>, run_id: &str) -> Result<(), crate::PultError> {
+        self.cancel_with_force(run_id, false)
+    }
+
+    /// Stop with escalation: the cancel notification is advisory, so a run
+    /// that ignores it (hung CLI) is killed after a grace period. `force`
+    /// skips the grace period entirely.
+    pub fn cancel_with_force(
+        self: &Arc<Self>,
+        run_id: &str,
+        force: bool,
+    ) -> Result<(), crate::PultError> {
+        let (conn, session_id, thread_id, owner_token) = {
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
+            let Some(state) = inner.runs.get(run_id) else {
+                return Err(crate::PultError::internal(format!(
+                    "run {run_id} is not active"
+                )));
+            };
+            let state = (
+                Arc::clone(&state.conn),
+                state.session_id.clone(),
+                state.owner_token.clone(),
+            );
+            let thread_id = inner
+                .threads_working
+                .iter()
+                .find(|(_, id)| id.as_str() == run_id)
+                .map(|(thread, _)| thread.clone())
+                .unwrap_or_default();
+            inner.cancelling_runs.insert(run_id.to_string());
+            (state.0, state.1, thread_id, state.2)
         };
-        tokio::runtime::Handle::try_current()
-            .map_err(|_| {
-                crate::PultError::internal("no tokio runtime — cannot reach the agent process")
-            })?
-            .spawn(async move {
-                if let Err(err) = conn.cancel(&session_id).await {
-                    tracing::warn!(target: "pult::runtime", error = %err, "cancel failed");
-                }
-            });
+        self.emit(
+            "run:cancelling",
+            &serde_json::json!({ "runId": run_id, "threadId": thread_id }),
+        );
+        if force {
+            conn.kill();
+            let terminals = {
+                let inner = self.inner.lock().expect("runtime lock poisoned");
+                Arc::clone(&inner.terminals)
+            };
+            terminals.release_owner(&owner_token);
+            return Ok(());
+        }
+        let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+            crate::PultError::internal("no tokio runtime - cannot reach the agent process")
+        })?;
+        handle.spawn(async move {
+            if let Err(err) = conn.cancel(&session_id).await {
+                tracing::warn!(target: "pult::runtime", error = %err, "cancel failed");
+            }
+        });
+        let runtime = Arc::clone(self);
+        let grace_run = run_id.to_string();
+        handle.spawn(async move {
+            let grace_ms = std::env::var("PULT_CANCEL_GRACE_MS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .unwrap_or(5_000);
+            tokio::time::sleep(std::time::Duration::from_millis(grace_ms)).await;
+            let still_active = {
+                let inner = runtime.inner.lock().expect("runtime lock poisoned");
+                inner.cancelling_runs.contains(&grace_run)
+                    && inner.runs.contains_key(&grace_run)
+            };
+            if still_active {
+                tracing::warn!(target: "pult::runtime", run_id = %grace_run,
+                    "agent ignored cancel; force-killing the run");
+                runtime.kill_run(&grace_run);
+            }
+        });
         Ok(())
     }
 
     /// Force-kills a run's agent process (thread delete: a wedged agent may
     /// ignore `session/cancel` and keep its worktree files open).
     pub fn kill_run(&self, run_id: &str) {
-        let conn = {
+        let found = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
-            inner.runs.get(run_id).map(|state| Arc::clone(&state.conn))
+            inner
+                .runs
+                .get(run_id)
+                .map(|state| (Arc::clone(&state.conn), state.owner_token.clone()))
         };
-        if let Some(conn) = conn {
+        if let Some((conn, owner_token)) = found {
             conn.kill();
+            // The process is gone: its terminals are unreachable.
+            let terminals = {
+                let inner = self.inner.lock().expect("runtime lock poisoned");
+                Arc::clone(&inner.terminals)
+            };
+            terminals.release_owner(&owner_token);
         }
     }
 
@@ -1263,8 +1473,15 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Remembered allow_always decision per (instance, tool class) (§5.5).
-    fn remembered_for(&self, instance_id: &str, tool_kind: &str) -> Option<String> {
+    /// Remembered allow_always decision per (workspace, instance, tool class)
+    /// (§5.5). A permission granted in one project must not leak into another;
+    /// legacy unscoped entries are ignored (they fall back to asking).
+    fn remembered_for(
+        &self,
+        workspace: &str,
+        instance_id: &str,
+        tool_kind: &str,
+    ) -> Option<String> {
         let value = self
             .store
             .get_setting("remembered_permissions")
@@ -1272,6 +1489,7 @@ impl AgentRuntime {
             .flatten()?;
         Some(
             value
+                .get(workspace)?
                 .get(instance_id)?
                 .get(tool_kind)?
                 .as_str()?
@@ -1279,17 +1497,85 @@ impl AgentRuntime {
         )
     }
 
-    fn remember_decision(&self, instance_id: &str, tool_kind: &str, option_id: &str) {
+    fn remember_decision(
+        &self,
+        workspace: &str,
+        instance_id: &str,
+        tool_kind: &str,
+        option_id: &str,
+    ) {
         let mut map = self
             .store
             .get_setting("remembered_permissions")
             .ok()
             .flatten()
             .unwrap_or(serde_json::json!({}));
-        map[instance_id][tool_kind] = serde_json::Value::String(option_id.to_string());
+        map[workspace][instance_id][tool_kind] = serde_json::Value::String(option_id.to_string());
         if let Err(err) = self.store.set_setting("remembered_permissions", &map) {
             tracing::warn!(target: "pult::runtime", error = %err, "remembered decision not saved");
         }
+    }
+
+    /// Flat view for Settings ▸ General (revoke list).
+    pub fn list_remembered_permissions(&self) -> Vec<RememberedPermission> {
+        let Some(value) = self.store.get_setting("remembered_permissions").ok().flatten() else {
+            return Vec::new();
+        };
+        let Some(workspaces) = value.as_object() else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (workspace, instances) in workspaces {
+            let Some(instances) = instances.as_object() else {
+                continue;
+            };
+            for (instance_id, kinds) in instances {
+                let Some(kinds) = kinds.as_object() else {
+                    continue;
+                };
+                for (tool_kind, option_id) in kinds {
+                    let Some(option_id) = option_id.as_str() else {
+                        continue;
+                    };
+                    out.push(RememberedPermission {
+                        workspace: workspace.clone(),
+                        instance_id: instance_id.clone(),
+                        tool_kind: tool_kind.clone(),
+                        option_id: option_id.to_string(),
+                    });
+                }
+            }
+        }
+        out
+    }
+
+    /// Revokes remembered decisions matching the filters; `None` matches all.
+    pub fn clear_remembered_permission(
+        &self,
+        workspace: Option<&str>,
+        instance_id: Option<&str>,
+        tool_kind: Option<&str>,
+    ) -> Result<(), crate::PultError> {
+        let Some(mut value) = self.store.get_setting("remembered_permissions")? else {
+            return Ok(());
+        };
+        let Some(workspaces) = value.as_object_mut() else {
+            return Ok(());
+        };
+        workspaces.retain(|key, _| workspace.is_none_or(|wanted| wanted == key));
+        for instances in workspaces.values_mut() {
+            let Some(instances) = instances.as_object_mut() else {
+                continue;
+            };
+            instances.retain(|key, _| instance_id.is_none_or(|wanted| wanted == key));
+            for kinds in instances.values_mut() {
+                let Some(kinds) = kinds.as_object_mut() else {
+                    continue;
+                };
+                kinds.retain(|key, _| tool_kind.is_none_or(|wanted| wanted == key));
+            }
+        }
+        self.store.set_setting("remembered_permissions", &value)
     }
 
     fn set_thread_status(&self, thread_id: &str, status: &str) -> Result<(), crate::PultError> {
@@ -1622,7 +1908,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
     let mut client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>;
     let session_id: String;
+    // Terminals are owned by the connection, not by the ACP session id.
+    let owner_token: String;
     let mut applied_config: DesiredConfigMap;
+    let mut context_reset_reason: Option<String> = None;
     let mut replayed_metadata = Vec::new();
     let mut preinit: Option<crate::protocol::types::InitializeResult> = None;
     let warm = if pooled.is_none() {
@@ -1638,6 +1927,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             events_rx: mut pooled_events,
             client_requests_rx: pooled_requests,
             session_id: pooled_session,
+            owner_token: pooled_owner,
             applied_config: pooled_config,
             ..
         } = entry;
@@ -1647,6 +1937,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         events_rx = pooled_events;
         client_requests_rx = pooled_requests;
         session_id = pooled_session;
+        owner_token = pooled_owner;
         applied_config = pooled_config;
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
@@ -1655,6 +1946,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 RunState {
                     conn: Arc::clone(&conn),
                     session_id: session_id.clone(),
+                    owner_token: owner_token.clone(),
                     instance_id: instance_id.clone(),
                 },
             );
@@ -1690,6 +1982,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         events_rx = spawn_events;
         client_requests_rx = spawn_requests;
         applied_config = DesiredConfigMap::new();
+        owner_token = {
+            let inner = runtime.inner.lock().expect("runtime lock poisoned");
+            inner.terminals.new_owner_token()
+        };
 
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
@@ -1698,6 +1994,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 RunState {
                     conn: Arc::clone(&conn),
                     session_id: String::new(),
+                    owner_token: owner_token.clone(),
                     instance_id: instance_id.clone(),
                 },
             );
@@ -1733,6 +2030,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         timing.handshake_ms = resolved.handshake_ms;
         timing.session_ms = resolved.session_ms;
         session_id = resolved.session_id;
+        context_reset_reason = resolved.context_reset_reason;
         // A resumed session re-announces the prior transcript while `session/load`
         // is in flight. Persisting that replay would duplicate history in this
         // run: drop transcript items, keep session metadata.
@@ -1779,6 +2077,21 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         let _ = runtime.store.append_event(&event);
         runtime.emit_run_event(&run_id, &event);
         runtime.apply_session_metadata(&thread_id, &instance_id, &event.kind);
+    }
+    // Visible, persisted warning: the transcript on screen is NOT the agent's
+    // context for this run (load failed, no load support, or agent switch).
+    if let Some(message) = context_reset_reason {
+        let event = Event::new(
+            run_id.clone(),
+            next_seq,
+            EventKind::Notice {
+                level: "warning".to_string(),
+                message,
+            },
+        );
+        next_seq += 1;
+        let _ = runtime.store.append_event(&event);
+        runtime.emit_run_event(&run_id, &event);
     }
     // Hot-path batching: deltas coalesce, barriers and the 40 ms tick flush.
     let mut batcher = crate::runtime::batch::EventBatcher::new(run_id.clone(), next_seq);
@@ -1886,6 +2199,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                     {
                                         if crate::runtime::permissions::is_rememberable(&kind) {
                                             runtime.remember_decision(
+                                                &workspace_key(&root),
                                                 &instance_id,
                                                 &pending.tool_kind,
                                                 option_id,
@@ -2012,12 +2326,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             }
                         }
                         ClientRequest::TerminalCreate { request_id, params } => {
-                            let reply =
-                                handle_terminal_create(&terminals, &session_id, &root, &params);
+                            let reply = handle_terminal_create(
+                                &terminals,
+                                &owner_token,
+                                &root,
+                                &params,
+                            );
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::TerminalOutput { request_id, params } => {
-                            let reply = terminals.output(&params.terminal_id);
+                            let reply = terminals.output(&params.terminal_id, &owner_token);
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::TerminalWait { request_id, params } => {
@@ -2025,17 +2343,19 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             // stall the event stream (§9 no blocking lanes).
                             let conn = Arc::clone(&conn);
                             let terminals = Arc::clone(&terminals);
+                            let owner = owner_token.clone();
                             tokio::spawn(async move {
-                                let reply = terminals.wait_for_exit(&params.terminal_id).await;
+                                let reply =
+                                    terminals.wait_for_exit(&params.terminal_id, &owner).await;
                                 let _ = conn.respond_client(request_id, reply).await;
                             });
                         }
                         ClientRequest::TerminalKill { request_id, params } => {
-                            let reply = terminals.kill(&params.terminal_id);
+                            let reply = terminals.kill(&params.terminal_id, &owner_token);
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::TerminalRelease { request_id, params } => {
-                            let reply = terminals.release(&params.terminal_id);
+                            let reply = terminals.release(&params.terminal_id, &owner_token);
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                     }
@@ -2053,8 +2373,20 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         );
                     }
                     Err(err) => {
-                        failure = Some(err.to_string());
-                        stop_reason = Some("failed".to_string());
+                        // A deliberate Stop kills the process; that is a
+                        // cancellation, not an agent failure.
+                        let cancelled = runtime
+                            .inner
+                            .lock()
+                            .expect("runtime lock poisoned")
+                            .cancelling_runs
+                            .contains(&run_id);
+                        if cancelled {
+                            stop_reason = Some("cancelled".to_string());
+                        } else {
+                            failure = Some(err.to_string());
+                            stop_reason = Some("failed".to_string());
+                        }
                     }
                 }
                 break;
@@ -2109,6 +2441,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 events_rx,
                 client_requests_rx,
                 session_id: session_id.clone(),
+                owner_token: owner_token.clone(),
                 instance_id: instance_id.clone(),
                 root: root.clone(),
                 spawn_sig,
@@ -2127,7 +2460,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         conn.kill();
         // The agent process is gone, so its terminals are unreachable: kill
         // their children instead of leaking orphaned processes.
-        terminals.release_session(&session_id);
+        terminals.release_owner(&owner_token);
     }
     if crashed_mid_run {
         emit_process("crashed", failure.clone());
@@ -2175,11 +2508,17 @@ impl AgentRuntime {
         if let Some(detail) = &failure {
             tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
         }
-        {
+        let deleting = {
             let mut guard = self.inner.lock().expect("runtime lock poisoned");
             guard.runs.remove(run_id);
             guard.answer_queues.remove(run_id);
             guard.threads_working.remove(thread_id);
+            guard.cancelling_runs.remove(run_id);
+            guard.deleting_threads.contains(thread_id)
+        };
+        if deleting {
+            // The thread is going away: never start its next queued message.
+            return Ok(());
         }
         let _ = self.store.set_thread_status(thread_id, "settled");
         if let Ok(thread) = self.store.get_thread(thread_id) {
@@ -2194,29 +2533,41 @@ impl AgentRuntime {
 }
 
 impl AgentRuntime {
-    /// Pops the queue head and dispatches it, if the thread has one queued.
-    /// Best-effort: a dispatch error is logged, the remaining queue is kept.
+    /// Claims the queue head and dispatches it, if the thread has one queued.
+    /// The claim is atomic (two dispatchers cannot run the same row) and the
+    /// run row + user event + queue delete commit in one transaction (C09).
+    /// Best-effort: a dispatch error releases the claim, the message is kept.
     fn auto_dispatch_queue(self: &Arc<Self>, thread_id: &str) {
-        match self.store.pop_queue_head(thread_id) {
+        if self.thread_deleting(thread_id) {
+            return;
+        }
+        let claim = new_row_id("claim", thread_id);
+        match self.store.claim_queue_head(thread_id, &claim) {
             Ok(Some(item)) => {
                 let thread = match self.store.get_thread(thread_id) {
                     Ok(thread) => thread,
                     Err(err) => {
                         tracing::error!(target: "pult::runtime",
                             error = %err, "queue dispatch: thread vanished");
+                        let _ = self.store.release_queue_claim(&item.id);
                         return;
                     }
                 };
-                match self.dispatch(&thread, &item.text, &item.images, &item.instance_id) {
+                match self.dispatch_with(
+                    &thread,
+                    &item.text,
+                    &item.images,
+                    &item.instance_id,
+                    item.mode.clone(),
+                    Some(item.config_options.clone().into_iter().collect()),
+                    Some(&item.id),
+                ) {
                     Ok(_) => {}
                     Err(err) => {
                         tracing::error!(target: "pult::runtime",
                             error = %err, "queue auto-dispatch failed");
                         // A failed dispatch must not eat the user's message.
-                        if let Err(restore) = self.store.enqueue_queue_item(&item) {
-                            tracing::error!(target: "pult::runtime",
-                                error = %restore, "queue auto-dispatch restore failed");
-                        }
+                        let _ = self.store.release_queue_claim(&item.id);
                         // A concurrent run won the thread: its finalize drains
                         // the queue, unless it already ended in this gap.
                         if is_thread_busy(&err) && self.active_run_for(thread_id).is_none() {
@@ -2228,7 +2579,7 @@ impl AgentRuntime {
             }
             Ok(None) => {}
             Err(err) => {
-                tracing::warn!(target: "pult::runtime", error = %err, "queue pop failed");
+                tracing::warn!(target: "pult::runtime", error = %err, "queue claim failed");
             }
         }
     }
@@ -2518,6 +2869,8 @@ impl AgentRuntime {
 pub(crate) struct ResolvedSession {
     pub session_id: String,
     pub resumed: bool,
+    /// Set when the UI history and the agent's context can no longer match.
+    pub context_reset_reason: Option<String>,
     pub handshake_ms: u64,
     pub session_ms: u64,
 }
@@ -2546,8 +2899,17 @@ async fn resolve_session(
         load_session = init.agent_capabilities.load_session,
         "agent initialized");
     let cwd = root.to_string_lossy().into_owned();
-    let session = match runtime.store.get_session_ref(thread_id, instance_id) {
-        Ok(Some(remote)) if init.agent_capabilities.load_session => {
+    // A SQLite failure is not "no previous session": surface it instead of
+    // silently starting fresh.
+    let session_ref = runtime.store.get_session_ref(thread_id, instance_id)?;
+    let previous_instance = runtime
+        .store
+        .list_runs(thread_id)
+        .ok()
+        .and_then(|runs| runs.last().map(|run| run.instance_id.clone()));
+    let mut context_reset_reason = None;
+    let session = match session_ref {
+        Some(remote) if init.agent_capabilities.load_session => {
             match conn.load_session(&remote, &cwd).await {
                 Ok(loaded) => {
                     resumed = true;
@@ -2565,6 +2927,10 @@ async fn resolve_session(
                 Err(err) => {
                     tracing::warn!(target: "pult::runtime",
                         error = %err, "session/load failed; starting a new session");
+                    context_reset_reason = Some(
+                        "The previous session could not be resumed — this run starts with fresh agent context."
+                            .to_string(),
+                    );
                     let fresh = runtime
                         .open_session(conn, &cwd, instance_id, &init.auth_methods)
                         .await?;
@@ -2579,7 +2945,37 @@ async fn resolve_session(
                 }
             }
         }
-        _ => {
+        Some(_) => {
+            // The agent advertises no session/load: the visible history is
+            // not its context, so say so instead of pretending to continue.
+            context_reset_reason = Some(
+                "This agent cannot resume sessions — this run starts with fresh agent context."
+                    .to_string(),
+            );
+            let fresh = runtime
+                .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                .await?;
+            let _ = runtime
+                .store
+                .upsert_session_ref(thread_id, instance_id, &fresh.session_id);
+            runtime.cache_capabilities(
+                instance_id,
+                &init.agent_capabilities,
+                fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
+                fresh.config_options.clone(),
+            );
+            fresh.session_id
+        }
+        None => {
+            if previous_instance
+                .as_deref()
+                .is_some_and(|previous| previous != instance_id)
+            {
+                context_reset_reason = Some(
+                    "Switched agent — this run starts without the previous agent's context."
+                        .to_string(),
+                );
+            }
             let fresh = runtime
                 .open_session(conn, &cwd, instance_id, &init.auth_methods)
                 .await?;
@@ -2598,6 +2994,7 @@ async fn resolve_session(
     Ok(ResolvedSession {
         session_id: session,
         resumed,
+        context_reset_reason,
         handshake_ms,
         session_ms: t_session.elapsed().as_millis() as u64,
     })
@@ -2723,7 +3120,7 @@ async fn handle_permission_request(
             kind: o.kind.clone(),
         })
         .collect();
-    let remembered = runtime.remembered_for(instance_id, &tool_kind);
+    let remembered = runtime.remembered_for(&workspace_key(root), instance_id, &tool_kind);
     let decision = crate::runtime::permissions::resolve(
         runtime.permission_mode_for(thread_id),
         root,
@@ -2860,13 +3257,15 @@ fn notify_if_unfocused(runtime: &AgentRuntime, title: &str, body: &str) {
 /// `terminal/create` handler: sandbox-checked cwd + spawn (§5.5).
 fn handle_terminal_create(
     terminals: &TerminalRegistry,
-    session_id: &str,
+    owner_token: &str,
     root: &Path,
     params: &CreateTerminalParams,
 ) -> ClientReply {
+    // No cwd means "the project": inheriting the app's cwd would run the tool
+    // outside the user's workspace.
     let cwd = match &params.cwd {
-        Some(raw) => Some(safe_path(root, raw)?),
-        None => None,
+        Some(raw) => safe_path(root, raw)?,
+        None => root.to_path_buf(),
     };
     let env: Vec<(String, String)> = params
         .env
@@ -2874,10 +3273,10 @@ fn handle_terminal_create(
         .map(|e| (e.name.clone(), e.value.clone()))
         .collect();
     terminals.create(
-        session_id,
+        owner_token,
         &params.command,
         &params.args,
-        cwd.as_ref(),
+        Some(&cwd),
         &env,
         params.output_byte_limit,
     )

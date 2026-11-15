@@ -52,6 +52,15 @@ impl PultError {
             message: message.into(),
         }
     }
+
+    /// Typed code the UI branches on (`git.worktree_dirty`, …).
+    pub fn code(&self) -> &str {
+        match self {
+            Self::Internal { code, .. } => code,
+            Self::Store { .. } => "store",
+            Self::Git { code, .. } => code,
+        }
+    }
 }
 
 impl Serialize for PultError {

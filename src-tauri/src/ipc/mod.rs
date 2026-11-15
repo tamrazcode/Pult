@@ -137,7 +137,8 @@ pub(crate) async fn create_thread_with_runtime(
     if let Some(pid) = &project_id {
         if runtime.store().get_project(pid).is_err() {
             if let (Some(repo), Some(name)) = (&main_repo, &worktree_name) {
-                let _ = crate::git::worktree_remove(std::path::Path::new(repo), name).await;
+                let _ =
+                    crate::git::worktree_remove(std::path::Path::new(repo), name, true).await;
             }
             return Err(PultError::with_code(
                 "workspace.missing",
@@ -434,8 +435,14 @@ pub async fn threads_delete(
     runtime.ptys().kill_thread(&thread_id);
     if let Ok(thread) = runtime.store().get_thread(&thread_id) {
         if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
-            if let Err(err) = crate::git::worktree_remove(std::path::Path::new(main_repo), name).await
+            if let Err(err) =
+                crate::git::worktree_remove(std::path::Path::new(main_repo), name, false).await
             {
+                // Never delete the row while the user's worktree files remain:
+                // the thread is the only handle back to them.
+                if err.code() == "git.worktree_dirty" {
+                    return Err(err);
+                }
                 tracing::warn!(target: "pult::ipc", thread_id = %thread_id,
                     error = %err, "worktree cleanup failed; deleting thread anyway");
             }
@@ -465,14 +472,19 @@ pub async fn runs_dispatch(
     config_options: Option<crate::runtime::DesiredConfigMap>,
 ) -> Result<SendOutcome, PultError> {
     let thread = runtime.store().get_thread(&thread_id)?;
-    if let Some(mode) = mode.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
-        runtime.set_mode(&thread_id, mode)?;
-    }
     runtime.clear_stale_provider_config(&thread_id, &instance_id)?;
-    if let Some(config) = config_options.as_ref().filter(|c| !c.is_empty()) {
-        runtime.merge_desired_config(&thread_id, config)?;
-    }
-    runtime.send(&thread, &text, &images, &instance_id)
+    let mode = mode
+        .map(|mode| mode.trim().to_string())
+        .filter(|mode| !mode.is_empty());
+    let config = config_options.unwrap_or_default();
+    runtime.send(
+        &thread,
+        &text,
+        &images,
+        &instance_id,
+        mode.as_deref(),
+        &config,
+    )
 }
 
 /// Switches one session config option (model, thought level, toggle). Applies

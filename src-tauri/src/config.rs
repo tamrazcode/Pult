@@ -53,17 +53,26 @@ pub fn mock_spec() -> InstanceSpec {
 
 /// Reads instances from `<home>/config.toml`; missing file → empty.
 pub fn load_instances(home: &Path) -> Vec<InstanceSpec> {
-    let raw = match std::fs::read_to_string(home.join("config.toml")) {
-        Ok(raw) => raw,
-        Err(_) => return Vec::new(),
-    };
-    match toml::from_str::<ConfigFile>(&raw) {
-        Ok(config) => config.instances,
+    match load_instances_checked(home) {
+        Ok(instances) => instances,
         Err(err) => {
-            tracing::warn!(target: "pult::config", error = %err, "config.toml parse failed; using defaults");
+            tracing::warn!(target: "pult::config", error = %err, "config.toml unreadable; using defaults");
             Vec::new()
         }
     }
+}
+
+/// Reads instances from `<home>/config.toml`, reporting read/parse failures
+/// instead of silently returning an empty list.
+pub fn load_instances_checked(home: &Path) -> Result<Vec<InstanceSpec>, String> {
+    let raw = match std::fs::read_to_string(home.join("config.toml")) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err.to_string()),
+    };
+    toml::from_str::<ConfigFile>(&raw)
+        .map(|config| config.instances)
+        .map_err(|err| err.to_string())
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -73,7 +82,8 @@ struct ConfigFile {
 }
 
 /// Rewrites the `instances` array in `<home>/config.toml`, keeping the rest
-/// of the file untouched (parse the whole table → patch the one key → write;
+/// of the file untouched (parse the whole table → patch the one key → write
+/// via a temp file + rename so a failed write never corrupts the old file;
 /// creates the file if absent).
 pub fn save_instances(home: &Path, specs: &[InstanceSpec]) -> Result<(), PultError> {
     let path = home.join("config.toml");
@@ -90,7 +100,17 @@ pub fn save_instances(home: &Path, specs: &[InstanceSpec]) -> Result<(), PultErr
     let body = toml::to_string_pretty(&table)
         .map_err(|e| PultError::store(format!("config.toml serialize: {e}")))?;
     std::fs::create_dir_all(home).map_err(|e| PultError::store(format!("create home: {e}")))?;
-    std::fs::write(&path, body).map_err(|e| PultError::store(format!("write config: {e}")))?;
+    let tmp = home.join(format!("config.toml.tmp.{}", std::process::id()));
+    let write = (|| -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        std::io::Write::write_all(&mut file, body.as_bytes())?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, &path)
+    })();
+    if let Err(err) = write {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(PultError::store(format!("write config: {err}")));
+    }
     Ok(())
 }
 
@@ -312,4 +332,62 @@ mod tests {
             );
         }
     }
+
+    fn temp_config_home(label: &str) -> std::path::PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "pult-config-{label}-{}-{nanos}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn load_instances_checked_reports_corrupt_toml_without_silent_empty() {
+        let home = temp_config_home("corrupt-load");
+        assert_eq!(load_instances_checked(&home).unwrap(), Vec::<InstanceSpec>::new());
+
+        std::fs::write(home.join("config.toml"), "[[instances]\nbroken = [unterminated").unwrap();
+        let err = load_instances_checked(&home).unwrap_err();
+        assert!(!err.is_empty());
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn save_instances_preserves_existing_file_when_toml_is_corrupt_or_write_fails() {
+        let home = temp_config_home("atomic-save");
+        let config_path = home.join("config.toml");
+        let corrupt = "[[instances]\nbroken = \"unterminated";
+        std::fs::write(&config_path, corrupt).unwrap();
+
+        assert!(save_instances(&home, &[mock_spec()]).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&config_path).unwrap(),
+            corrupt,
+            "corrupt config.toml must not be truncated or overwritten on save error"
+        );
+
+        std::fs::write(&config_path, "theme = \"t3-dark\"\n").unwrap();
+        save_instances(&home, &[mock_spec()]).unwrap();
+        let loaded = load_instances_checked(&home).unwrap();
+        assert_eq!(loaded, vec![mock_spec()]);
+
+        let tmp_leftovers: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            tmp_leftovers.is_empty(),
+            "no leftover .tmp files expected after save, found {tmp_leftovers:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
+

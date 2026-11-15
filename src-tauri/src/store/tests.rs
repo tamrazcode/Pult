@@ -486,7 +486,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 4, "migrations applied through v4");
+    assert_eq!(version, 5, "migrations applied through v5");
     drop(first);
 
     let second = Store::open(&path).unwrap();
@@ -753,6 +753,12 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
             [],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO queue_items (id, thread_id, instance_id, text, images, created_at)
+             VALUES ('q-1', 't-1', 'inst-1', 'queued v3', '[]', 1500)",
+            [],
+        )
+        .unwrap();
     }
 
     let store = Store::open(&path).unwrap();
@@ -763,7 +769,7 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 4, "migration v4 should bump user_version to 4");
+    assert_eq!(version, 5, "migrations v4 and v5 should bump user_version to 5");
 
     let has_pinned_col: bool = store
         .with_conn(|conn| {
@@ -783,6 +789,28 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
         .unwrap();
     assert!(has_pinned_col, "projects.pinned column must exist after v4 migration");
 
+    let queue_cols: Vec<String> = store
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare("PRAGMA table_info(queue_items)")
+                .map_err(|e| sql("pragma table_info queue_items", e))?;
+            let cols = stmt
+                .query_map([], |row| row.get::<_, String>(1))
+                .map_err(|e| sql("pragma table_info queue_items rows", e))?;
+            let mut out = Vec::new();
+            for col in cols {
+                out.push(col.map_err(|e| sql("queue col name", e))?);
+            }
+            Ok(out)
+        })
+        .unwrap();
+    for expected in ["mode", "config_options", "claiming_run_id"] {
+        assert!(
+            queue_cols.iter().any(|c| c == expected),
+            "queue_items.{expected} column must exist after v5 migration; got {queue_cols:?}"
+        );
+    }
+
     let raw_pinned: i64 = store
         .with_conn(|conn| {
             conn.query_row("SELECT pinned FROM projects WHERE id = 'p-1'", [], |row| row.get(0))
@@ -800,6 +828,12 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
     assert_eq!(preserved.title, "Existing thread");
     assert_eq!(preserved.workspace.as_deref(), Some("/tmp/pult"));
     assert_eq!(preserved.updated_at, 2_000);
+
+    let queued = store.list_queue("t-1").unwrap();
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].id, "q-1");
+    assert_eq!(queued[0].mode, None);
+    assert!(queued[0].config_options.is_empty());
 
     drop(store);
     remove_db_files(&path);
@@ -1040,5 +1074,164 @@ async fn threads_create_defaults_workspace_and_worktree_from_project() {
 
     let _ = std::fs::remove_dir_all(&root_dir);
     let _ = std::fs::remove_dir_all(&wt_repo_dir);
+}
+
+#[test]
+fn queue_item_persists_mode_and_config_snapshot_and_recovers_orphaned_claim() {
+    use std::collections::BTreeMap;
+    use crate::protocol::types::ConfigOptionValue;
+    use crate::store::records::QueueItem;
+
+    let path = unique_temp_path("queue_claim_recovery");
+    remove_db_files(&path);
+
+    let mut config_options = BTreeMap::new();
+    config_options.insert(
+        "model".to_string(),
+        ConfigOptionValue::String("gpt-5".to_string()),
+    );
+
+    let item = QueueItem {
+        id: "q-1".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "queued with snapshot".to_string(),
+        images: Vec::new(),
+        mode: Some("plan".to_string()),
+        config_options: config_options.clone(),
+        created_at: 1_000,
+    };
+
+    {
+        let store = Store::open(&path).unwrap();
+        store.create_thread(&thread("t-1", 1_000)).unwrap();
+        store.enqueue_queue_item(&item).unwrap();
+
+        let listed = store.list_queue("t-1").unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].mode.as_deref(), Some("plan"));
+        assert_eq!(listed[0].config_options, config_options);
+
+        let claimed = store
+            .claim_queue_head("t-1", "claim-token-1")
+            .unwrap()
+            .expect("head should be claimed");
+        assert_eq!(claimed.id, "q-1");
+        assert_eq!(claimed.mode.as_deref(), Some("plan"));
+        assert_eq!(claimed.config_options, config_options);
+        assert!(store.list_queue("t-1").unwrap().is_empty());
+        assert!(store.claim_queue_head("t-1", "claim-token-2").unwrap().is_none());
+
+        store.release_queue_claim("q-1").unwrap();
+        assert_eq!(store.list_queue("t-1").unwrap().len(), 1);
+
+        let reclaimed = store
+            .claim_queue_head("t-1", "claim-token-3")
+            .unwrap()
+            .expect("head should be reclaimed after release");
+        assert_eq!(reclaimed.id, "q-1");
+    }
+
+    // Reopen and simulate boot recovery before commit_claimed_queue_run ran.
+    let reopened = Store::open(&path).unwrap();
+    reopened.reset_orphaned_run_states().unwrap();
+
+    let recovered = reopened.list_queue("t-1").unwrap();
+    assert_eq!(recovered.len(), 1);
+    assert_eq!(recovered[0].id, "q-1");
+    assert_eq!(recovered[0].mode.as_deref(), Some("plan"));
+    assert_eq!(recovered[0].config_options, config_options);
+
+    drop(reopened);
+    remove_db_files(&path);
+}
+
+#[test]
+fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row() {
+    use std::collections::BTreeMap;
+    use crate::store::records::QueueItem;
+
+    let store = Store::open_in_memory().unwrap();
+    store.create_thread(&thread("t-1", 1_000)).unwrap();
+
+    let item = QueueItem {
+        id: "q-1".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "commit me".to_string(),
+        images: Vec::new(),
+        mode: Some("code".to_string()),
+        config_options: BTreeMap::new(),
+        created_at: 1_000,
+    };
+    store.enqueue_queue_item(&item).unwrap();
+    let claimed = store
+        .claim_queue_head("t-1", "r-1")
+        .unwrap()
+        .expect("claimed head");
+    assert_eq!(claimed.id, "q-1");
+
+    let r1 = run("r-1", "t-1", 0);
+    let ev1 = event(
+        "r-1",
+        0,
+        EventKind::UserMessage {
+            text: "commit me".to_string(),
+            images: Vec::new(),
+        },
+    );
+    store.commit_claimed_queue_run("q-1", &r1, &ev1).unwrap();
+
+    assert_eq!(store.list_runs("t-1").unwrap(), vec![r1]);
+    assert_eq!(store.load_events("r-1").unwrap(), vec![ev1]);
+    assert!(store.list_queue("t-1").unwrap().is_empty());
+    let raw_count: i64 = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM queue_items WHERE id = 'q-1'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| sql("count queue_items", e))
+        })
+        .unwrap();
+    assert_eq!(raw_count, 0);
+
+    // Rollback check: if event insert fails (FK on missing run_id), run + queue delete roll back together.
+    let item2 = QueueItem {
+        id: "q-2".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "rollback me".to_string(),
+        images: Vec::new(),
+        mode: None,
+        config_options: BTreeMap::new(),
+        created_at: 2_000,
+    };
+    store.enqueue_queue_item(&item2).unwrap();
+    store.claim_queue_head("t-1", "r-2").unwrap().unwrap();
+
+    let r2 = run("r-2", "t-1", 1);
+    let bad_ev = event(
+        "missing-run-fk",
+        0,
+        EventKind::UserMessage {
+            text: "should fail".to_string(),
+            images: Vec::new(),
+        },
+    );
+    assert!(store.commit_claimed_queue_run("q-2", &r2, &bad_ev).is_err());
+    assert_eq!(store.list_runs("t-1").unwrap().len(), 1, "r-2 must roll back");
+    let raw_q2: i64 = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM queue_items WHERE id = 'q-2'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| sql("count q-2", e))
+        })
+        .unwrap();
+    assert_eq!(raw_q2, 1, "q-2 must remain on rollback");
 }
 

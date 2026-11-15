@@ -1,6 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Plus, SquareTerminal, X } from "lucide-react";
-import { terminalPtyCreate, terminalPtyKill, terminalPtyList } from "../../lib/ipc";
+import {
+  ipcErrorMessage,
+  terminalPtyCreate,
+  terminalPtyKill,
+  terminalPtyList,
+} from "../../lib/ipc";
 import { useRunsStore } from "../../stores/runs";
 import type { ToolChatItem } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
@@ -67,26 +72,31 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
     threadId ? s.threads.find((t) => t.id === threadId)?.workspace : undefined,
   );
   const agentTerminals = useAgentTerminals(threadId);
+  const [error, setError] = useState<string | null>(null);
+
+  // Errors belong to the thread that produced them.
+  useEffect(() => setError(null), [threadId]);
 
   // Re-sync the list whenever the thread changes (a restart orphans old ids).
   useEffect(() => {
     if (!threadId) return;
     void terminalPtyList(threadId)
       .then((list) => setList(threadId, list))
-      .catch((err) => console.error("terminal_pty_list failed", err));
+      .catch((err) => setError(ipcErrorMessage(err)));
   }, [threadId, setList]);
 
   const create = async () => {
     if (!threadId) return;
     try {
       const info = await terminalPtyCreate(threadId);
+      setError(null);
       addTerminal(threadId, {
         terminalId: info.terminalId,
         title: info.title,
         exit: info.exit,
       });
     } catch (err) {
-      console.error("terminal_pty_create failed", err);
+      setError(ipcErrorMessage(err));
     }
   };
 
@@ -94,10 +104,13 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
     if (!threadId) return;
     try {
       await terminalPtyKill(id);
+      setError(null);
+      // Only forget the tab once the backend confirmed the kill: otherwise it
+      // looks stopped while the process is still alive.
+      removeTerminal(threadId, id);
     } catch (err) {
-      console.error("terminal_pty_kill failed", err);
+      setError(ipcErrorMessage(err));
     }
-    removeTerminal(threadId, id);
   };
 
   if (!threadId) {
@@ -127,6 +140,22 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
           {active ? `${active.title} · ${workspaceLabel}` : `Shell · ${workspaceLabel}`}
         </span>
       </div>
+
+      {error && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 border-b border-border-subtle bg-danger/10 px-2.5 py-1.5 text-xs text-danger"
+        >
+          <span className="min-w-0 flex-1">{error}</span>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="shrink-0 text-text-tertiary transition hover:text-text-secondary"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {showEmpty ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">

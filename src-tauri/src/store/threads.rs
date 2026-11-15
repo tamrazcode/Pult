@@ -93,6 +93,14 @@ impl Store {
                     [],
                 )
                 .map_err(|e| sql("reset_orphaned_run_states update", e))?;
+            // A crash between claim and commit leaves the row claimed forever;
+            // unclaiming it puts the queued message back in the queue.
+            conn.execute(
+                "UPDATE queue_items SET claiming_run_id = NULL
+                 WHERE claiming_run_id IS NOT NULL",
+                [],
+            )
+            .map_err(|e| sql("reset_orphaned_run_states clear claims", e))?;
             Ok(changed)
         })
     }

@@ -70,5 +70,14 @@ pub struct QueueItem {
     pub instance_id: String,
     pub text: String,
     pub images: Vec<ImageInput>,
+    /// Settings captured when the message was queued: later picker changes
+    /// must not rewrite an already queued message.
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub config_options: std::collections::BTreeMap<
+        String,
+        crate::protocol::types::ConfigOptionValue,
+    >,
     pub created_at: i64,
 }
