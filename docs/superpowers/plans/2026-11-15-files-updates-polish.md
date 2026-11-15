@@ -1,6 +1,6 @@
 # Files Surface & Provider Update Feedback Polish
 
-> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **Authorship & Execution Split:** Author failing tests for each task (Step 1) and verify failure (Step 2) before implementing production changes (Step 3) and running verification (Step 4).
 
@@ -89,7 +89,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing Rust tests**
+- [x] **Step 1: Write failing Rust tests**
       Add `mod workspace_tree_tests` in `src-tauri/src/ipc/mod.rs` calling `walk_workspace` and `walk_workspace_with_limits`:
   1. `truncates_at_entry_cap_and_marks_truncated`:
      - Creates a unique temp dir under `std::env::temp_dir()` with 3 files; asserts `walk_workspace_with_limits(&dir, 3, 6)` returns `entries.len() == 3` and `truncated == false`.
@@ -98,11 +98,11 @@
   2. `truncates_at_depth_limit_and_skips_empty_or_ignored_subtrees`:
      - Creates `a/b/c/d/e/f/empty_at_6` (depth 6, empty) and `a/b/c/d/e/f/node_modules/x.js` (ignored at depth 6); asserts `walk_workspace(&dir).truncated == false`.
      - Adds `a/b/c/d/e/f/deep.txt` (depth 7); asserts `walk_workspace(&dir).truncated == true` and `deep.txt` is omitted.
-- [ ] **Step 2: Run Rust tests to verify failure**
+- [x] **Step 2: Run Rust tests to verify failure**
       Run `cargo test --manifest-path src-tauri/Cargo.toml --lib workspace_tree_tests` → FAIL (`WorkspaceTree`, `walk_workspace_with_limits`, and `.truncated` do not exist).
-- [ ] **Step 3: Implement `WorkspaceTree` in Rust and update IPC types**
+- [x] **Step 3: Implement `WorkspaceTree` in Rust and update IPC types**
       Implement `WorkspaceTree`, `walk_workspace_with_limits`, and `workspace_tree` in `src-tauri/src/ipc/mod.rs`; update `WorkspaceTree` and `workspaceTree` in `src/lib/ipc.ts`; update `FilesPanel.tsx` to read `res.entries` and `tests/editors.test.tsx` mock to return `{ entries: [...], truncated: false }`.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run:
   - `cargo test --manifest-path src-tauri/Cargo.toml --lib workspace_tree_tests` → PASS
   - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS
@@ -154,7 +154,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       Create `tests/files-panel.test.tsx` (mocking `isTauri: () => true`, `workspaceTree`, `workspaceReadText`, `readImageDataUrl`, `openInEditor`):
   1. `"classifies M/A/D/R/U/? entries and propagates highest-priority status to ancestor folders"`:
      - Unit-tests `classifyGitEntry` for `M`, `A`, `D`, `R`, `U` (including `UU`/`AU`), `?`, `C`, and clean `" "`/`" "`.
@@ -169,11 +169,11 @@
   4. `"shows a one-line notice only when workspaceTree reports truncated: true"`:
      - Renders with `truncated: false` → `queryByRole("status")` / `[data-truncated-notice]` is null.
      - Re-renders (or refreshes) with `truncated: true` → `[data-truncated-notice]` is visible with `"Showing first 2,000 entries (depth 6)"`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/files-panel.test.tsx` → FAIL (`src/lib/fileGitStatus.ts` does not exist; `FilesPanel` lacks refresh button, status badges, and truncation notice).
-- [ ] **Step 3: Implement `fileGitStatus.ts` and update `FilesPanel.tsx`**
+- [x] **Step 3: Implement `fileGitStatus.ts` and update `FilesPanel.tsx`**
       Create `src/lib/fileGitStatus.ts`; update `src/components/files/FilesPanel.tsx` with `useGitStore` subscription, status badges, `refreshTree` + `loadingTree` + `RefreshCw` toolbar button, and `truncated` notice.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/files-panel.test.tsx tests/editors.test.tsx tests/fonts.test.ts` → PASS.
 
 ---
@@ -209,7 +209,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
       Create `tests/sidebar-updates.test.tsx` (mocking `isTauri: () => true`, `providersUpdateCheck`, `providersUpdateInstall`, `@tanstack/react-router`, and store loaders; never running `codex update` / `opencode upgrade` live):
   1. `"formats and displays per-provider progress text while installing sequential updates"`:
      - Asserts `formatUpdateProgress({ instanceId: "codex", displayName: "Codex", package: "@openai/codex", current: "0.169.0", latest: "0.170.0", managed: true })` equals `"Updating Codex 0.169.0 -> 0.170.0"`.
@@ -221,11 +221,11 @@
      - Clicks update button; asserts `providersUpdateCheck` was called a second time (after the loop), `[data-update-error]` (`role="alert"`) displays `"Codex: codex update failed: permission denied"`, the update badge (`bg-accent` dot) remains on the button for retry, and hovering the button shows the error in its tooltip.
   3. `"retains failed update in list even if post-loop providersUpdateCheck returns empty or rejects"`:
      - Mocks `providersUpdateInstall("codex")` rejecting with `"network timeout"` and post-loop `providersUpdateCheck` rejecting; asserts Codex remains in the failed state (`[data-update-error]` contains `"network timeout"`, update dot stays visible) instead of clearing `updates`.
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
       Run `pnpm test tests/sidebar-updates.test.tsx` → FAIL (`formatUpdateProgress` is not exported; `Sidebar` clears `updates` and renders no progress or error elements).
-- [ ] **Step 3: Update `Sidebar.tsx`**
+- [x] **Step 3: Update `Sidebar.tsx`**
       Export `formatUpdateProgress`, track `activeUpdate` and `updateErrors`, update `installUpdates` and `refresh` to preserve failed items and await `providersUpdateCheck()`, and render the inline `text-xs` progress/error block + tooltip label inside `<footer>` without altering the icon-only button `aria-label` or idle tooltip text.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/sidebar-updates.test.tsx tests/sidebar.test.tsx tests/fonts.test.ts` → PASS.
 
 ---
@@ -240,7 +240,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Run all frontend and Rust verification gates**
+- [x] **Step 1: Run all frontend and Rust verification gates**
       Run:
   - `pnpm typecheck`
   - `pnpm lint`
@@ -248,13 +248,23 @@
   - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write`
   - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
     Verify zero warnings/errors and record exact test counts.
-- [ ] **Step 2: Confirm scope boundaries**
+- [x] **Step 2: Confirm scope boundaries**
       Run `git diff --stat` and verify:
   - `package.json`, `pnpm-lock.yaml`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock` are untouched.
   - `providers_update_check` and `providers_update_install` in `src-tauri/src/ipc/mod.rs` are untouched.
-- [ ] **Step 3: Update `DEVLOG.md`**
+- [x] **Step 3: Update `DEVLOG.md`**
       Append a concise entry documenting:
   - `workspace_tree` `{ entries, truncated }` contract + Rust truncation tests.
   - `FilesPanel` git status badges (`src/lib/fileGitStatus.ts`), manual refresh button, and truncation notice.
   - `Sidebar` per-provider update progress, error retention, and post-loop `providersUpdateCheck`.
   - Exact `pnpm typecheck`, `pnpm lint`, `pnpm test`, `cargo test`, and `cargo clippy` pass counts.
+
+---
+
+## Execution notes (2026-11-15)
+
+- Gemini authored/rewrote `tests/sidebar-updates.test.tsx` and `tests/files-panel.test.tsx`; the Rust truncation cases follow Gemini's plan. DeepSeek implemented only production code.
+- `workspace_tree` returns `{ entries, truncated }`; truncation requires a real non-ignored file under the cut, so exact-cap, empty, and ignored subtrees do not raise a false notice.
+- Files refresh uses a request counter, so stale responses cannot overwrite a newer tree, and it never clears `filePreview`.
+- Sidebar install progress names the provider; failures stay in the update list with an inline `data-update-error` message and retry dot; the post-loop check result is merged with failures.
+- Verification: 276/276 TS, 160/160 Rust, typecheck/lint/clippy clean, `pnpm tauri build --no-bundle` pass.
