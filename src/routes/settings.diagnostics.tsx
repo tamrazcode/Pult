@@ -67,8 +67,8 @@ function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
 
       {processEvents.length > 0 && (
         <div className="mt-2">
-          <p className="text-[10px] tracking-wider text-text-tertiary uppercase">Process log</p>
-          <div className="mt-1 max-h-24 space-y-0.5 overflow-y-auto font-mono text-[11px] text-text-tertiary">
+          <p className="text-xs tracking-wider text-text-tertiary uppercase">Process log</p>
+          <div className="mt-1 max-h-24 space-y-0.5 overflow-y-auto font-mono text-[13px] text-text-tertiary">
             {processEvents.map((event, i) => (
               <p key={i}>
                 {new Date(event.at).toLocaleTimeString()} {event.kind}
@@ -82,8 +82,8 @@ function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
       {framesError && <p className="mt-2 text-xs text-warning">{framesError}</p>}
       {frames && (
         <div className="mt-2">
-          <p className="text-[10px] tracking-wider text-text-tertiary uppercase">Last raw frames</p>
-          <pre className="mt-1 max-h-48 overflow-auto rounded-(--radius-sm) bg-canvas p-2 font-mono text-[11px] whitespace-pre-wrap text-text-tertiary">
+          <p className="text-xs tracking-wider text-text-tertiary uppercase">Last raw frames</p>
+          <pre className="mt-1 max-h-48 overflow-auto rounded-(--radius-sm) bg-canvas p-2 font-mono text-[13px] whitespace-pre-wrap text-text-tertiary">
             {frames.join("\n")}
           </pre>
         </div>

@@ -25,7 +25,7 @@ export function NewChatEmptyState() {
     <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto">
       <pre
         aria-hidden
-        className="pointer-events-none absolute inset-0 flex select-none items-center justify-center font-mono text-[10px] leading-[1.4] whitespace-pre text-text-tertiary/[0.08] [mask-image:radial-gradient(ellipse_at_center,rgba(0,0,0,0.35),black_72%)]"
+        className="pointer-events-none absolute inset-0 flex select-none items-center justify-center font-mono text-xs leading-[1.4] whitespace-pre text-text-tertiary/[0.08] [mask-image:radial-gradient(ellipse_at_center,rgba(0,0,0,0.35),black_72%)]"
       >
         {backdrop}
       </pre>

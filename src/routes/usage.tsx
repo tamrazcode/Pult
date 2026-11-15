@@ -24,7 +24,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
 function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface p-3">
-      <p className="text-[10px] tracking-wider text-text-tertiary uppercase">{label}</p>
+      <p className="text-xs tracking-wider text-text-tertiary uppercase">{label}</p>
       <p className="mt-1 text-lg text-text-primary">{value}</p>
       {hint && <p className="text-xs text-text-tertiary">{hint}</p>}
     </div>
@@ -206,7 +206,7 @@ export function UsagePage() {
               <div className="mt-2 overflow-hidden rounded-(--radius-md) border border-border-subtle">
                 {tab === "runs" && (
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-surface text-[10px] tracking-wider text-text-tertiary uppercase">
+                    <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
                         <th className="px-3 py-2">Thread</th>
                         <th className="px-3 py-2">Provider</th>
@@ -254,7 +254,7 @@ export function UsagePage() {
                 )}
                 {tab === "threads" && (
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-surface text-[10px] tracking-wider text-text-tertiary uppercase">
+                    <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
                         <th className="px-3 py-2">Thread</th>
                         <th className="px-3 py-2">Runs</th>
@@ -300,7 +300,7 @@ export function UsagePage() {
                 )}
                 {tab === "providers" && (
                   <table className="w-full text-left text-sm">
-                    <thead className="bg-surface text-[10px] tracking-wider text-text-tertiary uppercase">
+                    <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
                         <th className="px-3 py-2">Provider</th>
                         <th className="px-3 py-2">Runs</th>

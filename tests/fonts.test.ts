@@ -1,11 +1,27 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { relative, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const ROOT = process.cwd();
 
 function readProjectFile(relPath: string): string {
   return readFileSync(resolve(ROOT, relPath), "utf8");
+}
+
+function collectSrcFiles(dir: string): string[] {
+  const results: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const absPath = resolve(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectSrcFiles(absPath));
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    if (!/\.(?:ts|tsx|css)$/.test(entry.name)) continue;
+    if (entry.name.includes(".test.")) continue;
+    results.push(absPath);
+  }
+  return results;
 }
 
 describe("Katagami typography assets and configuration", () => {
@@ -103,5 +119,51 @@ describe("Katagami typography assets and configuration", () => {
         true,
       );
     }
+  });
+
+  it("uses the 14px body scale and removes tiny hardcoded text sizes", () => {
+    const indexCss = readProjectFile("src/styles/index.css");
+    expect
+      .soft(indexCss, "src/styles/index.css should define --text-sm: 14px;")
+      .toContain("--text-sm: 14px;");
+    const bodyBlocks = indexCss.match(/\bbody\s*\{[^}]*\}/g) ?? [];
+    expect
+      .soft(
+        bodyBlocks.some((block) => block.includes("font-size: 14px;")),
+        'src/styles/index.css body block should contain "font-size: 14px;"',
+      )
+      .toBe(true);
+
+    const composerTsx = readProjectFile("src/components/chat/Composer.tsx");
+    expect
+      .soft(composerTsx, 'Composer.tsx should contain "MAX_HEIGHT = 10 * 28"')
+      .toContain("MAX_HEIGHT = 10 * 28");
+    expect
+      .soft(composerTsx, 'Composer.tsx should not contain "MAX_HEIGHT = 10 * 24"')
+      .not.toContain("MAX_HEIGHT = 10 * 24");
+    expect
+      .soft(composerTsx, 'Composer.tsx should not contain "max-h-60"')
+      .not.toContain("max-h-60");
+
+    const tinyTextPattern = /text-\[(?:9|10|11)px\]/;
+    const offendingMatches: string[] = [];
+    for (const absPath of collectSrcFiles(resolve(ROOT, "src"))) {
+      const relPath = relative(ROOT, absPath).replace(/\\/g, "/");
+      const lines = readFileSync(absPath, "utf8").split(/\r?\n/);
+      lines.forEach((line, idx) => {
+        if (tinyTextPattern.test(line)) {
+          offendingMatches.push(`${relPath}:${idx + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect
+      .soft(offendingMatches, `Found tiny hardcoded text sizes:\n${offendingMatches.join("\n")}`)
+      .toEqual([]);
+
+    const diffLinesTsx = readProjectFile("src/components/diff/DiffLines.tsx");
+    expect
+      .soft(diffLinesTsx, 'DiffLines.tsx should contain "text-[13px]"')
+      .toContain("text-[13px]");
+    expect.soft(diffLinesTsx, 'DiffLines.tsx should contain "w-10"').toContain("w-10");
   });
 });

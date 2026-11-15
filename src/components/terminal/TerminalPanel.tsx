@@ -39,10 +39,10 @@ function AgentTerminalRow({ item }: { item: ToolChatItem }) {
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
           {item.title}
         </span>
-        <span className="shrink-0 text-[10px] text-text-tertiary">{item.status}</span>
+        <span className="shrink-0 text-xs text-text-tertiary">{item.status}</span>
       </div>
       {preview && (
-        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-[11px] text-text-tertiary">
+        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-[13px] text-text-tertiary">
           {preview}
         </pre>
       )}
@@ -123,7 +123,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
         >
           <Plus size={13} /> New terminal
         </button>
-        <span className="ml-auto text-[10px] text-text-tertiary">
+        <span className="ml-auto text-xs text-text-tertiary">
           {active ? `${active.title} · ${workspaceLabel}` : `Shell · ${workspaceLabel}`}
         </span>
       </div>
@@ -185,7 +185,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
       )}
 
       <div className="border-t border-border-subtle">
-        <p className="px-2.5 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
+        <p className="px-2.5 py-1 text-xs tracking-wider text-text-tertiary uppercase">
           Agent terminals
         </p>
         <div className="max-h-40 space-y-1 overflow-y-auto px-2 pb-2">

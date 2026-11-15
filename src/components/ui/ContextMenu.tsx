@@ -178,7 +178,7 @@ export function ContextMenu({
               {isConfirming ? item.confirmLabel : item.label}
             </span>
             {item.shortcut && !isConfirming && (
-              <span className="shrink-0 text-[10px] text-text-tertiary">{item.shortcut}</span>
+              <span className="shrink-0 text-xs text-text-tertiary">{item.shortcut}</span>
             )}
           </button>
         );

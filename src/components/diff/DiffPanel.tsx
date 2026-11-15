@@ -72,12 +72,12 @@ function FileCard({
           />
           <span className="truncate font-mono text-xs text-text-secondary">{file.path}</span>
           {statusLabel && (
-            <span className="shrink-0 rounded-full bg-active px-1.5 text-[10px] text-text-tertiary">
+            <span className="shrink-0 rounded-full bg-active px-1.5 text-xs text-text-tertiary">
               {statusLabel}
             </span>
           )}
           {file.binary && (
-            <span className="shrink-0 rounded-full bg-active px-1.5 text-[10px] text-text-tertiary">
+            <span className="shrink-0 rounded-full bg-active px-1.5 text-xs text-text-tertiary">
               binary
             </span>
           )}

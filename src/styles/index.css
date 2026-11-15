@@ -36,19 +36,19 @@
   --font-ui: var(--font-family-ui);
   --font-mono: var(--font-family-mono);
 
-  /* type scale (§6.2): 11 / 12 (UI default) / 13 (transcript) / 15 / 20 / 28 */
-  --text-xs: 11px;
-  --text-xs--line-height: 14px;
-  --text-sm: 12px;
-  --text-sm--line-height: 16px;
-  --text-base: 13px;
-  --text-base--line-height: 18px;
-  --text-lg: 15px;
-  --text-lg--line-height: 20px;
-  --text-xl: 20px;
-  --text-xl--line-height: 28px;
-  --text-2xl: 28px;
-  --text-2xl--line-height: 36px;
+  /* type scale (§6.2): 12 / 14 (UI default) / 15 (transcript) / 17 / 22 / 30 */
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 14px;
+  --text-sm--line-height: 20px;
+  --text-base: 15px;
+  --text-base--line-height: 22px;
+  --text-lg: 17px;
+  --text-lg--line-height: 24px;
+  --text-xl: 22px;
+  --text-xl--line-height: 30px;
+  --text-2xl: 30px;
+  --text-2xl--line-height: 38px;
 }
 
 /* tabular numbers everywhere numbers align (diffstats, timers, usage) */
@@ -89,8 +89,8 @@
     background-color: var(--canvas);
     color: var(--text-primary);
     font-family: var(--font-family-ui);
-    font-size: 12px;
-    line-height: 16px;
+    font-size: 14px;
+    line-height: 20px;
     -webkit-font-smoothing: antialiased;
   }
 

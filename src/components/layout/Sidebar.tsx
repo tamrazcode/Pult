@@ -126,7 +126,7 @@ function ThreadRow({
             />
           ) : null}
           <span className="truncate">{thread.title || "Untitled"}</span>
-          <span className="tnum ml-auto shrink-0 text-[10px] text-text-tertiary">
+          <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
             {relativeTime(thread.updatedAt)}
           </span>
         </a>
@@ -179,7 +179,7 @@ function ProjectRow({
           <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
         )}
         <span
-          className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-[10px] font-semibold text-white"
+          className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-(--radius-sm) text-xs font-semibold text-white"
           style={{ backgroundColor: project.color ?? "#346bf1" }}
         >
           {initials}
@@ -519,7 +519,7 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                 />
               ) : (
-                <div className="px-3 pb-1 pt-2 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+                <div className="px-3 pb-1 pt-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                   No project
                 </div>
               )}

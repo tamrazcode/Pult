@@ -104,7 +104,7 @@ export function CommandPalette({ open, onClose }: Props) {
             aria-label="Search commands"
             className="w-full bg-transparent text-base text-text-primary outline-none placeholder:text-text-tertiary"
           />
-          <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+          <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-xs text-text-tertiary">
             {formatBinding(bindingFor("palette.open", keybindings) ?? "Mod+K")}
           </kbd>
         </div>
@@ -119,7 +119,7 @@ export function CommandPalette({ open, onClose }: Props) {
               cmd.section !== lastSection ? (
                 <p
                   key={`sec-${cmd.section}`}
-                  className="px-3.5 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase"
+                  className="px-3.5 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase"
                 >
                   {cmd.section}
                 </p>
@@ -140,7 +140,7 @@ export function CommandPalette({ open, onClose }: Props) {
                 >
                   <span className="min-w-0 flex-1 truncate">{cmd.title}</span>
                   {bindingFor(cmd.id, keybindings) && (
-                    <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-[10px] text-text-tertiary">
+                    <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-xs text-text-tertiary">
                       {formatBinding(bindingFor(cmd.id, keybindings)!)}
                     </kbd>
                   )}

@@ -81,7 +81,7 @@ export function SignInActions({
             <p className="text-xs text-text-secondary">
               {method.name ?? "Terminal sign-in"} runs outside pult. Copy and run:
             </p>
-            <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-1.5 font-mono text-[11px] text-text-primary">
+            <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-1.5 font-mono text-[13px] text-text-primary">
               {command}
             </pre>
             <div className="flex gap-1.5">

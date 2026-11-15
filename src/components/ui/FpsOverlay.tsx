@@ -42,7 +42,7 @@ export function FpsOverlay() {
   if (!enabled) return null;
 
   return (
-    <div className="pointer-events-none fixed top-1 right-1 z-50 rounded-(--radius-sm) border border-border-strong bg-surface-raised/90 px-2 py-1 font-mono text-[10px] text-text-tertiary tnum">
+    <div className="pointer-events-none fixed top-1 right-1 z-50 rounded-(--radius-sm) border border-border-strong bg-surface-raised/90 px-2 py-1 font-mono text-xs text-text-tertiary tnum">
       {stats.fps} fps · worst {stats.worst} ms
     </div>
   );

@@ -28,7 +28,7 @@ export function TerminalPane({ terminalId }: { terminalId: string }) {
 
     const term = new XTerm({
       fontFamily: "Katagami Mono, ui-monospace, monospace",
-      fontSize: 12,
+      fontSize: 14,
       cursorBlink: true,
       scrollback: 5000,
       convertEol: false,

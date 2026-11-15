@@ -31,7 +31,7 @@ import type {
   SessionConfigOption,
 } from "../../lib/types";
 
-const MAX_HEIGHT = 10 * 24; // 10 rows at the 24px effective line step
+const MAX_HEIGHT = 10 * 28; // 10 rows at the 28px effective line step
 
 /** Pult-local slash commands (never sent to the agent). */
 const BUILT_IN_COMMANDS: CommandInfo[] = [
@@ -164,14 +164,14 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
         >
           {modes.length > 0 && (
             <section>
-              <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                 Session mode
               </p>
               <AgentModePicker threadId={threadId} />
             </section>
           )}
           <section>
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+            <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
               Permission
             </p>
             <ModePill threadId={threadId} />
@@ -688,9 +688,7 @@ export function Composer({ threadId }: { threadId?: string }) {
             role="listbox"
             aria-label="Workspace files"
           >
-            <p className="px-3 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
-              Files
-            </p>
+            <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">Files</p>
             {mentionFiles.map((path, i) => (
               <button
                 key={path}
@@ -776,7 +774,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               ? "Decision needed — respond to the approval above"
               : "Ask anything. @ files, / commands"
           }
-          className="block max-h-60 min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
+          className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-3.5 pt-3 pb-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
         />
         <div className="flex items-center gap-1.5 px-2.5 pt-1 pb-2">
           {imageCapable ? (

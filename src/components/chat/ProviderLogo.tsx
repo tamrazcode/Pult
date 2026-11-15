@@ -23,7 +23,7 @@ export function detectProviderBrand(inst: ProviderIdentity): ProviderBrand {
 /** Small inline provider marks; no remote assets or icon dependency. */
 export function ProviderLogo({
   instance,
-  className = "h-3.5 w-3.5 shrink-0",
+  className = "h-4 w-4 shrink-0",
 }: {
   instance: ProviderIdentity | null | undefined;
   className?: string;
@@ -91,7 +91,7 @@ export function ProviderLogo({
         <span
           data-provider-logo="custom"
           aria-hidden
-          className={`${className} flex items-center justify-center rounded-[4px] bg-active text-[9px] font-semibold text-text-secondary`}
+          className={`${className} flex items-center justify-center rounded-[4px] bg-active text-xs font-semibold text-text-secondary`}
         >
           {instance.displayName.slice(0, 1).toUpperCase()}
         </span>

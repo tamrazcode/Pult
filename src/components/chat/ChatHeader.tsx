@@ -118,7 +118,7 @@ export function ChatHeader({
             <span className="flex shrink-0 items-center gap-1.5">
               <span
                 aria-hidden
-                className="flex h-5 w-5 items-center justify-center rounded-(--radius-sm) text-[10px] font-semibold text-white"
+                className="flex h-5.5 w-5.5 items-center justify-center rounded-(--radius-sm) text-xs font-semibold text-white"
                 style={{ backgroundColor: project.color ?? "#346bf1" }}
               >
                 {project.name.slice(0, 2).toUpperCase()}

@@ -11,7 +11,7 @@ const LINE_CLASSES: Record<DiffLine["kind"], string> = {
 
 function LineNo({ n }: { n: number | null }) {
   return (
-    <span className="tnum w-9 shrink-0 select-none pr-2 text-right text-[10px] text-text-tertiary/70">
+    <span className="tnum w-10 shrink-0 select-none pr-2 text-right text-xs text-text-tertiary/70">
       {n ?? ""}
     </span>
   );
@@ -22,7 +22,7 @@ function LineCell({ line, emptyCopy }: { line: DiffLine | null; emptyCopy?: stri
   if (!line) {
     return (
       <span className="flex min-w-0 flex-1 bg-surface/40">
-        <span className="w-9 shrink-0" />
+        <span className="w-10 shrink-0" />
         <span className="whitespace-pre">{emptyCopy ?? ""}</span>
       </span>
     );
@@ -43,7 +43,7 @@ function LineCell({ line, emptyCopy }: { line: DiffLine | null; emptyCopy?: stri
 export function UnifiedLines({ raw }: { raw: string }) {
   const lines = parseDiffLines(raw);
   return (
-    <div className="overflow-x-auto py-1 font-mono text-[11px] leading-5">
+    <div className="overflow-x-auto py-1 font-mono text-[13px] leading-[22px]">
       {lines.map((line, i) => (
         <div key={i} className={`flex px-2 ${LINE_CLASSES[line.kind]}`}>
           {line.kind !== "meta" && line.kind !== "hunk" && (
@@ -67,7 +67,7 @@ export function UnifiedLines({ raw }: { raw: string }) {
 export function SplitLines({ raw }: { raw: string }) {
   const rows: SplitRow[] = toSplitRows(parseDiffLines(raw));
   return (
-    <div className="grid grid-cols-2 divide-x divide-border-subtle overflow-x-auto py-1 font-mono text-[11px] leading-5">
+    <div className="grid grid-cols-2 divide-x divide-border-subtle overflow-x-auto py-1 font-mono text-[13px] leading-[22px]">
       {rows.map((row, i) => (
         <div key={i} className="contents">
           <div className="flex min-w-0 px-2">

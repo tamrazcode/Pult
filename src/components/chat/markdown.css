@@ -4,7 +4,7 @@
 
 .md {
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.6;
   overflow-wrap: break-word;
 }
@@ -123,7 +123,7 @@
 .md thead th {
   background: var(--surface);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
@@ -169,7 +169,7 @@
 }
 .md-code-lang {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   font-family: var(--font-family-mono);
 }
 .md-code-copy {
@@ -190,7 +190,7 @@
 
 .md-code-area {
   font-family: var(--font-family-mono);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .md-code-area pre {

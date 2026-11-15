@@ -176,7 +176,7 @@ export function ConfigOptionPickers({
   if (!heading) return pills;
   return (
     <section>
-      <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+      <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
         {heading}
       </p>
       <div className="flex flex-wrap gap-1.5">{pills}</div>
@@ -250,7 +250,7 @@ function SelectOptionPill({
             {isGroupedSelectOptions(option.options)
               ? option.options.map((group) => (
                   <Fragment key={group.group}>
-                    <p className="px-3 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
+                    <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">
                       {group.name}
                     </p>
                     {group.options.map(row)}
@@ -436,7 +436,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             className="absolute right-0 bottom-full z-50 mb-2 max-h-[min(70vh,560px)] w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
           >
             <section className="border-b border-border-subtle pb-1">
-              <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                 Provider
               </p>
               {providers.length === 0 ? (
@@ -452,7 +452,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                   >
                     <ProviderLogo instance={inst} />
                     <span className="min-w-0 flex-1 truncate">{inst.displayName}</span>
-                    <span className="shrink-0 rounded-full bg-active px-1.5 text-[10px] text-text-tertiary">
+                    <span className="shrink-0 rounded-full bg-active px-1.5 text-xs text-text-tertiary">
                       {providerLabel(inst)}
                     </span>
                     <span
@@ -467,14 +467,14 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             </section>
 
             <section className="border-b border-border-subtle pb-1">
-              <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+              <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                 Model
               </p>
               {modelOption ? (
                 isGroupedSelectOptions(modelOption.options) ? (
                   modelOption.options.map((group) => (
                     <Fragment key={group.group}>
-                      <p className="px-3 py-1 text-[10px] tracking-wider text-text-tertiary uppercase">
+                      <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">
                         {group.name}
                       </p>
                       {group.options.map(modelRow)}
@@ -492,7 +492,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
 
             {reasoningOptions.length > 0 && (
               <section className="border-b border-border-subtle pb-2">
-                <p className="px-3 pt-2 pb-1 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+                <p className="px-3 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                   Reasoning
                 </p>
                 {reasoningOptions.map((option) => {
