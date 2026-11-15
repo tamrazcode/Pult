@@ -245,5 +245,5 @@
 - All four marks are bundled under `src/assets/editors/` with `LICENSES.md`: VS Code and Antigravity from Iconify `logos`, Zed from Simple Icons (`#084CCF`), File Explorer represented by the neutral `vscode-icons/default-folder` glyph.
 - The shared split button lives in `src/components/ui/EditorSplitButton.tsx` (`compact` for Files, `card` for ProjectCard); both surfaces open the same four-editor menu, persist `preferredEditor`, show a check mark on the active row, and close on Escape or outside click.
 - `EditorLogo` falls back to a Lucide glyph per editor (`code`, `terminal`, `sparkles`, `folder`) when a bundled mark is missing or fails to load.
-- Verification: `pnpm typecheck`, `pnpm lint`, `pnpm test` 268/268, `cargo test --lib` 158/158, clippy clean, `pnpm tauri build --no-bundle` pass.
+- Verification: `pnpm typecheck`, `pnpm lint`, `pnpm test` 269/269, `cargo test --lib` 158/158, clippy clean, `pnpm tauri build --no-bundle` pass.
 - Screenshot `docs/screenshots/editor-brand-assets.png` renders every mark at 16px and 40px on dark and light surfaces. The integrated chooser is covered by `tests/editors.test.tsx` and `tests/right-panel-project-card.test.tsx`; a plain-browser harness cannot seed Tauri projects for an app-level chooser screenshot.

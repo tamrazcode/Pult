@@ -40,6 +40,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 
 import { FilesPanel } from "../src/components/files/FilesPanel";
 import { EditorLogo } from "../src/components/ui/EditorLogo";
+import { EditorSplitButton } from "../src/components/ui/EditorSplitButton";
 import { EDITORS, getEditorMeta, isEditorId } from "../src/lib/editors";
 import { useProjectsStore } from "../src/stores/projects";
 import { useSettingsStore } from "../src/stores/settings";
@@ -190,5 +191,21 @@ describe("FilesPanel editor chooser", () => {
     expect(screen.getByRole("menu", { name: "Editor" })).toBeInTheDocument();
     fireEvent.mouseDown(document.body);
     expect(screen.queryByRole("menu", { name: "Editor" })).toBeNull();
+  });
+
+  it("dismisses a sibling editor menu when another split button is pressed", () => {
+    render(
+      <>
+        <EditorSplitButton onOpen={() => {}} />
+        <EditorSplitButton onOpen={() => {}} />
+      </>,
+    );
+
+    const triggers = screen.getAllByRole("button", { name: "Choose editor" });
+    fireEvent.click(triggers[0]);
+    expect(screen.getAllByRole("menu", { name: "Editor" })).toHaveLength(1);
+
+    fireEvent.mouseDown(triggers[1]);
+    expect(screen.queryAllByRole("menu", { name: "Editor" })).toHaveLength(0);
   });
 });

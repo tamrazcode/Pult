@@ -48,11 +48,7 @@ export function EditorSplitButton({
   const compact = variant === "compact";
 
   return (
-    <div
-      ref={containerRef}
-      className={`relative flex shrink-0 ${className}`}
-      onMouseDown={(event) => event.stopPropagation()}
-    >
+    <div ref={containerRef} className={`relative flex shrink-0 ${className}`}>
       <button
         type="button"
         title={`Open in ${active.label}`}
