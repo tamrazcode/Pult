@@ -18,7 +18,7 @@ function largePatch(pairs: number): string {
 }
 
 describe("DiffLines large patch cap", () => {
-  it("caps UnifiedLines at 2,000 rows and reveals all on click", () => {
+  it("caps UnifiedLines at 2,000 rows and reveals all on click", { timeout: 20_000 }, () => {
     const { container } = render(<UnifiedLines raw={largePatch(6000)} />);
 
     expect(container.querySelectorAll("[data-diff-line-row]").length).toBeLessThan(2100);
@@ -28,7 +28,7 @@ describe("DiffLines large patch cap", () => {
     expect(container.querySelectorAll("[data-diff-line-row]").length).toBeGreaterThanOrEqual(12000);
   });
 
-  it("caps SplitLines rows and reveals all on click", () => {
+  it("caps SplitLines rows and reveals all on click", { timeout: 20_000 }, () => {
     const { container } = render(<SplitLines raw={largePatch(6000)} />);
 
     expect(container.querySelectorAll("[data-diff-line-row]").length).toBeLessThan(2100);

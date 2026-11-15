@@ -692,9 +692,20 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
         SessionUpdate::AgentMessageChunk { content } => match &content {
             // Agents that return generated images as content blocks (imagegen)
             // become a Markdown data URL so the transcript renders them inline.
-            ContentBlock::Image { data, mime_type } => vec![EventKind::AgentMessageDelta {
-                delta: format!("\n\n![generated image](data:{mime_type};base64,{data})\n\n"),
-            }],
+            // Multi-megabyte payloads must not block IPC/SQLite: cap them.
+            ContentBlock::Image { data, mime_type } => {
+                const MAX_INLINE_IMAGE_BYTES: usize = 2_000_000;
+                if data.len() > MAX_INLINE_IMAGE_BYTES {
+                    vec![EventKind::Notice {
+                        level: "warning".to_string(),
+                        message: "Generated image is too large to preview".to_string(),
+                    }]
+                } else {
+                    vec![EventKind::AgentMessageDelta {
+                        delta: format!("\n\n![generated image](data:{mime_type};base64,{data})\n\n"),
+                    }]
+                }
+            }
             _ => text_of(&content)
                 .map(|delta| vec![EventKind::AgentMessageDelta { delta }])
                 .unwrap_or_default(),
@@ -723,7 +734,7 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                 .into_iter()
                 .map(|l| l.path)
                 .collect(),
-            raw_input,
+            raw_input: cap_tool_payload(raw_input),
         }],
         SessionUpdate::ToolCallUpdate {
             tool_call_id,
@@ -734,8 +745,8 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
         } => vec![EventKind::ToolCallUpdate {
             tool_call_id,
             status: status.map(|s| tool_status_str(s).to_string()),
-            content: content.map(|c| serde_json::to_value(c).unwrap_or_default()),
-            raw_output,
+            content: cap_tool_payload(content.map(|c| serde_json::to_value(c).unwrap_or_default())),
+            raw_output: cap_tool_payload(raw_output),
         }],
         SessionUpdate::Plan { entries } => vec![EventKind::Plan {
             entries: entries
@@ -830,6 +841,21 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
     }
 }
 
+/// Tool payloads can carry generated images/base64. Keep IPC and SQLite
+/// responsive by replacing multi-megabyte tool blobs with a short marker.
+fn cap_tool_payload(value: Option<Value>) -> Option<Value> {
+    const MAX_BYTES: usize = 2_000_000;
+    let value = value?;
+    match serde_json::to_string(&value) {
+        Ok(text) if text.len() > MAX_BYTES => Some(serde_json::json!({
+            "truncated": true,
+            "bytes": text.len(),
+            "note": "large tool payload omitted",
+        })),
+        _ => Some(value),
+    }
+}
+
 /// Joined text of every text content block (compaction summaries are
 /// user-displayable content; non-text blocks have no timeline rendering yet).
 fn text_blocks_of(blocks: &[ContentBlock]) -> String {
@@ -896,6 +922,7 @@ pub fn tool_call_summary(data: &ToolCallUpdateData) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::types as wire;
     use serde_json::json;
 
     #[test]
@@ -908,6 +935,31 @@ mod tests {
         assert!(line.chars().count() <= 600);
         assert!(line.starts_with("← "));
         assert!(!line.contains('\u{FFFD}'), "no broken characters");
+    }
+
+    #[test]
+    fn oversized_tool_payload_is_truncated() {
+        let big = json!({"data": "A".repeat(2_000_001)});
+        let capped = cap_tool_payload(Some(big)).expect("capped payload");
+        assert_eq!(capped["truncated"], true);
+        let small = cap_tool_payload(Some(json!({"ok": true}))).expect("small payload");
+        assert_eq!(small["ok"], true);
+    }
+
+    #[test]
+    fn oversized_generated_image_becomes_a_notice() {
+        let update = wire::SessionUpdate::AgentMessageChunk {
+            content: wire::ContentBlock::Image {
+                data: "A".repeat(2_000_001),
+                mime_type: "image/png".into(),
+            },
+        };
+        let projected = project_update(update);
+        assert!(matches!(
+            projected.as_slice(),
+            [EventKind::Notice { level, message }]
+                if level == "warning" && message.contains("too large")
+        ));
     }
 
     #[test]

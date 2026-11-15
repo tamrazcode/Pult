@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Outlet, createRootRoute, useRouter } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { RightPanel } from "../components/layout/RightPanel";
@@ -50,12 +50,22 @@ function RootLayout() {
   }, [pendingThreadId, router]);
 
   // Warm the selected provider in the project the next message will run in, so
-  // the first turn does not pay the 5–13 s CLI cold start.
+  // the first turn does not pay the 5–13 s CLI cold start. Debounced: a quick
+  // project/provider switch must not spawn several agents at once.
+  const projectRoot = projects.find((project) => project.id === selectedProjectId)?.rootPath;
+  const warmKey = `${selectedInstanceId ?? ""}|${projectRoot ?? ""}`;
+  const warmKeyRef = useRef("");
   useEffect(() => {
     if (!isTauri() || !selectedInstanceId) return;
-    const root = projects.find((project) => project.id === selectedProjectId)?.rootPath;
-    void providersWarmup(selectedInstanceId, root ?? null).catch(() => undefined);
-  }, [selectedInstanceId, selectedProjectId, projects]);
+    if (warmKeyRef.current === warmKey) return;
+    const timer = window.setTimeout(() => {
+      warmKeyRef.current = warmKey;
+      void providersWarmup(selectedInstanceId, projectRoot ?? null).catch(() => {
+        warmKeyRef.current = "";
+      });
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [selectedInstanceId, projectRoot, warmKey]);
   useEffect(() => {
     void hydrateLayout();
   }, []);

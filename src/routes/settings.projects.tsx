@@ -42,7 +42,7 @@ function ProjectsSettings() {
               <span
                 data-project-badge
                 aria-hidden
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-xs leading-none font-semibold tracking-tight"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border text-[0.625rem] leading-none font-semibold tracking-tight"
                 style={{
                   backgroundColor: monogram.background,
                   color: monogram.color,

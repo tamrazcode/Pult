@@ -942,8 +942,8 @@ pub async fn read_image_data_url(
         }
         let meta = std::fs::metadata(&canonical)
             .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
-        if !meta.is_file() || meta.len() > 20 * 1024 * 1024 {
-            return Err(PultError::internal("image must be a file up to 20 MB"));
+        if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
+            return Err(PultError::internal("image must be a file up to 8 MB"));
         }
         let mime = match canonical
             .extension()

@@ -146,7 +146,7 @@ export function ChatHeader({
               <span
                 aria-hidden
                 data-project-badge
-                className="flex h-5.5 w-5.5 items-center justify-center rounded-md border text-xs leading-none font-semibold tracking-tight"
+                className="flex h-5.5 w-5.5 items-center justify-center rounded-md border text-[0.625rem] leading-none font-semibold tracking-tight"
                 style={{
                   backgroundColor: projectMonogramStyle.background,
                   color: projectMonogramStyle.color,

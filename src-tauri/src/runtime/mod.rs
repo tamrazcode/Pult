@@ -244,6 +244,20 @@ struct WarmConn {
     created: std::time::Instant,
 }
 
+/// Clears the in-flight marker even when warmup fails or the app navigates on.
+struct WarmGuard {
+    runtime: Arc<AgentRuntime>,
+    instance_id: String,
+}
+
+impl Drop for WarmGuard {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.runtime.inner.lock() {
+            inner.warming.remove(&self.instance_id);
+        }
+    }
+}
+
 struct Inner {
     /// Active runs: run_id → live connection/session.
     runs: HashMap<String, RunState>,
@@ -261,6 +275,8 @@ struct Inner {
     ptys: Arc<crate::runtime::ptys::PtyRegistry>,
     /// Pre-initialized agent processes (selected provider) ready for a session.
     warm: HashMap<String, WarmConn>,
+    /// Providers whose warmup is currently in flight (no duplicate spawns).
+    warming: std::collections::HashSet<String>,
     /// The agent matrix (§4.5 config.toml instances; mock fallback).
     instances: Vec<crate::config::InstanceSpec>,
 }
@@ -312,6 +328,7 @@ impl AgentRuntime {
                 terminals,
                 ptys: Arc::new(crate::runtime::ptys::PtyRegistry::new(sink)),
                 warm: HashMap::new(),
+                warming: std::collections::HashSet::new(),
                 instances,
             }),
             pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals),
@@ -347,7 +364,7 @@ impl AgentRuntime {
             env: spawn_config.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         };
         {
-            let inner = self.inner.lock().expect("runtime lock poisoned");
+            let mut inner = self.inner.lock().expect("runtime lock poisoned");
             if let Some(existing) = inner.warm.get(instance_id) {
                 if existing.root == root
                     && existing.spawn_sig == spawn_sig
@@ -357,7 +374,16 @@ impl AgentRuntime {
                     return Ok(());
                 }
             }
+            // Project/provider switches can fire several warmup requests while a
+            // cold Codex start is still in flight: one spawn is enough.
+            if !inner.warming.insert(instance_id.to_string()) {
+                return Ok(());
+            }
         }
+        let _guard = WarmGuard {
+            runtime: Arc::clone(self),
+            instance_id: instance_id.to_string(),
+        };
         let (conn, streams) = AcpConn::spawn(&spawn_config)
             .map_err(|e| crate::PultError::internal(format!("warmup spawn: {e}")))?;
         let conn = Arc::new(conn);

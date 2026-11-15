@@ -701,14 +701,20 @@ function findImageCandidate(value: unknown, depth = 0): ImageCandidate | null {
 }
 
 function ToolImage({ candidate }: { candidate: ImageCandidate }) {
-  const [src, setSrc] = useState<string | null>(candidate.dataUrl ?? null);
+  const tooLarge = (value: string) => value.length > 2_500_000;
+  const [src, setSrc] = useState<string | null>(
+    candidate.dataUrl && !tooLarge(candidate.dataUrl) ? candidate.dataUrl : null,
+  );
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (src || !candidate.path) return;
     let cancelled = false;
     readImageDataUrl(candidate.path)
       .then((url) => {
-        if (!cancelled) setSrc(url);
+        if (!cancelled) {
+          if (tooLarge(url)) setFailed(true);
+          else setSrc(url);
+        }
       })
       .catch(() => {
         if (!cancelled) setFailed(true);
@@ -717,6 +723,9 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
       cancelled = true;
     };
   }, [candidate.path, src]);
+  if (candidate.dataUrl && tooLarge(candidate.dataUrl)) {
+    return <span className="text-xs text-text-tertiary">Image too large to preview</span>;
+  }
   if (failed) return null;
   if (!src) return <span className="text-xs text-text-tertiary">Loading image…</span>;
   return (

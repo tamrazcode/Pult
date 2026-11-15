@@ -3,7 +3,7 @@ import { cellBrightness, cellGlyph, type Ripple } from "../../lib/asciiWave";
 
 const CELL_W = 10;
 const CELL_H = 16;
-const FPS = 30;
+const FPS = 24;
 const FRAME_MS = 1000 / FPS;
 
 /**
