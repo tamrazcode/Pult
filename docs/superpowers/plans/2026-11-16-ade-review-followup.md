@@ -55,9 +55,9 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Files & Functions:**
   - `src-tauri/src/runtime/terminals.rs`: `TerminalState`, `TerminalRegistry::create`, `TerminalRegistry::output`, `TerminalRegistry::wait_for_exit`, `TerminalRegistry::kill`, `TerminalRegistry::release`, `TerminalRegistry::release_session` (add `release_owner` + `new_owner_token` or explicit `owner_token: &str`), `poll_exit` helper.
 - **Concrete Change:**
-  - [ ] Add `owner_token: String` to `TerminalState` (replacing reliance on raw ACP `session_id` for ownership). Add `TerminalRegistry::new_owner_token(&self) -> String` using an internal atomic counter so colliding remote ACP `session_id`s from separate processes never share ownership.
-  - [ ] Require `owner_token: &str` on `create`, `output`, `wait_for_exit`, `kill`, `release`, and `release_owner` (keep `release_session` as a thin wrapper or update all callers in `T06`). On mismatch in `output`/`wait_for_exit`/`kill`/`release`, return `term_error(format!("unknown terminal: {terminal_id}"))`.
-  - [ ] Extract `poll_exit(guard: &mut TerminalState) -> Option<TerminalExitStatus>` calling `guard.child.try_wait()` when `guard.exit.is_none()`. Call `poll_exit(&mut guard)` inside `TerminalRegistry::output` (reporting `exit_status` once `guard.exit.is_some()` and `guard.pipes_left == 0` so polling-only clients see `exitCode` without losing tail bytes).
+  - [x] Add `owner_token: String` to `TerminalState` (replacing reliance on raw ACP `session_id` for ownership). Add `TerminalRegistry::new_owner_token(&self) -> String` using an internal atomic counter so colliding remote ACP `session_id`s from separate processes never share ownership.
+  - [x] Require `owner_token: &str` on `create`, `output`, `wait_for_exit`, `kill`, `release`, and `release_owner` (keep `release_session` as a thin wrapper or update all callers in `T06`). On mismatch in `output`/`wait_for_exit`/`kill`/`release`, return `term_error(format!("unknown terminal: {terminal_id}"))`.
+  - [x] Extract `poll_exit(guard: &mut TerminalState) -> Option<TerminalExitStatus>` calling `guard.child.try_wait()` when `guard.exit.is_none()`. Call `poll_exit(&mut guard)` inside `TerminalRegistry::output` (reporting `exit_status` once `guard.exit.is_some()` and `guard.pipes_left == 0` so polling-only clients see `exitCode` without losing tail bytes).
 - **Acceptance Tests (`src-tauri/src/runtime/terminals.rs` `#[cfg(test)]`):**
   - `terminal_owner_isolation_blocks_foreign_access_and_colliding_session_ids`: asserts owner A's `terminal_id` returns `ERR_RESOURCE_NOT_FOUND` when queried/killed/released with owner B's token, and `release_owner(token_a)` leaves owner B's terminal alive even when both came from ACP sessions named `"sess-1"`.
   - `output_polls_exit_status_without_wait_for_exit`: spawns a short-lived command (e.g. `cmd /c echo ok` / `sh -c "echo ok"`), polls `output` until `exit_status.is_some()`, and asserts `exit_code == Some(0)` and stdout contains `"ok"` without ever calling `wait_for_exit`.
@@ -72,8 +72,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/git/mod.rs`: add `WorktreeDirtyStatus`, `pub async fn worktree_dirty_status(worktree_dir: &Path) -> Result<WorktreeDirtyStatus, PultError>`, update `pub async fn worktree_remove(repo_dir: &Path, name: &str, force: bool) -> Result<(), PultError>`.
   - `src-tauri/src/git/tests.rs`: add acceptance tests.
 - **Concrete Change:**
-  - [ ] Add `WorktreeDirtyStatus { dirty: bool, modified: usize, untracked: usize, entries: Vec<String> }` (`#[derive(Debug, Clone, Serialize)]`, `camelCase`) running `git status --porcelain=v1 -z -uall` in `worktree_dir` (counting `??` as untracked and other porcelain lines as modified/staged, returning up to 20 sample paths in `entries`).
-  - [ ] Change `worktree_remove(repo_dir, name, force: bool)`: when `force == false`, first check `worktree_dirty_status(&path)` (if `path.exists()`); if `dirty`, return `git_err("git.worktree_dirty", ...)` WITHOUT removing files; run `git worktree remove` WITHOUT `--force` and do NOT call `tokio::fs::remove_dir_all(&path)` when `!force`. Only pass `--force` and allow `remove_dir_all` fallback when `force == true`.
+  - [x] Add `WorktreeDirtyStatus { dirty: bool, modified: usize, untracked: usize, entries: Vec<String> }` (`#[derive(Debug, Clone, Serialize)]`, `camelCase`) running `git status --porcelain=v1 -z -uall` in `worktree_dir` (counting `??` as untracked and other porcelain lines as modified/staged, returning up to 20 sample paths in `entries`).
+  - [x] Change `worktree_remove(repo_dir, name, force: bool)`: when `force == false`, first check `worktree_dirty_status(&path)` (if `path.exists()`); if `dirty`, return `git_err("git.worktree_dirty", ...)` WITHOUT removing files; run `git worktree remove` WITHOUT `--force` and do NOT call `tokio::fs::remove_dir_all(&path)` when `!force`. Only pass `--force` and allow `remove_dir_all` fallback when `force == true`.
 - **Acceptance Tests (`src-tauri/src/git/tests.rs`):**
   - `worktree_remove_preserves_untracked_file_unless_forced`: creates a worktree, writes an untracked file inside it, calls `worktree_remove(&repo, &name, false)` and asserts `git.worktree_dirty` error AND that the untracked file still exists on disk; then calls `worktree_remove(&repo, &name, true)` and asserts removal succeeds.
 - **Verification:** `cargo test --manifest-path src-tauri/Cargo.toml --lib git::tests` and `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`.
@@ -86,7 +86,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Files & Functions:**
   - `src-tauri/src/runtime/permissions.rs`: `resolve`, `#[cfg(test)] mod tests`.
 - **Concrete Change:**
-  - [ ] In `permissions::resolve`, move/gate the `request.remembered` check so:
+  - [x] In `permissions::resolve`, move/gate the `request.remembered` check so:
     1. `PermissionMode::Supervised` ALWAYS returns `PolicyDecision::Ask` (never short-circuited by `remembered`).
     2. When `request.escapes_workspace(root)` is true, `remembered` does NOT auto-resolve (except in `FullAccess` which already calls `auto_allow`).
     3. The matched option in `request.options` MUST satisfy `o.option_id == option_id && o.kind.starts_with("allow")` (rejecting reused IDs whose current `kind` is `reject_once` / `reject_always`).
@@ -106,12 +106,12 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/store/runs.rs`: `reset_orphaned_run_states`.
   - `src-tauri/src/store/tests.rs`: unit tests.
 - **Concrete Change:**
-  - [ ] Add `migration_5`: `ALTER TABLE queue_items ADD COLUMN mode TEXT; ALTER TABLE queue_items ADD COLUMN config_options TEXT NOT NULL DEFAULT '{}'; ALTER TABLE queue_items ADD COLUMN claiming_run_id TEXT;`.
-  - [ ] Extend `QueueItem` (`records.rs`) with `pub mode: Option<String>` and `pub config_options: BTreeMap<String, crate::protocol::types::ConfigOptionValue>` (with `#[serde(default)]` for backwards-compatible JSON).
-  - [ ] Update `enqueue_queue_item` and `list_queue` (`WHERE thread_id = ?1 AND claiming_run_id IS NULL`) to persist/read `mode` and `config_options`.
-  - [ ] Add `claim_queue_head(&self, thread_id: &str, claim_token: &str) -> Result<Option<QueueItem>, PultError>` using a single atomic `UPDATE queue_items SET claiming_run_id = ?2 WHERE id = (SELECT id FROM queue_items WHERE thread_id = ?1 AND claiming_run_id IS NULL ORDER BY created_at ASC, rowid ASC LIMIT 1) AND claiming_run_id IS NULL RETURNING ...`.
-  - [ ] Add `commit_claimed_queue_run(&self, queue_id: &str, run: &RunRecord, user_event: &Event) -> Result<(), PultError>` executing `create_run` + `append_event` + `DELETE FROM queue_items WHERE id = ?1` inside one `BEGIN IMMEDIATE ... COMMIT` SQLite transaction, plus `release_queue_claim(&self, queue_id: &str)` clearing `claiming_run_id = NULL` on dispatch failure.
-  - [ ] In `reset_orphaned_run_states` (`store/runs.rs`), also reset `UPDATE queue_items SET claiming_run_id = NULL WHERE claiming_run_id IS NOT NULL` so a crash between claim and commit restores the queued message on restart.
+  - [x] Add `migration_5`: `ALTER TABLE queue_items ADD COLUMN mode TEXT; ALTER TABLE queue_items ADD COLUMN config_options TEXT NOT NULL DEFAULT '{}'; ALTER TABLE queue_items ADD COLUMN claiming_run_id TEXT;`.
+  - [x] Extend `QueueItem` (`records.rs`) with `pub mode: Option<String>` and `pub config_options: BTreeMap<String, crate::protocol::types::ConfigOptionValue>` (with `#[serde(default)]` for backwards-compatible JSON).
+  - [x] Update `enqueue_queue_item` and `list_queue` (`WHERE thread_id = ?1 AND claiming_run_id IS NULL`) to persist/read `mode` and `config_options`.
+  - [x] Add `claim_queue_head(&self, thread_id: &str, claim_token: &str) -> Result<Option<QueueItem>, PultError>` using a single atomic `UPDATE queue_items SET claiming_run_id = ?2 WHERE id = (SELECT id FROM queue_items WHERE thread_id = ?1 AND claiming_run_id IS NULL ORDER BY created_at ASC, rowid ASC LIMIT 1) AND claiming_run_id IS NULL RETURNING ...`.
+  - [x] Add `commit_claimed_queue_run(&self, queue_id: &str, run: &RunRecord, user_event: &Event) -> Result<(), PultError>` executing `create_run` + `append_event` + `DELETE FROM queue_items WHERE id = ?1` inside one `BEGIN IMMEDIATE ... COMMIT` SQLite transaction, plus `release_queue_claim(&self, queue_id: &str)` clearing `claiming_run_id = NULL` on dispatch failure.
+  - [x] In `reset_orphaned_run_states` (`store/runs.rs`), also reset `UPDATE queue_items SET claiming_run_id = NULL WHERE claiming_run_id IS NOT NULL` so a crash between claim and commit restores the queued message on restart.
 - **Acceptance Tests (`src-tauri/src/store/tests.rs`):**
   - `queue_item_persists_mode_and_config_snapshot_and_recovers_orphaned_claim`: enqueues item with `mode: Some("plan")` and `model = "gpt-5"`, claims it, simulates crash before `commit_claimed_queue_run`, reopens/calls `reset_orphaned_run_states`, and asserts `list_queue` still contains the item with its exact `mode` and `config_options`.
   - `commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row`: asserts run, `UserMessage` event, and absence from `queue_items` all commit together.
@@ -125,8 +125,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Files & Functions:**
   - `src-tauri/src/config.rs`: `load_instances`, add `load_instances_checked`, update `save_instances`.
 - **Concrete Change:**
-  - [ ] Add `pub fn load_instances_checked(home: &Path) -> Result<Vec<InstanceSpec>, String>` returning `Ok(Vec::new())` when `config.toml` does not exist, `Ok(config.instances)` on valid TOML, and `Err(err.to_string())` on read/parse error; keep `load_instances` delegating with `tracing::warn!`.
-  - [ ] Update `save_instances(home, specs)`: write serialized TOML to `config.toml.tmp.<pid>`, call `file.sync_all()`, and atomically `std::fs::rename(&tmp, &path)` (cleaning up `tmp` on error so an interrupted write never truncates or corrupts `config.toml`).
+  - [x] Add `pub fn load_instances_checked(home: &Path) -> Result<Vec<InstanceSpec>, String>` returning `Ok(Vec::new())` when `config.toml` does not exist, `Ok(config.instances)` on valid TOML, and `Err(err.to_string())` on read/parse error; keep `load_instances` delegating with `tracing::warn!`.
+  - [x] Update `save_instances(home, specs)`: write serialized TOML to `config.toml.tmp.<pid>`, call `file.sync_all()`, and atomically `std::fs::rename(&tmp, &path)` (cleaning up `tmp` on error so an interrupted write never truncates or corrupts `config.toml`).
 - **Acceptance Tests (`src-tauri/src/config.rs` `#[cfg(test)]`):**
   - `load_instances_checked_reports_corrupt_toml_without_silent_empty`: writes invalid TOML to temp dir `config.toml`, asserts `load_instances_checked` returns `Err(...)`.
   - `save_instances_preserves_existing_file_when_toml_is_corrupt_or_write_fails`: asserts corrupt existing `config.toml` stays untouched when `save_instances` returns `Err`, and valid writes leave no `.tmp` files behind.
@@ -146,10 +146,10 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/runtime/mod.rs`: `Inner`, `RunState`, `AgentRuntime::new`, `config_error()`, `remembered_for`, `remember_decision`, `list_remembered_permissions`, `clear_remembered_permission`, `resolve_session`, `run_turn`, `handle_terminal_create`, `surface_and_resolve_permission`.
   - `src-tauri/src/runtime/tests.rs`: runtime tests.
 - **Concrete Change:**
-  - [ ] **C04 + C05:** Generate unique `owner_token = terminals.new_owner_token()` per spawned/warmed connection, carry it on `IdleConn` and `RunState`, pass `&owner_token` into `handle_terminal_create`, `terminals.output/wait_for_exit/kill/release`, and `terminals.release_owner(&owner_token)`. In `handle_terminal_create`, replace `None => None` with `None => Some(clean_verbatim(root.to_path_buf()))` so commands without `cwd` run in the thread's workspace root.
-  - [ ] **C01:** In `resolve_session`, match `runtime.store.get_session_ref(thread_id, instance_id)?` (propagating SQLite errors instead of `_ =>`); record `context_reset_reason: Option<String>` on `ResolvedSession` when `session/load` fails, when a prior session exists but `!init.agent_capabilities.load_session`, or when the thread's prior finished/failed run used a different `instance_id`. In `run_turn`, emit & persist a `Notice { level: "warning", message }` before the agent responds whenever `context_reset_reason` is `Some(...)`.
-  - [ ] **C07:** Scope `remembered_permissions` by `(workspace_key, instance_id, tool_kind)` where `workspace_key` is the normalized `clean_verbatim(root)` string (migrating/ignoring legacy unscoped entries cleanly). Add `list_remembered_permissions()` and `clear_remembered_permission(workspace_key, instance_id, tool_kind)` (or clear-all when `None`).
-  - [ ] **C08:** In `AgentRuntime::new`, call `load_instances_checked(&home)` and store `config_error: Option<String>` on `Inner` (exposed via `pub fn config_error(&self) -> Option<String>`); do not clear/overwrite `config_error` unless `set_instances` succeeds.
+  - [x] **C04 + C05:** Generate unique `owner_token = terminals.new_owner_token()` per spawned/warmed connection, carry it on `IdleConn` and `RunState`, pass `&owner_token` into `handle_terminal_create`, `terminals.output/wait_for_exit/kill/release`, and `terminals.release_owner(&owner_token)`. In `handle_terminal_create`, replace `None => None` with `None => Some(clean_verbatim(root.to_path_buf()))` so commands without `cwd` run in the thread's workspace root.
+  - [x] **C01:** In `resolve_session`, match `runtime.store.get_session_ref(thread_id, instance_id)?` (propagating SQLite errors instead of `_ =>`); record `context_reset_reason: Option<String>` on `ResolvedSession` when `session/load` fails, when a prior session exists but `!init.agent_capabilities.load_session`, or when the thread's prior finished/failed run used a different `instance_id`. In `run_turn`, emit & persist a `Notice { level: "warning", message }` before the agent responds whenever `context_reset_reason` is `Some(...)`.
+  - [x] **C07:** Scope `remembered_permissions` by `(workspace_key, instance_id, tool_kind)` where `workspace_key` is the normalized `clean_verbatim(root)` string (migrating/ignoring legacy unscoped entries cleanly). Add `list_remembered_permissions()` and `clear_remembered_permission(workspace_key, instance_id, tool_kind)` (or clear-all when `None`).
+  - [x] **C08:** In `AgentRuntime::new`, call `load_instances_checked(&home)` and store `config_error: Option<String>` on `Inner` (exposed via `pub fn config_error(&self) -> Option<String>`); do not clear/overwrite `config_error` unless `set_instances` succeeds.
 - **Acceptance Tests (`src-tauri/src/runtime/tests.rs`):**
   - `terminal_without_cwd_runs_in_thread_workspace_including_spaces`: runs mock/shell terminal without `cwd` in a temp workspace containing spaces and asserts stdout prints that workspace path.
   - `terminal_owner_isolation_across_concurrent_sessions`: verifies session A cannot read/kill/release session B's terminal and releasing A preserves B.
@@ -167,12 +167,12 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/runtime/mod.rs`: `Inner::deleting_threads`, `Inner::cancelling_runs`, `begin_delete_thread`, `finish_delete_thread`, `send`, `dispatch` / `dispatch_inner`, `auto_dispatch_queue`, `finalize_run`, `cancel` / `cancel_with_force`, `run_turn`.
   - `src-tauri/src/runtime/tests.rs`: runtime tests.
 - **Concrete Change:**
-  - [ ] **C02:** Add `deleting_threads: HashSet<String>` in `Inner` plus `begin_delete_thread(&self, thread_id: &str)` / `finish_delete_thread(&self, thread_id: &str)`. `send`, `dispatch_inner`, `finalize_run`, and `auto_dispatch_queue` check `deleting_threads` and refuse/skip starting new runs or draining the queue while deletion is in progress.
-  - [ ] **C03 + C09:** Extend `send(thread, text, images, instance_id, mode, config_options)` so:
+  - [x] **C02:** Add `deleting_threads: HashSet<String>` in `Inner` plus `begin_delete_thread(&self, thread_id: &str)` / `finish_delete_thread(&self, thread_id: &str)`. `send`, `dispatch_inner`, `finalize_run`, and `auto_dispatch_queue` check `deleting_threads` and refuse/skip starting new runs or draining the queue while deletion is in progress.
+  - [x] **C03 + C09:** Extend `send(thread, text, images, instance_id, mode, config_options)` so:
     - When idle: applies/persists `mode` + `config_options` and dispatches immediately.
     - When busy (or losing race to `thread.busy`): snapshots `mode` + `config_options` into `QueueItem` WITHOUT mutating live `set_mode` or `desired_config` on the active session.
     - In `auto_dispatch_queue`: calls `store.claim_queue_head(thread_id, &claim_id)`; calls `dispatch_claimed_item(&thread, &item)` which uses `item.mode` + `item.config_options` (falling back to thread desired settings only when `item.mode`/`config_options` are empty) and commits `RunRecord` + `UserMessage` + queue-row delete via `store.commit_claimed_queue_run(...)`. On pre-commit failure, calls `store.release_queue_claim(&item.id)`.
-  - [ ] **C10:** Add `cancelling_runs: HashSet<String>` in `Inner` and `cancel_with_force(&self, run_id: &str, force: bool)`:
+  - [x] **C10:** Add `cancelling_runs: HashSet<String>` in `Inner` and `cancel_with_force(&self, run_id: &str, force: bool)`:
     - Marks `run_id` in `cancelling_runs` and emits `"run:cancelling"` (`{ runId, threadId }`).
     - If `force == true`, calls `conn.kill()` immediately; otherwise sends `conn.cancel(&session_id)` and spawns a grace timer (`PULT_CANCEL_GRACE_MS` env override, default `5000` ms) that calls `self.kill_run(&run_id)` if the run is still active.
     - In `run_turn`, if `cancelling_runs` contains `run_id` when `prompt_fut` finishes with `Err` (after `conn.kill()`), map `status = "cancelled"`, `stop_reason = "cancelled"`, `failure = None`, and release terminals via `terminals.release_owner(&owner_token)`. Clean `cancelling_runs` in `finalize_run`.
@@ -196,12 +196,13 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/ipc/mod.rs`: `threads_worktree_status` (new), `threads_delete`, `runs_dispatch`, `runs_cancel`, `permissions_remembered_list` (new), `permissions_remembered_clear` (new), `providers_config_status` (new), `threads_get` (bounded history / `has_more_runs` + `threads_get_older_runs` or byte-budget cap).
   - `src-tauri/src/lib.rs`: register new commands in `tauri::generate_handler!`.
 - **Concrete Change:**
-  - [ ] Add `threads_worktree_status(thread_id)` returning `Option<WorktreeDirtyStatus>` (`None` if thread has no worktree or dir missing).
-  - [ ] Update `threads_delete(thread_id, worktree_mode: Option<String>)`: wrap active-run cancel/kill + worktree cleanup in `runtime.begin_delete_thread` / `finish_delete_thread` guard; pass `force = matches!(worktree_mode.as_deref(), Some("force_remove"))` to `git::worktree_remove` when `worktree_mode != Some("keep")`. If `worktree_remove` returns `git.worktree_dirty`, propagate the error BEFORE deleting the SQLite thread row so user data is never orphaned or lost!
-  - [ ] Update `runs_dispatch`: pass `mode` + `config_options` directly into `runtime.send(...)` without pre-mutating `set_mode` / `merge_desired_config`.
-  - [ ] Update `runs_cancel(run_id, force: Option<bool>)` -> `runtime.cancel_with_force(&run_id, force.unwrap_or(false))`.
-  - [ ] Add `permissions_remembered_list`, `permissions_remembered_clear`, and `providers_config_status` commands and register them in `lib.rs`.
-  - [ ] Add total-IPC-byte budget cap (`TOTAL_EVENT_BYTES = 16_000_000`) in `cap_ui_event_payloads` and optional `limit_runs: Option<usize>` (returning `has_more_runs: bool` on `ThreadDetail` when omitted/capped) + `threads_get_older_runs(thread_id, before_idx, limit)` for measured large-chat pagination.
+  - [x] Add `threads_worktree_status(thread_id)` returning `Option<WorktreeDirtyStatus>` (`None` if thread has no worktree or dir missing).
+  - [x] Update `threads_delete(thread_id, worktree_mode: Option<String>)`: wrap active-run cancel/kill + worktree cleanup in `runtime.begin_delete_thread` / `finish_delete_thread` guard; pass `force = matches!(worktree_mode.as_deref(), Some("force_remove"))` to `git::worktree_remove` when `worktree_mode != Some("keep")`. If `worktree_remove` returns `git.worktree_dirty`, propagate the error BEFORE deleting the SQLite thread row so user data is never orphaned or lost!
+  - [x] Update `runs_dispatch`: pass `mode` + `config_options` directly into `runtime.send(...)` without pre-mutating `set_mode` / `merge_desired_config`.
+  - [x] Update `runs_cancel(run_id, force: Option<bool>)` -> `runtime.cancel_with_force(&run_id, force.unwrap_or(false))`.
+  - [x] Add `permissions_remembered_list`, `permissions_remembered_clear`, and `providers_config_status` commands and register them in `lib.rs`.
+  - [x] Add total-IPC-byte budget cap (`TOTAL_EVENT_BYTES = 16_000_000`) in `cap_ui_event_payloads` (per-payload caps stay at 2 MB; the oldest payloads are trimmed to 4 KB until the whole history fits).
+  - [ ] Deferred: paginated history (`limit_runs` + `has_more_runs` + `threads_get_older_runs`) once a real large-chat measurement shows the 16 MB budget is hit; the single-pass frontend hydrate is already in place.
 - **Acceptance Tests (`src-tauri/src/ipc/mod.rs` `#[cfg(test)]` & `src-tauri/src/store/tests.rs`):**
   - `threads_delete_refuses_dirty_worktree_without_force_and_preserves_thread_row`: creates worktree thread + untracked file, calls delete helper without force, asserts `git.worktree_dirty` error AND thread row + untracked file remain intact; `keep` deletes thread row while preserving worktree dir.
   - `cap_ui_event_payloads_enforces_total_history_budget`: passes 20 × 1.5 MB events and verifies total serialized IPC payload stays below cap.
@@ -215,10 +216,10 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
 - **Files & Functions:**
   - `src-tauri/src/runtime/ptys.rs`: `default_shell()`, `PtyRegistry::create`.
 - **Concrete Change:**
-  - [ ] Extract `fn default_shell() -> (String, Vec<String>)`:
+  - [x] Extract `fn default_shell() -> (String, Vec<String>)`:
     - `#[cfg(windows)]`: `("powershell".to_string(), vec!["-NoLogo".to_string()])`
     - `#[cfg(not(windows))]`: read `std::env::var("SHELL")` (if non-empty) else `"/bin/sh".to_string()`, with `Vec::new()`.
-  - [ ] Use `default_shell()` in `PtyRegistry::create` when `params.command` is `None`/empty.
+  - [x] Use `default_shell()` in `PtyRegistry::create` when `params.command` is `None`/empty.
 - **Acceptance Tests (`src-tauri/src/runtime/ptys.rs` `#[cfg(test)]`):**
   - `default_shell_matches_target_os`: asserts Windows returns `powershell -NoLogo` and non-Windows resolves `$SHELL` or `/bin/sh`.
 - **Verification:** `cargo test --manifest-path src-tauri/Cargo.toml --lib runtime::ptys`.
@@ -234,8 +235,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/components/settings/SignInActions.tsx`: `SignInActions`.
   - `tests/markdown-links.test.tsx`, `tests/auth.test.ts`.
 - **Concrete Change:**
-  - [ ] In `classifyMarkdownHref(rawHref, workspaceRoot, platform?)`: infer POSIX when `workspaceRoot` starts with `/` (and not `//`) or `platform === "posix"`. Allow POSIX absolute paths inside `workspaceRoot` (prefix containment check with `/`), reject paths outside `workspaceRoot`, and join `fullPath` with `/` on POSIX vs `\` on Windows.
-  - [ ] In `buildTerminalAuthCommand(launch, method, shell?)`: support `"posix"` (`KEY="val" cmd ...`) and `"powershell"` (`$env:KEY="val"; & "cmd" "arg"` when `env` present or command has spaces/special chars, using PowerShell escaping). Default `shell` via `detectDefaultAuthShell()` (`"powershell"` on Windows `navigator.platform`, `"posix"` otherwise) and show a compact shell selector (`PowerShell` / `sh`) in `SignInActions.tsx` beside `Copy command`.
+  - [x] In `classifyMarkdownHref(rawHref, workspaceRoot, platform?)`: infer POSIX when `workspaceRoot` starts with `/` (and not `//`) or `platform === "posix"`. Allow POSIX absolute paths inside `workspaceRoot` (prefix containment check with `/`), reject paths outside `workspaceRoot`, and join `fullPath` with `/` on POSIX vs `\` on Windows.
+  - [x] In `buildTerminalAuthCommand(launch, method, shell?)`: support `"posix"` (`KEY="val" cmd ...`) and `"powershell"` (`$env:KEY="val"; & "cmd" "arg"` when `env` present or command has spaces/special chars, using PowerShell escaping). Default `shell` via `detectDefaultAuthShell()` (`"powershell"` on Windows `navigator.platform`, `"posix"` otherwise) and show a compact shell selector (`PowerShell` / `sh`) in `SignInActions.tsx` beside `Copy command`.
 - **Acceptance Tests (`tests/auth.test.ts`, `tests/markdown-links.test.tsx`):**
   - `tests/auth.test.ts`: `formats PowerShell env assignment and quoted path with spaces` + `formats POSIX env assignment on macOS/Linux`.
   - `tests/markdown-links.test.tsx`: `classifies POSIX absolute workspace paths and joins with forward slashes`.
@@ -252,9 +253,9 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/stores/runs.ts`: `hydrateThread`, `cancellingRunIds`, `run:cancelling` listener in `attachRunListeners`.
   - `tests/runs-store.test.ts`: correctness + benchmark test.
 - **Concrete Change:**
-  - [ ] Add TypeScript types & invoke wrappers in `src/lib/types.ts` and `src/lib/ipc.ts`.
-  - [ ] Refactor `hydrateThread` in `src/stores/runs.ts` to index `events` into a single `Map<string, RunEvent[]>` in one O(E) pass before iterating `sorted` runs (removing O(R*E) `events.filter`), and sort each run's bucket once.
-  - [ ] Track `cancellingByRun: Record<string, boolean>` in `useRunsStore` populated by `"run:cancelling"` and cleared on `run:finished`.
+  - [x] Add TypeScript types & invoke wrappers in `src/lib/types.ts` and `src/lib/ipc.ts`.
+  - [x] Refactor `hydrateThread` in `src/stores/runs.ts` to index `events` into a single `Map<string, RunEvent[]>` in one O(E) pass before iterating `sorted` runs (removing O(R*E) `events.filter`), and sort each run's bucket once.
+  - [x] Track `cancellingByRun: Record<string, boolean>` in `useRunsStore` populated by `"run:cancelling"` and cleared on `run:finished`.
 - **Acceptance Tests (`tests/runs-store.test.ts`):**
   - `hydrateThread groups 500 runs and 10000 events in single pass`: measures actual elapsed `performance.now()` and asserts correctness of all 500 run views without asserting an arbitrary flaky host threshold (logs measured ms cleanly).
   - `marks run as cancelling on run:cancelling event and clears on finish`.
@@ -274,8 +275,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/components/layout/Sidebar.tsx`: `threadMenuItems`, inline/modal delete confirmation dialog.
   - `tests/thread-delete.test.tsx` (create).
 - **Concrete Change:**
-  - [ ] Update `useThreadsStore.deleteThread(id, worktreeMode?)` to pass `worktreeMode` to `threadsDelete`.
-  - [ ] In `Sidebar.tsx`, clicking `Delete` on a thread checks `threadsWorktreeStatus(thread.id)` (when `isTauri()`). If the thread has a worktree with `dirty === true` (modified or untracked files) OR `confirmDeleteThread` is enabled, open a dedicated confirmation modal displaying: thread title, workspace path, exact modified/untracked counts + sample file names, and explicit actions: **"Delete thread & keep worktree"** (`worktreeMode: "keep"`), **"Delete thread & discard files"** (`worktreeMode: "force_remove"`, danger), and **Cancel**. Never silently delete dirty/untracked worktree files.
+  - [x] Update `useThreadsStore.deleteThread(id, worktreeMode?)` to pass `worktreeMode` to `threadsDelete`.
+  - [x] In `Sidebar.tsx`, clicking `Delete` on a thread checks `threadsWorktreeStatus(thread.id)` (when `isTauri()`). If the thread has a worktree with `dirty === true` (modified or untracked files) OR `confirmDeleteThread` is enabled, open a dedicated confirmation modal displaying: thread title, workspace path, exact modified/untracked counts + sample file names, and explicit actions: **"Delete thread & keep worktree"** (`worktreeMode: "keep"`), **"Delete thread & discard files"** (`worktreeMode: "force_remove"`, danger), and **Cancel**. Never silently delete dirty/untracked worktree files.
 - **Acceptance Tests (`tests/thread-delete.test.tsx`):**
   - `shows dirty/untracked worktree warning and preserves files when keep worktree is chosen` (mocks `threadsWorktreeStatus` returning `{ dirty: true, untracked: 1, modified: 0, entries: ["draft.txt"] }`, asserts dialog shows `draft.txt` + workspace path, and clicking "Delete thread & keep worktree" calls `threadsDelete(id, "keep")`).
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/thread-delete.test.tsx tests/sidebar.test.tsx`.
@@ -293,10 +294,10 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/routes/settings.general.tsx`: `GeneralSettings` remembered permissions list + revoke/clear.
   - `tests/messages-timeline.test.tsx`, `tests/composer.test.tsx`, `tests/settings-pages.test.tsx`.
 - **Concrete Change:**
-  - [ ] Export `PERMISSION_MODE_DESCRIPTIONS` in `src/stores/settings.ts` and render each mode's concise scope description in `ModePill` (`ComposerControls.tsx`).
-  - [ ] In `ApprovalCard` (`MessagesTimeline.tsx`) and `Composer.tsx` approval bar: display active provider displayName + workspace path, and add clear label/note on `allow_always` (`"Always (this agent & project)"`).
-  - [ ] In `Composer.tsx`: when `useRunsStore((s) => activeRun ? s.cancellingByRun[activeRun.id] : false)` is true, change the Stop button aria-label/title to `"Force stop"` and call `runsCancel(activeRun.id, true)`; update line-364 error from `"pick one in the header"` to `"No agent selected — pick a provider in the composer or connect one in Settings ▸ Providers"`.
-  - [ ] In `src/routes/settings.general.tsx`: load `permissionsRememberedList()` on mount and render a "Remembered permissions" section showing workspace, instance, tool kind, and Revoke / Clear all buttons.
+  - [x] Export `PERMISSION_MODE_DESCRIPTIONS` in `src/stores/settings.ts` and render each mode's concise scope description in `ModePill` (`ComposerControls.tsx`).
+  - [x] In `ApprovalCard` (`MessagesTimeline.tsx`) and `Composer.tsx` approval bar: display active provider displayName + workspace path, and add clear label/note on `allow_always` (`"Always (this agent & project)"`).
+  - [x] In `Composer.tsx`: when `useRunsStore((s) => activeRun ? s.cancellingByRun[activeRun.id] : false)` is true, change the Stop button aria-label/title to `"Force stop"` and call `runsCancel(activeRun.id, true)`; update line-364 error from `"pick one in the header"` to `"No agent selected — pick a provider in the composer or connect one in Settings ▸ Providers"`.
+  - [x] In `src/routes/settings.general.tsx`: load `permissionsRememberedList()` on mount and render a "Remembered permissions" section showing workspace, instance, tool kind, and Revoke / Clear all buttons.
 - **Acceptance Tests (`tests/messages-timeline.test.tsx`, `tests/composer.test.tsx`, `tests/settings-pages.test.tsx`):**
   - `tests/messages-timeline.test.tsx`: `ApprovalCard displays active provider, workspace, and project-scoped allow_always note`.
   - `tests/composer.test.tsx`: `ModePill shows scope descriptions and Stop button switches to Force stop while cancelling`.
@@ -314,9 +315,9 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/routes/settings.providers.tsx`: `statusLine`, `ProvidersSettings` list/detail responsive layout + config-error alert.
   - `tests/provider-checks.test.ts`, `tests/provider-signin.test.tsx`, `tests/providers-empty.test.tsx`.
 - **Concrete Change:**
-  - [ ] **D06:** Extend `CachedCheck` with `lastAttemptAt?: number` and `lastError?: string | null`. When `preflightInstances` catches an error for an instance with a prior cached report, keep `report` & `at` AND set `lastAttemptAt: Date.now()` and `lastError: ipcErrorMessage(err)` (clearing `lastError` on next success). Update `statusLine` to take `CachedCheck | undefined` and render `"Check failed · cached <rel>"` (tone `"warn"`) or `"Connected · checked <rel>"` + `"Last checked <time>"` in the Status panel instead of indistinguishable `"Connected"`.
-  - [ ] **D02:** Make `settings.tsx` nav compact (`w-52`, collapsible/drawer or narrow header strip below `1100px`) and in `settings.providers.tsx` replace fixed `w-72` split with responsive sizing (`w-60` / single-pane list-or-detail with `"← Providers"` back link below `1120px` so at `1040×680` and 125% text zoom the detail pane and empty state read cleanly without narrow wrapping).
-  - [ ] **C08:** Call `providersConfigStatus()` on mount in `ProvidersSettings` and display a prominent `role="alert"` banner with the `config.toml` parse error when present.
+  - [x] **D06:** Extend `CachedCheck` with `lastAttemptAt?: number` and `lastError?: string | null`. When `preflightInstances` catches an error for an instance with a prior cached report, keep `report` & `at` AND set `lastAttemptAt: Date.now()` and `lastError: ipcErrorMessage(err)` (clearing `lastError` on next success). Update `statusLine` to take `CachedCheck | undefined` and render `"Check failed · cached <rel>"` (tone `"warn"`) or `"Connected · checked <rel>"` + `"Last checked <time>"` in the Status panel instead of indistinguishable `"Connected"`.
+  - [x] **D02:** Make `settings.tsx` nav compact (`w-52`, collapsible/drawer or narrow header strip below `1100px`) and in `settings.providers.tsx` replace fixed `w-72` split with responsive sizing (`w-60` / single-pane list-or-detail with `"← Providers"` back link below `1120px` so at `1040×680` and 125% text zoom the detail pane and empty state read cleanly without narrow wrapping).
+  - [x] **C08:** Call `providersConfigStatus()` on mount in `ProvidersSettings` and display a prominent `role="alert"` banner with the `config.toml` parse error when present.
 - **Acceptance Tests (`tests/provider-checks.test.ts`, `tests/provider-signin.test.tsx`, `tests/providers-empty.test.tsx`):**
   - `tests/provider-checks.test.ts`: `records lastError and lastAttemptAt while retaining prior cached report on probe failure`.
   - `tests/provider-signin.test.tsx`: `statusLine distinguishes fresh connected check from failed stale cached check`.
@@ -332,7 +333,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/components/chat/NewChatEmptyState.tsx`: `NewChatEmptyState`.
   - `tests/new-chat-empty.test.tsx`.
 - **Concrete Change:**
-  - [ ] Inspect enabled instances from `useUiStore((s) => s.instances)`:
+  - [x] Inspect enabled instances from `useUiStore((s) => s.instances)`:
     - When `enabledInstances.length === 0`: show a concise `"No agent connected"` callout with a **"Connect an agent"** button navigating to `/settings/providers` (and secondary link to `/welcome`) so the user sees the setup requirement before typing a prompt.
     - When the only enabled instance is `driver === "mock"`: show a subtle `"Dev mock active"` pill with `"Connect a real agent"` link to `/settings/providers`, without blocking experienced users from sending immediately.
 - **Acceptance Tests (`tests/new-chat-empty.test.tsx`):**
@@ -348,7 +349,7 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/components/ui/ImageLightbox.tsx`: `ImageLightbox`.
   - `tests/image-lightbox.test.tsx` (create).
 - **Concrete Change:**
-  - [ ] Capture `document.activeElement` on mount; focus the Close `<button>` via `ref` on mount; intercept `Tab` / `Shift+Tab` inside the lightbox so focus stays inside the dialog (wrapping cleanly on the Close button instead of escaping behind the modal); restore focus to the captured trigger element on unmount if still connected.
+  - [x] Capture `document.activeElement` on mount; focus the Close `<button>` via `ref` on mount; intercept `Tab` / `Shift+Tab` inside the lightbox so focus stays inside the dialog (wrapping cleanly on the Close button instead of escaping behind the modal); restore focus to the captured trigger element on unmount if still connected.
 - **Acceptance Tests (`tests/image-lightbox.test.tsx`):**
   - `moves focus to Close button on open, traps Tab/Shift+Tab inside dialog, and restores focus on Escape close`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/image-lightbox.test.tsx tests/markdown-links.test.tsx`.
@@ -362,9 +363,9 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src/components/terminal/TerminalPanel.tsx`: `TerminalPanel`, `create`, `kill`, `useEffect` list sync.
   - `tests/terminal-panel.test.tsx` (create).
 - **Concrete Change:**
-  - [ ] Add `error: string | null` state (cleared on `threadId` change, Dismiss click, or successful action) rendered as an inline `role="alert"` banner with a Retry/Dismiss action.
-  - [ ] Surface `ipcErrorMessage(err)` when `terminalPtyList`, `terminalPtyCreate`, or `terminalPtyKill` rejects.
-  - [ ] Move `removeTerminal(threadId, id)` inside the `try` block of `kill()` after `await terminalPtyKill(id)` succeeds (removing on error only if the backend message explicitly indicates the terminal is already unknown/not found; otherwise keeping the tab visible alongside the inline error).
+  - [x] Add `error: string | null` state (cleared on `threadId` change, Dismiss click, or successful action) rendered as an inline `role="alert"` banner with a Retry/Dismiss action.
+  - [x] Surface `ipcErrorMessage(err)` when `terminalPtyList`, `terminalPtyCreate`, or `terminalPtyKill` rejects.
+  - [x] Move `removeTerminal(threadId, id)` inside the `try` block of `kill()` after `await terminalPtyKill(id)` succeeds (removing on error only if the backend message explicitly indicates the terminal is already unknown/not found; otherwise keeping the tab visible alongside the inline error).
 - **Acceptance Tests (`tests/terminal-panel.test.tsx`):**
   - `surfaces inline error on terminalPtyCreate rejection and preserves tab with error on terminalPtyKill rejection`.
 - **Verification:** `pnpm typecheck && pnpm lint && pnpm test tests/terminal-panel.test.tsx tests/terminals.test.ts`.
@@ -382,8 +383,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `src-tauri/src/drivers/golden.rs`: `golden_happy_path_streams_expected_events`, new `#[ignore]` `golden_first_echo_latency_budget`.
   - `tests/e2e/smoke.spec.ts`: line 31 assertion.
 - **Concrete Change:**
-  - [ ] Remove the load-sensitive `assert!(first_echo < Duration::from_millis(200), ...)` from `golden_happy_path_streams_expected_events` and move it into an explicit `#[tokio::test] #[ignore = "timing budget: run explicitly on idle host"] async fn golden_first_echo_latency_budget()`.
-  - [ ] Update `tests/e2e/smoke.spec.ts:31` to assert current empty-state UI (`await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();` and `await expect(page.getByRole("navigation", { name: "Threads" })).toBeVisible();`).
+  - [x] Remove the load-sensitive `assert!(first_echo < Duration::from_millis(200), ...)` from `golden_happy_path_streams_expected_events` and move it into an explicit `#[tokio::test] #[ignore = "timing budget: run explicitly on idle host"] async fn golden_first_echo_latency_budget()`.
+  - [x] Update `tests/e2e/smoke.spec.ts:31` to assert current empty-state UI (`await expect(page.getByRole("heading", { name: "What should we work on?" })).toBeVisible();` and `await expect(page.getByRole("navigation", { name: "Threads" })).toBeVisible();`).
 - **Acceptance Tests:**
   - `cargo test --manifest-path src-tauri/Cargo.toml golden_happy_path_streams_expected_events` passes deterministically under load.
   - `pnpm exec playwright test tests/e2e/smoke.spec.ts` passes all 5 smoke specs (runtime acceptance when Playwright Chromium is available).
@@ -398,8 +399,8 @@ Ordered by risk: **Wave 1–2** (data/context loss, isolation, permissions, queu
   - `README.md`
   - `TODO.md`
 - **Concrete Change:**
-  - [ ] Refresh `README.md`: update current status beyond M8 (auth sign-in, model/config pickers, `/usage`, browser panel, project widget, queue actions, dark/light/graphite/liquid themes), update verification commands, and add a **Harness Capability & Verification Matrix** table (`Agent`, `Adapter / Command`, `Auth`, `Images`, `Resume`, `Cancel`, `Model & Effort`, `Last verified`). Leave `Last verified` blank (`—`) for every harness/platform not verified end-to-end with a real signed-in account — **never invent verification dates**.
-  - [ ] Refresh `TODO.md`: remove stale items already implemented (in-app sign-in, model/reasoning pickers, Antigravity detection, `/usage`, "never committed" note), record actual current check status, and list remaining release blockers (`releases.pult.local` placeholder updater endpoint in `tauri.conf.json`, Windows Authenticode signing, macOS/Linux builds & notarization, real subscription harness E2E checks).
+  - [x] Refresh `README.md`: update current status beyond M8 (auth sign-in, model/config pickers, `/usage`, browser panel, project widget, queue actions, dark/light/graphite/liquid themes), update verification commands, and add a **Harness Capability & Verification Matrix** table (`Agent`, `Adapter / Command`, `Auth`, `Images`, `Resume`, `Cancel`, `Model & Effort`, `Last verified`). Leave `Last verified` blank (`—`) for every harness/platform not verified end-to-end with a real signed-in account — **never invent verification dates**.
+  - [x] Refresh `TODO.md`: remove stale items already implemented (in-app sign-in, model/reasoning pickers, Antigravity detection, `/usage`, "never committed" note), record actual current check status, and list remaining release blockers (`releases.pult.local` placeholder updater endpoint in `tauri.conf.json`, Windows Authenticode signing, macOS/Linux builds & notarization, real subscription harness E2E checks).
 - **Acceptance Check:**
   - Inspect `README.md` and `TODO.md` to confirm zero fabricated verification dates, zero stale feature-missing claims, and explicit manual/runtime acceptance section.
 

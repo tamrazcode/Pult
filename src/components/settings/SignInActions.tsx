@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { buildTerminalAuthCommand, splitAuthMethods } from "../../lib/auth";
+import { buildTerminalAuthCommand, detectDefaultAuthShell, splitAuthMethods } from "../../lib/auth";
+import type { AuthShell } from "../../lib/auth";
 import type { AuthMethod } from "../../lib/types";
 
 /**
@@ -26,6 +27,7 @@ export function SignInActions({
 }) {
   const { agent, terminal } = splitAuthMethods(authMethods);
   const [copied, setCopied] = useState<string | null>(null);
+  const [shell, setShell] = useState<AuthShell>(detectDefaultAuthShell);
 
   useEffect(() => {
     if (!copied) return;
@@ -75,7 +77,7 @@ export function SignInActions({
         </div>
       ))}
       {terminal.map((method) => {
-        const command = buildTerminalAuthCommand(launch, method);
+        const command = buildTerminalAuthCommand(launch, method, shell);
         return (
           <div key={method.id ?? ""} className="space-y-1">
             <p className="text-xs text-text-secondary">
@@ -84,13 +86,22 @@ export function SignInActions({
             <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-1.5 font-mono text-[13px] text-text-primary">
               {command}
             </pre>
-            <div className="flex gap-1.5">
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={() => copy(command)}
                 className="flex h-6 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
               >
                 {copied === command ? "Copied" : "Copy command"}
               </button>
+              <select
+                aria-label="Terminal shell"
+                value={shell}
+                onChange={(event) => setShell(event.target.value as AuthShell)}
+                className="h-6 rounded-(--radius-sm) border border-border-subtle bg-surface px-1 text-xs text-text-secondary focus:outline-none"
+              >
+                <option value="powershell">PowerShell</option>
+                <option value="posix">sh</option>
+              </select>
               <button
                 onClick={onRecheck}
                 className="flex h-6 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
