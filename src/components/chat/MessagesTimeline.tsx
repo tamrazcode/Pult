@@ -263,7 +263,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           onClick={() => {
             isAtBottomRef.current = true;
             setShowScrollToEnd(false);
-            bottomRef.current?.scrollIntoView({ block: "end", behavior: "smooth" });
+            const container = scrollRef.current;
+            if (container) container.scrollTop = container.scrollHeight;
           }}
           className="absolute bottom-28 left-1/2 z-30 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-surface-raised/95 px-3 text-xs text-text-secondary shadow-(--shadow-composer) transition hover:bg-surface-raised hover:text-text-primary"
         >

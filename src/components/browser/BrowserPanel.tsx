@@ -26,7 +26,6 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const browserTarget = useUiStore((s) => s.browserTarget);
-  const setBrowserTarget = useUiStore((s) => s.setBrowserTarget);
 
   const current = index >= 0 ? history[index] : null;
 
@@ -64,10 +63,11 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
   };
 
   useEffect(() => {
-    if (!browserTarget) return;
-    setBrowserTarget(null);
-    setInput(browserTarget);
-    void navigate(browserTarget);
+    const target = useUiStore.getState().browserTarget;
+    if (!target) return;
+    useUiStore.getState().setBrowserTarget(null);
+    setInput(target);
+    void navigate(target);
     // The queued target is consumed once per click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browserTarget]);

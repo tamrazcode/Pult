@@ -239,6 +239,16 @@ export function useGlobalHotkeys(openPalette: () => void): void {
         useUiStore.getState().setRightPanelTab("terminal");
         return;
       }
+      if (b("view.panel.browser") && matchesBinding(e, b("view.panel.browser")!)) {
+        e.preventDefault();
+        useUiStore.getState().setRightPanelTab("browser");
+        return;
+      }
+      if (b("view.panel.files") && matchesBinding(e, b("view.panel.files")!)) {
+        e.preventDefault();
+        useUiStore.getState().setRightPanelTab("files");
+        return;
+      }
       if (b("settings.open") && matchesBinding(e, b("settings.open")!)) {
         e.preventDefault();
         navigate("/settings/appearance");

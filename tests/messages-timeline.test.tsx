@@ -617,7 +617,7 @@ describe("MessagesTimeline", () => {
     expect(runsCancel).not.toHaveBeenCalled();
   });
 
-  it("shows 'Scroll to end' only when scrolled away from bottom and scrolls bottom sentinel into view on click", () => {
+  it("shows 'Scroll to end' only when scrolled away from bottom, sets scrollTop to scrollHeight without smooth scroll, and keeps the button hidden", () => {
     const scrollIntoView = vi.fn();
     Element.prototype.scrollIntoView = scrollIntoView;
 
@@ -661,7 +661,11 @@ describe("MessagesTimeline", () => {
     scrollIntoView.mockClear();
 
     fireEvent.click(screen.getByRole("button", { name: "Scroll to end" }));
-    expect(scrollIntoView).toHaveBeenCalledWith({ block: "end", behavior: "smooth" });
+    expect(scrollContainer.scrollTop).toBe(1000);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
+
+    fireEvent.scroll(scrollContainer);
     expect(screen.queryByRole("button", { name: "Scroll to end" })).toBeNull();
   });
 });

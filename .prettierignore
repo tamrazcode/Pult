@@ -1,4 +1,4 @@
-node_modules/
+﻿node_modules/
 dist/
 pnpm-lock.yaml
 src-tauri/
@@ -8,3 +8,4 @@ test-results/
 playwright-report/
 dist/
 src-tauri/target/
+docs/reviews/

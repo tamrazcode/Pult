@@ -1,17 +1,37 @@
+import type { ComponentProps } from "react";
+import type ReactMarkdownType from "react-markdown";
+import type * as ReactMarkdownModule from "react-markdown";
+import type { UrlTransform } from "react-markdown";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render } from "@testing-library/react";
 import { Markdown } from "../src/components/chat/Markdown";
 
-const { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter } = vi.hoisted(() => {
-  const mockCodeToHtml = vi.fn(
-    (_code: string, _options?: { lang: string; theme: string }) => "<pre>hi</pre>",
-  );
-  const mockLoadLanguage = vi.fn(async () => {});
-  const mockCreateHighlighter = vi.fn(async () => ({
-    codeToHtml: mockCodeToHtml,
-    loadLanguage: mockLoadLanguage,
-  }));
-  return { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter };
+const { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter, capturedUrlTransform } =
+  vi.hoisted(() => {
+    const mockCodeToHtml = vi.fn(
+      (_code: string, _options?: { lang: string; theme: string }) => "<pre>hi</pre>",
+    );
+    const mockLoadLanguage = vi.fn(async () => {});
+    const mockCreateHighlighter = vi.fn(async () => ({
+      codeToHtml: mockCodeToHtml,
+      loadLanguage: mockLoadLanguage,
+    }));
+    const capturedUrlTransform: { current: UrlTransform | null | undefined } = {
+      current: undefined,
+    };
+    return { mockCodeToHtml, mockLoadLanguage, mockCreateHighlighter, capturedUrlTransform };
+  });
+
+vi.mock("react-markdown", async (importOriginal) => {
+  const actual = await importOriginal<typeof ReactMarkdownModule>();
+  const RealReactMarkdown = actual.default;
+  return {
+    ...actual,
+    default: (props: ComponentProps<typeof ReactMarkdownType>) => {
+      capturedUrlTransform.current = props.urlTransform;
+      return <RealReactMarkdown {...props} />;
+    },
+  };
 });
 
 vi.mock("shiki/core", () => ({
@@ -129,5 +149,39 @@ describe("Markdown", () => {
     expect(mockLoadLanguage).toHaveBeenCalledWith(expect.objectContaining({ name: "ts" }));
     expect(mockCodeToHtml).toHaveBeenCalledTimes(1);
     expect(mockCodeToHtml.mock.calls[0]?.[0]).toContain("const b = 2");
+  });
+
+  it("strips obfuscated javascript: hrefs with tabs or newlines to an empty href via urlTransform", () => {
+    render(<Markdown text={"[ok](https://example.com)"} />);
+    const urlTransform = capturedUrlTransform.current;
+    expect(urlTransform).toBeTypeOf("function");
+
+    const dummyNode = { type: "element" as const, tagName: "a", properties: {}, children: [] };
+    for (const bad of [
+      "java\tscript:alert(1)",
+      "java\nscript:alert(1)",
+      "\tjavascript:alert(1)",
+      "\njavascript:alert(1)",
+    ]) {
+      expect(urlTransform!(bad, "href", dummyNode)).toBe("");
+    }
+    expect(urlTransform!("https://example.com", "href", dummyNode)).toBe("https://example.com");
+  });
+
+  it("prevents middle-click navigation on unsupported links in desktop mode", () => {
+    const win = window as { __TAURI_INTERNALS__?: unknown };
+    const hadTauri = "__TAURI_INTERNALS__" in win;
+    const prevTauri = win.__TAURI_INTERNALS__;
+    win.__TAURI_INTERNALS__ = {};
+    try {
+      const { getByRole } = render(<Markdown text={"[mail](mailto:x@y)"} />);
+      const link = getByRole("link", { name: "mail" });
+      const event = new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 });
+      link.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    } finally {
+      if (hadTauri) win.__TAURI_INTERNALS__ = prevTauri;
+      else delete win.__TAURI_INTERNALS__;
+    }
   });
 });

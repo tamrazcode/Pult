@@ -13,6 +13,8 @@ const BINDING_LABELS: Record<string, string> = {
   "view.sidebar": "Toggle sidebar",
   "view.panel.diff": "Show diff panel",
   "view.panel.terminal": "Show terminal panel",
+  "view.panel.browser": "Show browser panel",
+  "view.panel.files": "Show files panel",
 };
 
 /**

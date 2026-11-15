@@ -412,7 +412,12 @@ const COMPONENTS: Components = {
           }
         }}
         onAuxClick={(event) => {
-          if (event.button !== 1 || !desktop) return;
+          if (!desktop) return;
+          if (link.kind === "unsupported") {
+            event.preventDefault();
+            return;
+          }
+          if (event.button !== 1) return;
           if (link.kind === "external") {
             event.preventDefault();
             openExternal();
@@ -477,7 +482,9 @@ export function Markdown({
           remarkPlugins={REMARK_PLUGINS}
           rehypePlugins={REHYPE_PLUGINS}
           components={COMPONENTS}
-          urlTransform={(url) => (/^(javascript|data|vbscript):/i.test(url) ? "" : url)}
+          urlTransform={(url) =>
+            /^(javascript|data|vbscript):/i.test(url.replace(/\s+/g, "")) ? "" : url
+          }
         >
           {rendered}
         </ReactMarkdown>
