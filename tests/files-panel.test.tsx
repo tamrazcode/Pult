@@ -66,7 +66,7 @@ function seedStores() {
     unreadIds: [],
     loaded: true,
   });
-  useUiStore.setState({ filePreview: "src/app.ts" });
+  useUiStore.setState({ filePreview: null });
 }
 
 function seedGit(entries: Array<{ path: string; indexStatus: string; worktreeStatus: string }>) {
@@ -168,22 +168,36 @@ describe("FilesPanel polish", () => {
       { path: "docs/gone.md", indexStatus: "D", worktreeStatus: " " },
     ]);
 
-    render(<FilesPanel threadId="th" />);
+    const { container } = render(<FilesPanel threadId="th" />);
     await screen.findByText("a.ts");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh files" })).not.toBeDisabled(),
+    );
 
-    expect(document.querySelector('[data-git-status="M"]')).toBeTruthy();
-    expect(document.querySelector('[data-git-status="A"]')).toBeTruthy();
-    expect(document.querySelector('[data-git-status="R"]')).toBeTruthy();
-    expect(document.querySelector('[data-git-status="?"]')).toBeTruthy();
-    const srcRow = screen.getByTitle("src");
-    expect(srcRow.querySelector('[data-git-status="U"]')).toBeTruthy();
-    const docsRow = screen.getByTitle("docs");
-    expect(docsRow.querySelector('[data-git-status="D"]')).toBeTruthy();
+    const badgeFor = (path: string) =>
+      container
+        .querySelector(`button[title="${path}"] [data-git-status]`)
+        ?.getAttribute("data-git-status");
+
+    expect(badgeFor("src/a.ts")).toBe("M");
+    expect(badgeFor("src/new.ts")).toBe("A");
+    expect(badgeFor("src/old.ts")).toBe("R");
+    expect(badgeFor("src/loose.ts")).toBe("?");
+    expect(badgeFor("src/sub/conflict.ts")).toBe("U");
+    expect(badgeFor("src/sub")).toBe("U");
+    expect(badgeFor("src")).toBe("U");
+    expect(badgeFor("docs/gone.md")).toBe("D");
+    expect(badgeFor("docs")).toBe("D");
+    expect(workspaceReadText).not.toHaveBeenCalled();
   });
 
   it("refreshes workspaceTree on button click without remounting or clearing preview", async () => {
+    useUiStore.setState({ filePreview: "src/app.ts" });
     render(<FilesPanel threadId="th" />);
     await screen.findByText("const x = 1;");
+    await screen.findByText("app.ts");
+    const button = screen.getByRole("button", { name: "Refresh files" });
+    await waitFor(() => expect(button).not.toBeDisabled());
 
     let resolveSecond!: (value: WorkspaceTree) => void;
     const second = new Promise<WorkspaceTree>((resolve) => {
@@ -191,7 +205,6 @@ describe("FilesPanel polish", () => {
     });
     workspaceTree.mockReturnValueOnce(second);
 
-    const button = screen.getByRole("button", { name: "Refresh files" });
     fireEvent.click(button);
 
     expect(button).toBeDisabled();
@@ -205,18 +218,30 @@ describe("FilesPanel polish", () => {
     await screen.findByText("added.ts");
     await waitFor(() => expect(button).not.toBeDisabled());
     expect(workspaceTree).toHaveBeenCalledTimes(2);
+    expect(workspaceReadText).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("const x = 1;")).toBeInTheDocument();
     expect(useUiStore.getState().filePreview).toBe("src/app.ts");
   });
 
   it("shows a one-line notice only when workspaceTree reports truncated: true", async () => {
     workspaceTree.mockResolvedValue(tree(baseEntries, true));
-    const { unmount } = render(<FilesPanel threadId="th" />);
-    expect(await screen.findByText("Showing first 2,000 entries (depth 6)")).toBeInTheDocument();
-    unmount();
+    const firstRender = render(<FilesPanel threadId="th" />);
+    const notice = await screen.findByRole("status");
+    expect(notice).toHaveAttribute("data-truncated-notice");
+    expect(notice).toHaveTextContent("Showing first 2,000 entries (depth 6)");
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh files" })).not.toBeDisabled(),
+    );
+    firstRender.unmount();
 
     workspaceTree.mockResolvedValue(tree(baseEntries, false));
-    render(<FilesPanel threadId="th" />);
+    const secondRender = render(<FilesPanel threadId="th" />);
     await screen.findByText("app.ts");
-    expect(screen.queryByText("Showing first 2,000 entries (depth 6)")).toBeNull();
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Refresh files" })).not.toBeDisabled(),
+    );
+    expect(secondRender.container.querySelector("[data-truncated-notice]")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(workspaceReadText).not.toHaveBeenCalled();
   });
 });
