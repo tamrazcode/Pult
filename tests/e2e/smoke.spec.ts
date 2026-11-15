@@ -26,6 +26,7 @@ test("shell loads: topbar, sidebar, composer, no console errors", async ({ page 
 
   await gotoChat(page);
   await expect(page.getByText("New thread").first()).toBeVisible();
+  await expect(page.getByText("pult", { exact: true })).toHaveCount(1);
   // sidebar shelves render with their empty-state copy
   await expect(page.getByText("New threads start here.")).toBeVisible();
   expect(errors).toEqual([]);
@@ -56,7 +57,7 @@ test("palette navigates to settings routes", async ({ page }) => {
   await page.getByLabel("Search commands").fill("keybindings");
   await page.getByRole("dialog").getByRole("option", { name: "Settings: Keybindings" }).click();
   await expect(page.getByText("Press a row, then the new combination")).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Breadcrumbs" })).toContainText("Keybindings");
+  await expect(page.getByRole("heading", { name: "Keybindings" })).toBeVisible();
 
   await page.keyboard.press("Control+k");
   await page.getByLabel("Search commands").fill("appearance");

@@ -38,7 +38,6 @@ interface UiState {
   rightPanelOpen: boolean;
   rightPanelWidth: number;
   rightPanelTab: RightPanelTab;
-  appVersion: string | null;
   instances: InstanceInfo[];
   selectedInstanceId: string | null;
   /** ⌘K command palette visibility (§6.7) — opened from hotkeys and buttons. */
@@ -56,7 +55,6 @@ interface UiState {
   setPaletteOpen: (open: boolean) => void;
   setSidebarWidth: (width: number, persist?: boolean) => void;
   setRightPanelWidth: (width: number, persist?: boolean) => void;
-  setAppVersion: (version: string) => void;
   setSelectedInstanceId: (instanceId: string | null) => void;
   /** Remember the selected provider per thread (restored when reopening). */
   instanceByThread: Record<string, string>;
@@ -131,7 +129,6 @@ export const useUiStore = create<UiState>((set) => ({
   rightPanelOpen: false,
   rightPanelWidth: 420, // slightly wider than the old fixed w-96
   rightPanelTab: "diff",
-  appVersion: null,
   instances: [],
   selectedInstanceId: null,
   instanceByThread: {},
@@ -158,7 +155,6 @@ export const useUiStore = create<UiState>((set) => ({
     set({ rightPanelWidth });
     if (persist && isTauri()) void persistLayout({ rightPanelWidth });
   },
-  setAppVersion: (version) => set({ appVersion: version }),
   setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
   rememberInstance: (threadId, instanceId) =>
     set((s) => ({

@@ -85,7 +85,6 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { Composer } from "../src/components/chat/Composer";
 import { Sidebar } from "../src/components/layout/Sidebar";
-import { Topbar } from "../src/components/layout/Topbar";
 import { useProjectsStore } from "../src/stores/projects";
 import { useRunsStore } from "../src/stores/runs";
 import { buildSidebarGroups, useThreadsStore } from "../src/stores/threads";
@@ -524,16 +523,39 @@ describe("Sidebar", () => {
   });
 });
 
-describe("Topbar", () => {
+describe("Sidebar branding", () => {
   beforeEach(() => {
     navigate.mockReset().mockResolvedValue(undefined);
-    useThreadsStore.setState({ threads: [], activeThreadId: null, loaded: true });
-    useUiStore.setState({ sidebarOpen: true, rightPanelOpen: false, appVersion: null });
+    useProjectsStore.setState({ projects: [], selectedProjectId: null, loaded: true });
+    useThreadsStore.setState({
+      threads: [],
+      activeThreadId: null,
+      loaded: true,
+      unreadIds: [],
+    } as never);
+    useUiStore.setState({
+      sidebarOpen: true,
+      rightPanelOpen: false,
+      collapsedProjects: [],
+      instances: [],
+      selectedInstanceId: null,
+      paletteOpen: false,
+    });
   });
 
-  it("does not render a Settings gear button", () => {
-    render(<Topbar />);
+  it("renders the sole pult brand header label and PultLogo with no Settings gear in top chrome", () => {
+    const { container } = render(<Sidebar width={288} />);
 
-    expect(screen.queryByRole("button", { name: /settings/i })).toBeNull();
+    const aside = container.querySelector("aside");
+    expect(aside).not.toBeNull();
+
+    const logos = aside!.querySelectorAll('svg[aria-label="pult"]');
+    expect(logos).toHaveLength(1);
+    expect(screen.getAllByText("pult")).toHaveLength(1);
+
+    const topChrome = logos[0].closest("div");
+    expect(topChrome).not.toBeNull();
+    expect(topChrome).toHaveClass("h-10");
+    expect(topChrome!.querySelector('button[aria-label*="settings" i]')).toBeNull();
   });
 });

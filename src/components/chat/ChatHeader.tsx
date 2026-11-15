@@ -5,6 +5,7 @@ import { runsCancel } from "../../lib/ipc";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
+import { PanelToggleButtons, WindowControls } from "../layout/WindowChrome";
 
 /**
  * Thread identity only (§6.1): title + worktree badge, plus the thread's own
@@ -90,7 +91,10 @@ export function ChatHeader({
   };
 
   return (
-    <div className="relative flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-4">
+    <header
+      data-tauri-drag-region
+      className="relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pr-0 pl-4"
+    >
       {editing ? (
         <input
           autoFocus
@@ -150,8 +154,9 @@ export function ChatHeader({
           worktree
         </span>
       )}
+      <div data-tauri-drag-region className="min-w-2 flex-1" />
       {threadId && (
-        <div className="ml-auto flex shrink-0 items-center gap-1">
+        <div className="relative flex shrink-0 items-center gap-1">
           <button
             aria-label={thread?.pinned ? "Unpin thread" : "Pin thread"}
             title={thread?.pinned ? "Unpin" : "Pin"}
@@ -177,7 +182,7 @@ export function ChatHeader({
             <div
               role="menu"
               data-escape-layer
-              className="absolute right-4 top-11 z-30 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+              className="absolute top-9 right-0 z-30 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
             >
               <button
                 role="menuitem"
@@ -220,12 +225,14 @@ export function ChatHeader({
           )}
         </div>
       )}
+      <PanelToggleButtons />
+      <WindowControls />
       {confirmDelete && (
         <div
           role="dialog"
           aria-label="Confirm thread deletion"
           data-escape-layer
-          className="absolute right-4 top-11 z-40 w-72 rounded-(--radius-md) border border-danger/40 bg-surface-raised p-3 shadow-(--shadow-composer)"
+          className="absolute top-9 right-36 z-40 w-72 rounded-(--radius-md) border border-danger/40 bg-surface-raised p-3 shadow-(--shadow-composer)"
         >
           <p className="text-sm text-text-primary">Delete this thread?</p>
           <p className="mt-1 text-xs text-text-tertiary">
@@ -249,6 +256,6 @@ export function ChatHeader({
           </div>
         </div>
       )}
-    </div>
+    </header>
   );
 }

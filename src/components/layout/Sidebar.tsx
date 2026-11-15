@@ -398,8 +398,11 @@ export function Sidebar({ width }: { width: number }) {
       style={{ width }}
       className="glass-panel flex shrink-0 flex-col border-r border-border-subtle bg-panel"
     >
-      <div className="flex items-center gap-2 px-3 pt-3 pb-2">
-        <span className="flex min-w-0 flex-1 items-center gap-2">
+      <div
+        data-tauri-drag-region
+        className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-3"
+      >
+        <span data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-2">
           <PultLogo className="h-5 w-5 shrink-0 text-text-primary" />
           <span className="truncate text-sm font-semibold tracking-tight text-text-primary">
             pult
@@ -423,7 +426,7 @@ export function Sidebar({ width }: { width: number }) {
         </button>
       </div>
 
-      <div ref={filterRef} className="relative flex items-center gap-1 px-2 pb-2">
+      <div ref={filterRef} className="relative flex items-center gap-1 px-2 py-2">
         <div className="relative min-w-0 flex-1">
           <Search
             size={13}

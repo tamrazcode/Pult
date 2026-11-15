@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { Outlet, createRootRoute } from "@tanstack/react-router";
-import { Topbar } from "../components/layout/Topbar";
 import { Sidebar } from "../components/layout/Sidebar";
 import { RightPanel } from "../components/layout/RightPanel";
 import { ElicitationModal } from "../components/chat/ElicitationModal";
@@ -40,7 +39,6 @@ function RootLayout() {
 
   return (
     <div className="relative flex h-screen flex-col overflow-hidden bg-canvas text-text-primary">
-      <Topbar />
       <div className="flex min-h-0 flex-1">
         {sidebarOpen && (
           <>
