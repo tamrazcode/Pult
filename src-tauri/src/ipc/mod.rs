@@ -849,6 +849,56 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
     Ok(())
 }
 
+/// Opens a project folder in the user's editor (Zed / VS Code / Cursor) or the
+/// OS file manager. The path is canonicalized and passed as one argv element,
+/// never through a shell. UNC paths are rejected before any SMB lookup.
+#[tauri::command]
+pub fn open_in_editor(path: String) -> Result<(), PultError> {
+    let raw = path.trim();
+    if raw.is_empty() {
+        return Err(PultError::internal("empty editor path"));
+    }
+    if raw.starts_with("\\\\") {
+        return Err(PultError::internal("UNC paths are not allowed"));
+    }
+    let target = std::path::Path::new(raw)
+        .canonicalize()
+        .map_err(|e| PultError::internal(format!("editor path not found: {e}")))?;
+    let target = crate::runtime::clean_verbatim(target);
+
+    for editor in ["zed", "code", "cursor"] {
+        let Some(command) = crate::config::resolve_command(editor) else {
+            continue;
+        };
+        if std::process::Command::new(command).arg(&target).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    let mut command = {
+        let mut command = std::process::Command::new("explorer.exe");
+        command.arg(&target);
+        command
+    };
+    #[cfg(target_os = "macos")]
+    let mut command = {
+        let mut command = std::process::Command::new("open");
+        command.arg(&target);
+        command
+    };
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = {
+        let mut command = std::process::Command::new("xdg-open");
+        command.arg(&target);
+        command
+    };
+    command
+        .spawn()
+        .map_err(|e| PultError::internal(format!("could not open the editor: {e}")))?;
+    Ok(())
+}
+
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
 #[tauri::command]

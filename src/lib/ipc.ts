@@ -314,6 +314,11 @@ export function diagnosticsFrames(instanceId: string): Promise<string[]> {
   return invokeRequired<string[]>("diagnostics_frames", { instanceId });
 }
 
+/** Opens a project folder in the user's editor (Zed/VS Code/Cursor) or file manager. */
+export function openInEditor(path: string): Promise<void> {
+  return invokeRequired<void>("open_in_editor", { path });
+}
+
 /** Opens an http(s) link in the system browser (external, never a shell). */
 export function openExternalUrl(url: string): Promise<void> {
   const target = url.trim();

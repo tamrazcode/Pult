@@ -315,4 +315,144 @@ describe("MessagesTimeline", () => {
       true,
     );
   });
+
+  it("renders thought and tool rows as flat inline lines without border-border-subtle or bg-surface", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "thought",
+              text: "Checking code",
+              streaming: false,
+              startedAt: 1000,
+              endedAt: 3000,
+            },
+            {
+              type: "tool",
+              toolCallId: "t1",
+              title: "Read main.ts",
+              kind: "read",
+              status: "completed",
+              locations: ["src/main.ts"],
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    const thoughtContainer = screen.getByRole("button", { name: /Thought for/i }).parentElement!;
+    expect(thoughtContainer).not.toHaveClass("border-border-subtle");
+    expect(thoughtContainer).not.toHaveClass("bg-surface");
+
+    const toolContainer = screen.getByText("Read main.ts").closest("button")!.parentElement!;
+    expect(toolContainer).not.toHaveClass("border-border-subtle");
+    expect(toolContainer).not.toHaveClass("bg-surface");
+  });
+
+  it("groups two consecutive search tool calls into one expandable summary line", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "tool",
+              toolCallId: "s1",
+              title: "Grep foo",
+              kind: "search",
+              status: "completed",
+              locations: ["src/a.ts"],
+            },
+            {
+              type: "tool",
+              toolCallId: "s2",
+              title: "Grep bar",
+              kind: "search",
+              status: "completed",
+              locations: ["src/b.ts"],
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    expect(screen.queryByText("Grep foo")).toBeNull();
+    expect(screen.queryByText("Grep bar")).toBeNull();
+
+    const summaryBtn = screen.getByRole("button", { name: /Searched.*2/i });
+    fireEvent.click(summaryBtn);
+
+    expect(screen.getByText("Grep foo")).toBeInTheDocument();
+    expect(screen.getByText("Grep bar")).toBeInTheDocument();
+  });
+
+  it("displays live 'Working for Ns' line while a run is streaming", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(10_000);
+      useRunsStore.setState({
+        runsByThread: {
+          th: [{ ...run("r1", "running", 0), startedAt: 6_000 }],
+        },
+        viewsByRun: {
+          r1: {
+            items: [{ type: "user", text: "Do something", images: [] }],
+            streaming: true,
+          },
+        },
+      });
+
+      render(<MessagesTimeline threadId="th" />);
+      expect(screen.getByText(/Working for \d+s/)).toHaveTextContent("Working for 4s");
+
+      act(() => {
+        vi.advanceTimersByTime(2_000);
+      });
+      expect(screen.getByText(/Working for \d+s/)).toHaveTextContent("Working for 6s");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("shows readable tool output without exec- ids and reveals raw JSON only after clicking Raw", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "tool",
+              toolCallId: "exec-998877",
+              title: "Run echo",
+              kind: "execute",
+              status: "completed",
+              locations: [],
+              rawInput: { id: "exec-998877", command: "echo hello" },
+              rawOutput: { id: "exec-998877", stdout: "hello\n", exitCode: 0 },
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+
+    fireEvent.click(screen.getByText("Run echo").closest("button")!);
+
+    expect(screen.getAllByText(/hello/).length).toBeGreaterThan(0);
+    expect(container.textContent).not.toContain("exec-");
+    expect(container.textContent).not.toContain("exitCode");
+
+    fireEvent.click(screen.getByRole("button", { name: /Raw/i }));
+    expect(container.textContent).toContain("exitCode");
+  });
 });

@@ -1172,4 +1172,54 @@ describe("composer", () => {
     expect(screen.getByRole("button", { name: "Composer options" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
+
+  it("renders queued row with Edit and Remove controls and loads item into textarea on Edit", () => {
+    useRunsStore.setState({
+      queueByThread: {
+        th: [
+          {
+            id: "q1",
+            threadId: "th",
+            instanceId: "mock",
+            text: "follow up",
+            images: [],
+            createdAt: 100,
+          },
+        ],
+      },
+    });
+
+    render(<Composer threadId="th" />);
+
+    expect(screen.getByText("follow up")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /remove queued message/i })).toBeInTheDocument();
+    const editBtn = screen.getByRole("button", { name: /edit queued message/i });
+    fireEvent.click(editBtn);
+
+    expect(runsQueueRemove).toHaveBeenCalledWith("th", "q1");
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe("follow up");
+  });
+
+  it("shows 'Queue message' button when running run has typed text and 'Stop run' when empty", async () => {
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance()],
+    });
+
+    render(<Composer threadId="th" />);
+
+    expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Queue message" })).toBeNull();
+
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "queued prompt" } });
+
+    expect(screen.queryByRole("button", { name: "Stop run" })).toBeNull();
+    const queueBtn = screen.getByRole("button", { name: "Queue message" });
+    fireEvent.click(queueBtn);
+
+    await waitFor(() =>
+      expect(runsDispatch).toHaveBeenCalledWith("th", "queued prompt", "mock", [], null, null),
+    );
+  });
 });

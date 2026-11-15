@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowRightLeft,
   Brain,
@@ -201,15 +202,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               Earlier messages ({hiddenCount} hidden)
             </button>
           )}
-          {windowedEntries.map(({ key, item, showCaret }) => (
-            <div
-              key={key}
-              data-history-key={key}
-              data-history-user={item.type === "user" ? key : undefined}
-            >
-              <ChatItemRow item={item} showCaret={showCaret} />
-            </div>
-          ))}
+          {windowedEntries.length > 0 && <TimelineRows entries={windowedEntries} />}
+
+          {view.streaming && activeRun?.startedAt !== undefined && (
+            <WorkingTimer startedAt={activeRun.startedAt} />
+          )}
 
           {entries.length === 0 && view.streaming && (
             <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
@@ -268,6 +265,86 @@ const ChatItemRow = memo(
   },
   (prev, next) => prev.item === next.item && prev.showCaret === next.showCaret,
 );
+
+type TimelineEntry = ReturnType<typeof threadTimelineItems>[number];
+
+/** Consecutive search calls collapse into one T3-style summary line. */
+function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
+  const rows: ReactNode[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (entry.item.type === "tool" && entry.item.kind === "search") {
+      const group: ToolChatItem[] = [];
+      let next = index;
+      while (
+        next < entries.length &&
+        entries[next].item.type === "tool" &&
+        (entries[next].item as ToolChatItem).kind === "search"
+      ) {
+        group.push(entries[next].item as ToolChatItem);
+        next += 1;
+      }
+      if (group.length > 1) {
+        rows.push(
+          <div key={entry.key} data-history-key={entry.key}>
+            <ToolGroupRow items={group} />
+          </div>,
+        );
+        index = next - 1;
+        continue;
+      }
+    }
+    rows.push(
+      <div
+        key={entry.key}
+        data-history-key={entry.key}
+        data-history-user={entry.item.type === "user" ? entry.key : undefined}
+      >
+        <ChatItemRow item={entry.item} showCaret={entry.showCaret} />
+      </div>,
+    );
+  }
+  return <>{rows}</>;
+}
+
+function ToolGroupRow({ items }: { items: ToolChatItem[] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 py-0.5 text-left"
+      >
+        <Search size={13} className="shrink-0 text-text-secondary" />
+        <span className="text-sm text-text-secondary">Searched code {items.length} times</span>
+        <ChevronRight
+          size={12}
+          className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="space-y-0.5 py-1 pl-5">
+          {items.map((item) => (
+            <ToolRow key={item.toolCallId} item={item} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Live elapsed-time line under a streaming run ("Working for 4s"). */
+function WorkingTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
+  return <div className="py-1 text-sm text-text-tertiary">Working for {seconds}s</div>;
+}
 
 function EmptyState() {
   return (
@@ -347,11 +424,11 @@ function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: b
   const [open, setOpen] = useState(false);
   const duration = formatDuration(item.startedAt, item.endedAt);
   return (
-    <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
+    <div>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+        className="flex w-full items-center gap-2 py-0.5 text-left"
       >
         <Brain size={13} className="shrink-0 text-text-tertiary" />
         <span
@@ -367,7 +444,7 @@ function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: b
         />
       </button>
       {open && (
-        <div className="border-t border-border-subtle px-3 py-2 text-sm whitespace-pre-wrap text-text-tertiary italic">
+        <div className="py-1 pl-5 text-sm whitespace-pre-wrap text-text-tertiary italic">
           {item.text}
         </div>
       )}
@@ -422,16 +499,17 @@ function NoticeRow({ level, message }: { level: string; message: string }) {
 
 function ToolRow({ item }: { item: ToolChatItem }) {
   const [open, setOpen] = useState(false);
+  const [raw, setRaw] = useState(false);
   const Icon = toolIcon(item.kind);
   const detail = item.rawOutput ?? item.content;
   const hasDetail = item.rawInput !== undefined || detail !== undefined;
   return (
-    <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
+    <div>
       <button
         onClick={() => hasDetail && setOpen((o) => !o)}
         disabled={!hasDetail}
         aria-expanded={open}
-        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left ${hasDetail ? "" : "cursor-default"}`}
+        className={`flex w-full items-center gap-2 py-0.5 text-left ${hasDetail ? "" : "cursor-default"}`}
       >
         <Icon size={13} className="shrink-0 text-text-secondary" />
         <span className="truncate text-sm text-text-secondary">{item.title}</span>
@@ -447,23 +525,53 @@ function ToolRow({ item }: { item: ToolChatItem }) {
         )}
       </button>
       {open && hasDetail && (
-        <div className="space-y-2 border-t border-border-subtle px-3 py-2">
-          {item.rawInput !== undefined && <PreBlock label="Input" value={item.rawInput} />}
-          {detail !== undefined && <PreBlock label="Output" value={detail} />}
+        <div className="space-y-1.5 py-1 pl-5">
+          <ToolReadable label="Input" value={item.rawInput} />
+          <ToolReadable label="Output" value={detail} />
+          <button
+            type="button"
+            onClick={() => setRaw((value) => !value)}
+            aria-expanded={raw}
+            className="text-xs text-text-tertiary transition hover:text-text-secondary"
+          >
+            Raw
+          </button>
+          {raw && (
+            <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
+              {JSON.stringify(
+                { input: item.rawInput, output: item.rawOutput ?? item.content },
+                null,
+                2,
+              )}
+            </pre>
+          )}
         </div>
       )}
     </div>
   );
 }
 
-function PreBlock({ label, value }: { label: string; value: unknown }) {
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+/// Human-readable tool payload: prefer the command/stdout, never opaque exec ids.
+function readableToolValue(value: unknown): string {
+  if (value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of ["stdout", "stderr", "output", "result", "text", "content", "command"]) {
+      const candidate = record[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+  }
+  return JSON.stringify(value, null, 2);
+}
+
+function ToolReadable({ label, value }: { label: string; value: unknown }) {
+  const text = readableToolValue(value);
+  if (!text) return null;
   return (
     <div>
-      <div className="pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        {label}
-      </div>
-      <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs whitespace-pre-wrap text-text-secondary">
+      <div className="text-xs font-medium tracking-wide text-text-tertiary uppercase">{label}</div>
+      <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-secondary">
         {text}
       </pre>
     </div>

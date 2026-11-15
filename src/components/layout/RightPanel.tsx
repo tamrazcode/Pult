@@ -1,7 +1,8 @@
-import { useState } from "react";
-import { ChevronRight, FileDiff, FolderTree, Terminal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ChevronRight, FileDiff, FolderTree, Plus, Terminal } from "lucide-react";
 import { DiffPanel } from "../diff/DiffPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
+import { ProjectCard } from "./ProjectCard";
 import { isTauri } from "../../lib/tauri";
 import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
@@ -73,6 +74,24 @@ export function RightPanel({ width }: { width: number }) {
   const setTab = useUiStore((s) => s.setRightPanelTab);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
   const files = useRunsStore((s) => (activeThreadId ? s.filesByThread[activeThreadId] : undefined));
+  const [surfacesOpen, setSurfacesOpen] = useState(false);
+  const surfacesRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!surfacesOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!surfacesRef.current?.contains(event.target as Node)) setSurfacesOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSurfacesOpen(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("mousedown", onPointer);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [surfacesOpen]);
 
   return (
     <aside
@@ -95,30 +114,70 @@ export function RightPanel({ width }: { width: number }) {
             <Icon size={14} /> {label}
           </button>
         ))}
+        <div ref={surfacesRef} className="relative">
+          <button
+            type="button"
+            aria-label="Open a surface"
+            aria-haspopup="menu"
+            aria-expanded={surfacesOpen}
+            onClick={() => setSurfacesOpen((open) => !open)}
+            className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            <Plus size={14} />
+          </button>
+          {surfacesOpen && (
+            <div
+              role="menu"
+              aria-label="Open a surface"
+              className="absolute top-full right-0 z-40 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
+            >
+              {TABS.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setTab(id);
+                    setSurfacesOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm transition hover:bg-hover ${
+                    tab === id ? "text-text-primary" : "text-text-secondary"
+                  }`}
+                >
+                  <Icon size={13} /> {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {tab === "diff" ? (
-        <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
-      ) : tab === "terminal" ? (
-        <TerminalPanel threadId={activeThreadId} />
-      ) : tab === "files" && files && files.length > 0 ? (
-        <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
-          {files.map((file) => (
-            <FileRow
-              key={file.path}
-              path={file.path}
-              diff={file.diff}
-              added={file.added}
-              removed={file.removed}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
-          <p className="text-sm text-text-secondary">{EMPTY_COPY[tab].title}</p>
-          <p className="text-xs text-text-tertiary">{EMPTY_COPY[tab].hint}</p>
-        </div>
-      )}
+      <ProjectCard threadId={activeThreadId} />
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        {tab === "diff" ? (
+          <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
+        ) : tab === "terminal" ? (
+          <TerminalPanel threadId={activeThreadId} />
+        ) : tab === "files" && files && files.length > 0 ? (
+          <div className="flex-1 space-y-1.5 overflow-y-auto p-2">
+            {files.map((file) => (
+              <FileRow
+                key={file.path}
+                path={file.path}
+                diff={file.diff}
+                added={file.added}
+                removed={file.removed}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
+            <p className="text-sm text-text-secondary">{EMPTY_COPY[tab].title}</p>
+            <p className="text-xs text-text-tertiary">{EMPTY_COPY[tab].hint}</p>
+          </div>
+        )}
+      </div>
     </aside>
   );
 }

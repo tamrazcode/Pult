@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { ArrowUp, MoreHorizontal, Paperclip, Square, X } from "lucide-react";
+import { ArrowUp, ListPlus, MoreHorizontal, Paperclip, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   AgentModePicker,
@@ -656,14 +656,26 @@ export function Composer({ threadId }: { threadId?: string }) {
           {queue.map((item) => (
             <div
               key={item.id}
-              className="flex items-start gap-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5"
+              className="flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5"
             >
-              <div className="min-w-0 flex-1">
-                <p className="text-xs text-text-tertiary">
-                  Queued — sends when the current turn ends
-                </p>
-                <p className="truncate text-sm text-text-secondary">{item.text}</p>
-              </div>
+              <span aria-hidden className="text-text-tertiary">
+                ⠿
+              </span>
+              <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
+              <button
+                type="button"
+                aria-label="Edit queued message"
+                onClick={() => {
+                  runsQueueRemove(threadId, item.id).catch((err) =>
+                    console.error("runs_queue_remove failed", err),
+                  );
+                  setValue(item.text);
+                  textareaRef.current?.focus();
+                }}
+                className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+              >
+                <ArrowUp size={11} /> Edit
+              </button>
               <button
                 onClick={() =>
                   runsQueueRemove(threadId, item.id).catch((err) =>
@@ -671,12 +683,13 @@ export function Composer({ threadId }: { threadId?: string }) {
                   )
                 }
                 aria-label="Remove queued message"
-                className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
               >
                 <X size={12} />
               </button>
             </div>
           ))}
+          <p className="px-1 text-xs text-text-tertiary">Keep typing to queue another message</p>
         </div>
       )}
       <div className="relative mx-auto w-full max-w-3xl rounded-(--radius-lg) border border-border-strong bg-(--composer-tint) shadow-(--shadow-composer) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]">
@@ -814,16 +827,29 @@ export function Composer({ threadId }: { threadId?: string }) {
           <div className="flex-1" />
           <ProviderModelPicker threadId={threadId} />
           <ComposerOverflowMenu threadId={threadId} />
-          {activeRun?.status === "running" && !value.trim() && chips.length === 0 ? (
-            <button
-              type="button"
-              onClick={handleStop}
-              aria-label="Stop run"
-              title="Stop run"
-              className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
-            >
-              <Square size={11} />
-            </button>
+          {runActive ? (
+            value.trim() || chips.length > 0 ? (
+              <button
+                type="button"
+                onClick={handleSend}
+                aria-label="Queue message"
+                title="Queue message"
+                disabled={awaitingDecision || busy}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+              >
+                <ListPlus size={15} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleStop}
+                aria-label="Stop run"
+                title="Stop run"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
+              >
+                <Square size={11} />
+              </button>
+            )
           ) : (
             <button
               type="button"
