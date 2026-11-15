@@ -51,27 +51,24 @@ function FileCard({
   patch,
   viewMode,
   reviewed,
+  open,
+  onToggle,
   onToggleReviewed,
-  onLoad,
 }: {
   file: DiffFileSummary;
   patch: FilePatchState | undefined;
   viewMode: "unified" | "split";
   reviewed: boolean;
+  open: boolean;
+  onToggle: () => void;
   onToggleReviewed: () => void;
-  onLoad: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const statusLabel = STATUS_LABEL[file.status] ?? "";
   return (
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
       <div className="flex items-center gap-1.5 px-2 py-1.5">
         <button
-          onClick={() => {
-            const next = !open;
-            setOpen(next);
-            if (next) onLoad();
-          }}
+          onClick={onToggle}
           aria-expanded={open}
           title={file.path}
           className="flex min-w-0 flex-1 items-center gap-1 text-left"
@@ -222,6 +219,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   );
   const suggested = useSuggestedCommitMessage(threadId);
   const [openDirs, setOpenDirs] = useState<Record<string, boolean>>({});
+  const [openFiles, setOpenFiles] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const files = useMemo(() => state?.diff?.files ?? [], [state?.diff?.files]);
@@ -259,6 +257,14 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
     if (!threadId) return;
     if (!useGitStore.getState().byThread[threadId]) void refresh(threadId);
   }, [threadId, refresh]);
+
+  // A refresh evicts patches whose hash changed; reload any still-open row.
+  useEffect(() => {
+    if (!threadId) return;
+    for (const [path, open] of Object.entries(openFiles)) {
+      if (open && !state?.filePatches[path]) void loadFileDiff(threadId, path);
+    }
+  }, [openFiles, state?.filePatches, threadId, loadFileDiff]);
 
   if (!threadId) return null;
 
@@ -457,10 +463,18 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
                       patch={state.filePatches[row.file.path]}
                       viewMode={viewMode}
                       reviewed={state.reviewed[row.file.path] !== undefined}
+                      open={openFiles[row.file.path] === true}
+                      onToggle={() => {
+                        const open = openFiles[row.file.path] !== true;
+                        setOpenFiles((current) => ({
+                          ...current,
+                          [row.file.path]: open,
+                        }));
+                        if (open) void loadFileDiff(threadId, row.file.path);
+                      }}
                       onToggleReviewed={() =>
                         toggleReviewed(threadId, row.file.path, row.file.patchHash)
                       }
-                      onLoad={() => void loadFileDiff(threadId, row.file.path)}
                     />
                   )}
                 </div>

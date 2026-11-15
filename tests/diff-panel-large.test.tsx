@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 import type { DiffFileSummary } from "../src/lib/types";
 import type { GitThreadState } from "../src/stores/git";
@@ -93,5 +93,26 @@ describe("DiffPanel large diff virtualization", () => {
     );
     expect(await screen.findByText("new")).toBeTruthy();
     expect(gitDiffFile).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps an expanded file open and refetches after refresh evicts its patch", async () => {
+    render(<DiffPanel threadId="th-big" />);
+    fireEvent.click(screen.getByText("dir-00"));
+    const fileButton = await screen.findByRole("button", { name: /dir-00\/file-00\.ts/ });
+    fireEvent.click(fileButton);
+    await waitFor(() => expect(gitDiffFile).toHaveBeenCalledTimes(1));
+    expect(fileButton).toHaveAttribute("aria-expanded", "true");
+
+    const refreshed = bigState();
+    refreshed.diff!.files[0] = { ...refreshed.diff!.files[0], patchHash: "changed-hash" };
+    refreshed.reviewed = {};
+    refreshed.filePatches = {};
+    act(() => useGitStore.setState({ byThread: { "th-big": refreshed } }));
+
+    await waitFor(() => expect(gitDiffFile).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: /dir-00\/file-00\.ts/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
   });
 });

@@ -327,6 +327,15 @@ describe("shell layout polish", () => {
     }
   });
 
+  it("keeps window controls at the window edge when the right panel opens", () => {
+    const { container } = render(<ChatHeader title="Polish shell" threadId="t1" />);
+    const header = container.querySelector("header")!;
+    const close = within(header).getByRole("button", { name: "Close window" });
+    const controls = close.parentElement!;
+    expect(controls).toHaveClass("fixed", "top-0", "right-0");
+    expect(header.className).toContain("pr-[136px]");
+  });
+
   it("applies pill/underline active accent styling on the selected RightPanel tab", async () => {
     render(<RightPanel width={420} />);
 

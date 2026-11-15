@@ -612,6 +612,13 @@ fn next_path_token(input: &str) -> Option<(String, &str)> {
 }
 
 fn header_paths(rest: &str) -> Option<(String, String)> {
+    if !rest.starts_with('"') {
+        let (old, new) = rest.split_once(" b/")?;
+        return Some((
+            old.strip_prefix("a/").unwrap_or(old).to_string(),
+            new.to_string(),
+        ));
+    }
     let (old, rest) = next_path_token(rest)?;
     let (new, _) = next_path_token(rest)?;
     Some((

@@ -1,6 +1,6 @@
 # Pult Composer, Shell & Performance Polish
 
-> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans`. Steps use checkbox (`- [x]`) syntax for tracking.
 >
 > **Authorship & Execution Split:** **Gemini** authors the failing tests for each task (Step 1) and verifies failure (Step 2) before **DeepSeek** implements the production changes (Step 3) and runs verification (Step 4).
 
@@ -63,7 +63,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing test (Gemini)**
+- [x] **Step 1: Write failing test (Gemini)**
   - In `tests/chat-header.test.tsx`:
     - Add test `"does not render workspace folder input or isolated worktree checkbox on /chat"`: render `<NewChatEmptyState />` with a selected project, assert `screen.queryByLabelText("Workspace folder for new threads")` is `null` and `screen.queryByLabelText(/Isolated worktree/i)` is `null`.
     - Remove the `newThreadOptions: { workspace: "", worktree: false }` seed from `useUiStore.setState` at `tests/chat-header.test.tsx:105` and `tests/chat-header.test.tsx:176`.
@@ -71,13 +71,13 @@
     - Remove the `newThreadOptions: { workspace: "", worktree: false }` seed from `useUiStore.setState` at `tests/shell-layout.test.tsx:146`.
   - In `tests/ui-store.test.ts`:
     - Add test `"does not expose newThreadOptions or setNewThreadOptions"` asserting `!("newThreadOptions" in useUiStore.getState())` and `!("setNewThreadOptions" in useUiStore.getState())`.
-- [ ] **Step 2: Run test to verify failure (Gemini)**
+- [x] **Step 2: Run test to verify failure (Gemini)**
       Run `pnpm test tests/chat-header.test.tsx tests/ui-store.test.ts` → FAIL (strip inputs still render and `newThreadOptions` still exists on `UiState`).
-- [ ] **Step 3: Delete `NewThreadOptionsStrip` and clean up store + composer (DeepSeek)**
+- [x] **Step 3: Delete `NewThreadOptionsStrip` and clean up store + composer (DeepSeek)**
       Delete `src/components/chat/NewThreadOptionsStrip.tsx`. Update `src/components/chat/NewChatEmptyState.tsx`, `src/stores/ui.ts`, `src/components/chat/Composer.tsx` (`handleSend` and `ComposerStatusLine`).
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/chat-header.test.tsx tests/shell-layout.test.tsx tests/ui-store.test.ts` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `refactor(chat): remove NewThreadOptionsStrip and derive new-thread workspace from project`
 
 ---
@@ -118,20 +118,20 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests (Gemini)**
+- [x] **Step 1: Write failing tests (Gemini)**
   - In `tests/shell-layout.test.tsx`: replace `Topbar` assertions with tests verifying:
     1. `"renders a single 40px header in ChatHeader with panel toggles and no duplicate PultLogo"` — renders `<ChatHeader title="Polish shell" threadId="t1" />`, checks `<header>` has `h-10`, contains `Toggle sidebar` and `Toggle right panel` buttons, and renders zero `PultLogo` SVGs (`header.querySelector('[aria-label="pult"]') === null`).
     2. `"renders RouteHeader with h-10, drag region, title, and panel toggles for non-thread routes"` — renders `<RouteHeader title="Settings" subtitle="Appearance" />`, asserts `h-10`, `[data-tauri-drag-region]`, `"Settings"`, `"Appearance"`, and panel toggles.
     3. `"every route renders exactly one <header> with WindowControls, panel toggles, and no PultLogo"` — mocks `isTauri` returning `true`, mocks TanStack Router hooks (`useRouter`, `useRouterState`, `Link`, `Outlet`), renders each route component (`/chat` via `<ChatColumn />`, `/thread/$threadId` via `<ChatColumn threadId="t1" title="Polish shell" />`, `/settings/*` via `<SettingsLayout />`, `/usage` via `<UsagePage />`, `/pull-requests` via `<PullRequestsPage />`, and `/welcome` via `<WelcomePage />`), and asserts for EVERY route that `container.querySelectorAll("header").length === 1`, the `<header>` contains `Minimize`, `Maximize` (or `Restore`), `Close`, `Toggle sidebar`, and `Toggle right panel` buttons, and `header.querySelector('[aria-label="pult"]') === null`.
   - In `tests/sidebar.test.tsx`: replace the `describe("Topbar", ...)` block with `describe("Sidebar branding", ...)` verifying `Sidebar` renders the sole `pult` header label + `PultLogo` SVG and no Settings gear in top chrome.
   - In `tests/e2e/smoke.spec.ts`: update line 59 breadcrumb check to assert the active route heading (`page.getByRole("banner").getByText("Keybindings")`) and assert `"pult"` brand appears only once (in sidebar, not duplicated in a global topbar).
-- [ ] **Step 2: Run tests to verify failure (Gemini)**
+- [x] **Step 2: Run tests to verify failure (Gemini)**
       Run `pnpm test tests/shell-layout.test.tsx tests/sidebar.test.tsx` → FAIL (`RouteHeader` missing / `ChatHeader` lacks toggles / route components lack single `<header>`).
-- [ ] **Step 3: Implement `WindowChrome.tsx`, delete `Topbar.tsx`, wire `ChatHeader` + route headers (DeepSeek)**
+- [x] **Step 3: Implement `WindowChrome.tsx`, delete `Topbar.tsx`, wire `ChatHeader` + route headers (DeepSeek)**
       Create `src/components/layout/WindowChrome.tsx`, delete `src/components/layout/Topbar.tsx`, remove `<Topbar />` from `src/routes/__root.tsx`, update `ChatHeader.tsx`, `Sidebar.tsx`, `RightPanel.tsx`, `settings.tsx` (passing active section title as `subtitle` above its flex row and exporting `SettingsLayout`), `usage.tsx`, `pull-requests.tsx` (exporting `PullRequestsPage`), and `welcome.tsx` (exporting `WelcomePage`). Keep `src/lib/breadcrumbs.ts` + `tests/breadcrumbs.test.ts` intact so existing breadcrumb unit tests remain green.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/shell-layout.test.tsx tests/sidebar.test.tsx tests/chat-header.test.tsx` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(shell): collapse Topbar and ChatHeader into single 40px route header`
 
 ---
@@ -196,20 +196,20 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests (Gemini)**
+- [x] **Step 1: Write failing tests (Gemini)**
       Update `tests/composer.test.tsx`:
   - Replace overflow assertions that expected `Effort` and `Agent` inside `Composer options` with assertions that `Composer options` contains ONLY `Session mode` and `Permission` (plus extra boolean toggles like `Web search` when present), and does NOT contain `Agent` or `Reasoning`.
   - Add `"renders unified ProviderModelPicker trigger with provider logo, model name, and gray reasoning text"` — configures Claude instance (`id: "claude"`, `model: "claude-sonnet-4"`, `thinking_level: "high"`), checks trigger displays `"Sonnet 4"` and `"High"` inside a `text-text-tertiary` span alongside an inline `svg[data-provider-logo="claude"]`.
   - Add `"handles boolean reasoning options with On/Off row and gray trigger text"` — configures an instance with `{ id: "reasoning", name: "Reasoning", category: "reasoning", type: "boolean", currentValue: false }`, asserts trigger displays `"Off"` in `text-text-tertiary`, opens popover, clicks `"On"` radio button, asserts `runsSetConfigOption` is called with `("th", "reasoning", true)` and trigger updates to `"On"`.
   - Add `"opens one popover with Provider, Model, and Reasoning sections and updates trigger immediately"` — clicks trigger, asserts `Provider`, `Model`, and `Reasoning` headings inside one `[role="dialog"]`, selects a new model and reasoning pill, verifies `runsSetConfigOption` and trigger update.
   - Add `"prunes stale thinking_level/effort/model when switching provider and never dispatches stale keys"` — starts on Claude (`model: "claude-sonnet-4"`, `thinking_level: "high"`, and also seeds stale `effort: "max"`), switches to Codex (`model` options `["gpt-5", "o3"]` with default `"gpt-5"` and `reasoning_effort` default `"medium"`, no `thinking_level` or `effort`), asserts `useRunsStore.getState().desiredConfigByThread["th"]` immediately has NO `thinking_level`, NO `effort`, and NO `"claude-sonnet-4"`, and dispatching a message calls `runsDispatch` with `instanceId: "codex"` and a `config` argument containing neither `thinking_level`, `effort`, nor `"claude-sonnet-4"`.
-- [ ] **Step 2: Run tests to verify failure (Gemini)**
+- [x] **Step 2: Run tests to verify failure (Gemini)**
       Run `pnpm test tests/composer.test.tsx` → FAIL.
-- [ ] **Step 3: Implement `ProviderLogo.tsx`, `ProviderModelPicker`, `pruneDesiredConfigForInstance`, and `Composer` updates (DeepSeek)**
+- [x] **Step 3: Implement `ProviderLogo.tsx`, `ProviderModelPicker`, `pruneDesiredConfigForInstance`, and `Composer` updates (DeepSeek)**
       Create `src/components/chat/ProviderLogo.tsx`, update `src/stores/runs.ts`, `src/components/chat/ComposerControls.tsx`, and `src/components/chat/Composer.tsx`. Remove `AgentPicker` and `ModelPill` once migrated.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/composer.test.tsx tests/chat-header.test.tsx` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `feat(composer): unify provider, model, and reasoning into single popover picker`
 
 ---
@@ -238,18 +238,18 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing Rust test (Gemini)**
+- [x] **Step 1: Write failing Rust test (Gemini)**
       In `src-tauri/src/runtime/tests.rs`, add `provider_switch_does_not_apply_stale_model_or_reasoning_from_prior_provider`:
   - Run turn 1 on thread `t1` with instance `"inst-a"` and `desired_config` `{ "model": "model-a-only", "thinking_level": "high", "effort": "max" }`.
   - Call `runtime.clear_stale_provider_config("t1", "inst-b")` (simulating provider switch in `runs_dispatch`), then run turn 2 on `"inst-b"` with `config_options` advertising `["model-b-1", "model-b-2"]` and `reasoning_effort` `["low", "medium"]`.
   - Assert `run2.model.as_deref() != Some("model-a-only")`, `run2.effort.as_deref() != Some("high")`, and the mock agent for `"inst-b"` never receives `set_config_option` for `"model-a-only"`, `"thinking_level"`, or `"effort"`.
-- [ ] **Step 2: Run test to verify failure (Gemini)**
+- [x] **Step 2: Run test to verify failure (Gemini)**
       Run `cargo test --manifest-path src-tauri/Cargo.toml --lib provider_switch_does_not_apply_stale_model_or_reasoning_from_prior_provider` → FAIL.
-- [ ] **Step 3: Implement `clear_stale_provider_config`, reasoning ID normalization, and `session_config_value_valid` (DeepSeek)**
+- [x] **Step 3: Implement `clear_stale_provider_config`, reasoning ID normalization, and `session_config_value_valid` (DeepSeek)**
       Update `src-tauri/src/runtime/mod.rs` and `src-tauri/src/ipc/mod.rs`.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write` and `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `fix(runtime): guard against stale model/reasoning config across provider switches`
 
 ---
@@ -298,18 +298,18 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing test (Gemini)**
+- [x] **Step 1: Write failing test (Gemini)**
       In `tests/fonts.test.ts`, add `"uses 14px body scale and removes hardcoded 10px/11px text utilities across src/"`:
   - Assert `src/styles/index.css` contains `--text-sm: 14px;` and `font-size: 14px;` inside `body`.
   - Assert `src/components/chat/Composer.tsx` does not contain `MAX_HEIGHT = 10 * 24` or `max-h-60`.
   - Recursively scan `src/**/*.{ts,tsx,css}` and assert zero matches for `/text-\[(?:9|10|11)px\]/`.
-- [ ] **Step 2: Run test to verify failure (Gemini)**
+- [x] **Step 2: Run test to verify failure (Gemini)**
       Run `pnpm test tests/fonts.test.ts` → FAIL.
-- [ ] **Step 3: Apply proportional type scale and replace hardcoded tiny sizes (DeepSeek)**
+- [x] **Step 3: Apply proportional type scale and replace hardcoded tiny sizes (DeepSeek)**
       Update `src/styles/index.css`, `src/components/chat/markdown.css`, `src/components/terminal/TerminalPane.tsx`, `Composer.tsx` (`MAX_HEIGHT = 10 * 28`, `max-h-[280px]`), and the 14 listed TSX files.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/fonts.test.ts` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `style(typography): bump body/type scale to 14px and eliminate tiny 10px/11px text`
 
 ---
@@ -337,18 +337,18 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests (Gemini)**
+- [x] **Step 1: Write failing tests (Gemini)**
       Create `tests/appearance.test.tsx`:
   - Render `<AppearanceSettings />` (or `Route.options.component`).
   - Assert all 4 theme radio cards (`Dark`, `Light`, `Graphite`, `Liquid Glass`) render a nested element with `data-theme="dark"`, `"light"`, `"graphite"`, `"liquid"` respectively (even while `document.documentElement` is dark).
   - Read `src/styles/tokens.css` and `src/styles/themes/*.css` and assert each file defines `[data-theme="<id>"]` so scoped previews override `:root` tokens rather than reading live root variables.
-- [ ] **Step 2: Run tests to verify failure (Gemini)**
+- [x] **Step 2: Run tests to verify failure (Gemini)**
       Run `pnpm test tests/appearance.test.tsx tests/theme-contrast.test.ts` → FAIL.
-- [ ] **Step 3: Scope CSS theme blocks and upgrade Appearance preview cards (DeepSeek)**
+- [x] **Step 3: Scope CSS theme blocks and upgrade Appearance preview cards (DeepSeek)**
       Update `tokens.css`, `light.css`, `graphite.css`, `liquid.css`, `settings.appearance.tsx`, and `tests/theme-contrast.test.ts`.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `pnpm typecheck && pnpm lint && pnpm test tests/appearance.test.tsx tests/theme-contrast.test.ts` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `fix(theme): scope theme CSS selectors so appearance previews render each palette`
 
 ---
@@ -448,20 +448,20 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing Rust tests (Gemini)**
+- [x] **Step 1: Write failing Rust tests (Gemini)**
       In `src-tauri/src/git/tests.rs`, add:
   - `diff_summary_matches_diff_counts_and_changes_patch_hash_on_edit`: creates staged edit + unstaged edit + untracked file, compares `diff_summary` file list, `added`, `removed`, `status`, `total_added`, `total_removed` against `diff()`, performs a **same-size content edit** (e.g. `"line1\n"` → `"XXXX1\n"`, identical byte length) and asserts that file's `patch_hash` changes while untouched files keep identical `patch_hash`.
   - `diff_summary_works_on_no_head_repo`: initializes a fresh repo with no commits (`no-HEAD`), adds one staged file and one untracked file, asserts `diff_summary(fx.path(), None)` succeeds with `base == "worktree"` and reports both files accurately.
   - `diff_file_matches_full_diff_slice_byte_exact`: asserts `diff_file(fx.path(), "tracked.txt", None)` and `diff_file(fx.path(), "notes/new.txt", None)` return `DiffFile` whose `.raw` is byte-identical to the corresponding `DiffFile.raw` from `diff()`.
   - `diff_file_rejects_absolute_parent_and_outside_paths`: asserts `diff_file` rejects `/etc/passwd`, `C:\Windows\win.ini` (and Windows drive-rooted paths), `../outside.txt`, `sub/../../outside.txt`, `bad\0path`, a symlink inside the repo pointing outside `repo_root`, and `base = Some("--ext-diff")` with `git.invalid_path` / `git.invalid_base` before spawning `git`.
   - `diff_file_handles_spaces_and_unicode_paths`: creates `"dir with spaces/café résumé.txt"`, asserts both `diff_summary` and `diff_file` return the unquoted path and byte-exact `.raw` matching `diff()`.
-- [ ] **Step 2: Run tests to verify failure (Gemini)**
+- [x] **Step 2: Run tests to verify failure (Gemini)**
       Run `cargo test --manifest-path src-tauri/Cargo.toml --lib diff_summary_` and `cargo test --manifest-path src-tauri/Cargo.toml --lib diff_file_` → FAIL.
-- [ ] **Step 3: Implement `diff_summary`, `diff_file`, IPC commands, and TS wrappers (DeepSeek)**
+- [x] **Step 3: Implement `diff_summary`, `diff_file`, IPC commands, and TS wrappers (DeepSeek)**
       Implement `validate_base`, `validate_repo_relative_path`, `diff_summary`, and `diff_file` in `src-tauri/src/git/mod.rs` (parsing `--numstat -z` and `--raw --no-abbrev -z` with NUL splits so spaces/unicode never corrupt paths). Register commands in `src-tauri/src/lib.rs` and add wrappers in `src/lib/types.ts` + `src/lib/ipc.ts`.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write`, `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`, and `pnpm typecheck` → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(git): add metadata-only git_diff_summary and lazy git_diff_file commands`
 
 ---
@@ -540,7 +540,7 @@
 
 **Steps:**
 
-- [ ] **Step 1: Write failing tests (Gemini)**
+- [x] **Step 1: Write failing tests (Gemini)**
       In `tests/diff-panel.test.tsx`, add:
   - `describe("DiffPanel large diff virtualization", ...)`:
     1. `"mounts only visible viewport rows when rendering 2,000 changed files and loads file patch lazily on expand"`:
@@ -554,14 +554,14 @@
     2. `"anchors scrollTop when a row above the viewport expands or collapses"`: sets `scrollEl.scrollTop = 500` (`onScroll()`), fires `ResizeObserver` growing row `2` (`offsetTop < 500`) by `+200px`, asserts `scrollEl.scrollTop` adjusts to `700`.
     3. `"updates virtualItems slice as the user scrolls"`: sets `scrollEl.scrollTop = 2000` and fires `onScroll()`, asserts `virtualItems[0].index > 0` and earlier rows unmount.
   - Also update `gitDiff` mocks in `tests/composer.test.tsx` and `tests/shell-layout.test.tsx` to mock `gitDiffSummary` (`{ repoRoot: "", base: "HEAD", totalAdded: 0, totalRemoved: 0, files: [] }`) and `gitDiffFile`.
-- [ ] **Step 2: Run tests to verify failure (Gemini)**
+- [x] **Step 2: Run tests to verify failure (Gemini)**
       Run `pnpm test tests/diff-panel.test.tsx` → FAIL.
-- [ ] **Step 3: Implement `useVirtualRows.ts`, update `src/stores/git.ts`, `src/components/diff/DiffLines.tsx`, and `src/components/diff/DiffPanel.tsx` (DeepSeek)**
+- [x] **Step 3: Implement `useVirtualRows.ts`, update `src/stores/git.ts`, `src/components/diff/DiffLines.tsx`, and `src/components/diff/DiffPanel.tsx` (DeepSeek)**
       Build `useVirtualRows.ts`, refactor `src/stores/git.ts` to use `gitDiffSummary` + `gitDiffFile` + `O(1)` `patchHash` reconciliation, add the 2,000-line cap to `DiffLines.tsx`, and update `src/components/diff/DiffPanel.tsx`.
-- [ ] **Step 4: Run verification**
+- [x] **Step 4: Run verification**
       Run all checks: - `pnpm typecheck` - `pnpm lint` - `pnpm test` - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write` - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
       All → PASS.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
       `perf(diff): virtualize DiffPanel rows, cap DiffLines, and lazy-load per-file diffs`
 
 ---
@@ -577,20 +577,20 @@
 
 **Steps:**
 
-- [ ] **Step 1: Run full verification gates**
+- [x] **Step 1: Run full verification gates**
       Run every gate and record exact pass counts: - `pnpm typecheck` - `pnpm lint` - `pnpm test` - `cargo test --manifest-path src-tauri/Cargo.toml --lib -q -- --skip pty_round_trip_output_exit_and_input_write` - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
-- [ ] **Step 2: Build frontend bundle**
+- [x] **Step 2: Build frontend bundle**
       Run `pnpm build` → PASS.
-- [ ] **Step 3: Kill running `pult-core` and build Tauri release binary**
+- [x] **Step 3: Kill running `pult-core` and build Tauri release binary**
       In PowerShell:
       `Get-Process pult-core -ErrorAction SilentlyContinue | Stop-Process -Force`
       `pnpm tauri build --no-bundle`
       Verify `src-tauri/target/release/pult-core.exe` is produced cleanly.
-- [ ] **Step 4: Launch built exe and capture v3 screenshots**
+- [x] **Step 4: Launch built exe and capture v3 screenshots**
       Launch `src-tauri/target/release/pult-core.exe`, confirm the desktop window renders cleanly without crashing, and capture the four required screenshots to: - `docs/screenshots/v3-composer-picker.png` - `docs/screenshots/v3-shell-header.png` - `docs/screenshots/v3-theme-previews.png` - `docs/screenshots/v3-diff-large.png`
       _(Note: headless desktop automation on Windows cannot click inside the WebView2 surface. Capture the live `pult-core.exe` window for the default shell/composer view, and if secondary routes/popovers cannot be clicked via desktop automation in `pult-core.exe`, capture those specific route views honestly using headless Chromium/Playwright against `vite preview` / built `dist/` — and explicitly state in `DEVLOG.md` which screenshots came from the `pult-core.exe` window vs browser render, never claiming clicks that were not performed.)_
-- [ ] **Step 5: Update `DEVLOG.md`**
+- [x] **Step 5: Update `DEVLOG.md`**
       Add a `## Pult v3 — composer, shell, theme previews & diff performance (2026-11-15)` entry covering: - What changed across Tasks 1–8 (single 40px header + route headers, removal of `NewThreadOptionsStrip`, unified `ProviderModelPicker` + stale-config pruning in UI and Rust, 14px proportional type scale + zero `10px`/`11px`, scoped `[data-theme]` previews, metadata-only `git_diff_summary` + path-validated `git_diff_file` + blob-SHA `patch_hash`, 2,000-line cap in `DiffLines`, dynamic-height `useVirtualRows`). - Exact test counts, `pnpm build`, and `pnpm tauri build --no-bundle` results. - Known limitation: **headless desktop automation cannot click inside the WebView**, noting honestly which actions were verified by automated tests / window launch and making zero unverified click claims.
-- [ ] **Step 6: Stop `pult-core` and commit acceptance artifacts**
+- [x] **Step 6: Stop `pult-core` and commit acceptance artifacts**
       Ensure no background `pult-core` process remains running, verify `git status`, and commit:
       `git add DEVLOG.md docs/screenshots/v3-*.png && git commit -m "docs(devlog): record v3 acceptance verification and screenshots"`

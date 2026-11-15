@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight, FileDiff, FolderTree, Terminal } from "lucide-react";
 import { DiffPanel } from "../diff/DiffPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
+import { isTauri } from "../../lib/tauri";
 import { useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
@@ -78,7 +79,9 @@ export function RightPanel({ width }: { width: number }) {
       style={{ width }}
       className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
-      <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle px-2">
+      <div
+        className={`flex h-10 shrink-0 items-center gap-1 border-b border-border-subtle pl-2 ${isTauri() ? "pr-[136px]" : "pr-2"}`}
+      >
         {TABS.map(({ id, label, icon: Icon }) => (
           <button
             key={id}

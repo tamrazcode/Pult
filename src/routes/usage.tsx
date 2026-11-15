@@ -113,8 +113,7 @@ export function UsagePage() {
         <div className="mx-auto w-full max-w-5xl px-8 py-8">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <h1 className="text-lg font-medium text-text-primary">Usage</h1>
-              <p className="mt-1 text-xs text-text-tertiary">
+              <p className="text-xs text-text-tertiary">
                 Context fill is the agent's last snapshot at run end, not a token total. Cost is the
                 latest value the agent reported; values are never summed here.
               </p>

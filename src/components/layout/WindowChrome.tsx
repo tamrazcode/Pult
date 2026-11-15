@@ -94,7 +94,7 @@ function TauriWindowControls() {
   const base =
     "flex h-10 w-11 shrink-0 items-center justify-center text-text-secondary transition-colors duration-150";
   return (
-    <div className="flex h-10 items-center pl-1">
+    <div className="fixed top-0 right-0 z-50 flex h-10 items-center border-b border-border-subtle bg-canvas pl-1">
       <button
         type="button"
         aria-label="Minimize window"
@@ -136,7 +136,7 @@ export function RouteHeader({
   return (
     <header
       data-tauri-drag-region
-      className="flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle bg-canvas pr-0 pl-4"
+      className={`flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle bg-canvas pl-4 ${isTauri() ? "pr-[136px]" : "pr-0"}`}
     >
       <h1 className="shrink-0 truncate text-base font-medium text-text-primary">{title}</h1>
       {subtitle && (

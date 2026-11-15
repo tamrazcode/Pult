@@ -55,7 +55,7 @@ function AppearanceSettings() {
                   : undefined
               }
             >
-              <span className="flex h-full">
+              <span className={`flex h-full ${id === "liquid" ? "glass-surface" : ""}`}>
                 <span className="flex w-9 flex-col gap-1 border-r border-border-subtle bg-panel p-1">
                   <span className="h-1.5 w-5 rounded-full bg-text-secondary/80" />
                   <span className="h-1 w-6 rounded-full bg-text-tertiary/50" />

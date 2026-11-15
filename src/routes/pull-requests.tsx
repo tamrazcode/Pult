@@ -14,10 +14,7 @@ export function PullRequestsPage() {
       <RouteHeader title="Pull requests" />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-3xl px-8 py-10">
-          <h1 className="text-lg font-medium text-text-primary">Pull requests</h1>
-          <p className="mt-1 text-sm text-text-tertiary">
-            PRs you open from pult will be listed here.
-          </p>
+          <p className="text-sm text-text-tertiary">PRs you open from pult will be listed here.</p>
           {prs.length === 0 ? (
             <div className="mt-16 flex flex-col items-center gap-2 rounded-(--radius-lg) border border-dashed border-border-subtle px-8 py-14 text-center">
               <GitPullRequest size={20} className="text-text-tertiary" />

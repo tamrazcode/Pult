@@ -81,6 +81,10 @@ export function useVirtualRows({
     },
     [count, scrollRef],
   );
+  // The observer is created once; it must always call the current closure
+  // (count/rows change when directories expand).
+  const applyHeightRef = useRef(applyHeight);
+  applyHeightRef.current = applyHeight;
 
   const measureElement = useCallback(
     (key: string, element: HTMLElement | null) => {
@@ -98,7 +102,10 @@ export function useVirtualRows({
           for (const entry of entries) {
             const entryKey = keyByElement.current.get(entry.target);
             if (entryKey) {
-              applyHeight(entryKey, (entry.target as HTMLElement).getBoundingClientRect().height);
+              applyHeightRef.current(
+                entryKey,
+                (entry.target as HTMLElement).getBoundingClientRect().height,
+              );
             }
           }
         });

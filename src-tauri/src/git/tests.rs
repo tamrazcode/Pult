@@ -447,6 +447,23 @@ async fn diff_file_rejects_symlink_escape_when_supported() {
 }
 
 #[tokio::test]
+async fn diff_parses_unquoted_empty_file_path_with_spaces() {
+    let fx = fixture_repo().await;
+    std::fs::create_dir_all(fx.path().join("space dir")).unwrap();
+    std::fs::write(fx.path().join("space dir").join("empty file.txt"), "").unwrap();
+
+    let full = diff(fx.path(), None).await.unwrap();
+    let file = full
+        .files
+        .iter()
+        .find(|file| file.path == "space dir/empty file.txt")
+        .expect("empty spaced file must keep its path from the diff header");
+    assert_eq!(file.status, "added");
+    assert_eq!(file.added, 0);
+    assert_eq!(file.removed, 0);
+}
+
+#[tokio::test]
 async fn diff_file_handles_spaces_and_unicode_paths() {
     let fx = fixture_repo().await;
     let rel = "dir with spaces/café résumé.txt";

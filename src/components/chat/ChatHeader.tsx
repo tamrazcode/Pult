@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { CheckCheck, GitBranch, Moon, Pencil, Pin, PinOff, Trash2, X } from "lucide-react";
 import { runsCancel } from "../../lib/ipc";
+import { isTauri } from "../../lib/tauri";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
@@ -93,7 +94,7 @@ export function ChatHeader({
   return (
     <header
       data-tauri-drag-region
-      className="relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pr-0 pl-4"
+      className={`relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pl-4 ${isTauri() ? "pr-[136px]" : "pr-0"}`}
     >
       {editing ? (
         <input

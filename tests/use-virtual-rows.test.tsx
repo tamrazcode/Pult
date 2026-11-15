@@ -9,10 +9,10 @@ type Api = {
   totalHeight: number;
 };
 
-function Harness({ api }: { api: { current: Api | null } }) {
+function Harness({ api, count = 50 }: { api: { current: Api | null }; count?: number }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualRows({
-    count: 50,
+    count,
     getItemKey: (index) => `row-${index}`,
     scrollRef,
     estimateHeight: () => 34,
@@ -88,5 +88,84 @@ describe("useVirtualRows", () => {
     scroll.scrollTop = 2000;
     fireEvent.scroll(scroll);
     expect(api.current?.virtualItems[0].index).toBeGreaterThan(0);
+  });
+
+  it("measures rows added after the list grew through the ResizeObserver", () => {
+    const instances: Array<(entries: Array<{ target: Element }>) => void> = [];
+    class FakeResizeObserver {
+      constructor(cb: (entries: Array<{ target: Element }>) => void) {
+        instances.push(cb);
+      }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = FakeResizeObserver as never;
+
+    try {
+      const api: { current: Api | null } = { current: null };
+      const { rerender } = render(<Harness api={api} />);
+      const row5 = document.createElement("div");
+      row5.getBoundingClientRect = () =>
+        ({
+          height: 34,
+          width: 100,
+          top: 0,
+          left: 0,
+          bottom: 34,
+          right: 100,
+          x: 0,
+          y: 0,
+        }) as DOMRect;
+      act(() => api.current?.measureElement("row-5", row5));
+      expect(api.current?.totalHeight).toBe(1700);
+
+      rerender(<Harness api={api} count={60} />);
+      const row55 = document.createElement("div");
+      row55.getBoundingClientRect = () =>
+        ({
+          height: 34,
+          width: 100,
+          top: 0,
+          left: 0,
+          bottom: 34,
+          right: 100,
+          x: 0,
+          y: 0,
+        }) as DOMRect;
+      act(() => api.current?.measureElement("row-55", row55));
+      expect(api.current?.totalHeight).toBe(60 * 34);
+
+      row55.getBoundingClientRect = () =>
+        ({
+          height: 400,
+          width: 100,
+          top: 0,
+          left: 0,
+          bottom: 400,
+          right: 100,
+          x: 0,
+          y: 0,
+        }) as DOMRect;
+      act(() => instances[0]([{ target: row55 }]));
+      expect(api.current?.totalHeight).toBe(60 * 34 - 34 + 400);
+
+      row55.getBoundingClientRect = () =>
+        ({
+          height: 34,
+          width: 100,
+          top: 0,
+          left: 0,
+          bottom: 34,
+          right: 100,
+          x: 0,
+          y: 0,
+        }) as DOMRect;
+      act(() => instances[0]([{ target: row55 }]));
+      expect(api.current?.totalHeight).toBe(60 * 34);
+    } finally {
+      globalThis.ResizeObserver = original;
+    }
   });
 });
