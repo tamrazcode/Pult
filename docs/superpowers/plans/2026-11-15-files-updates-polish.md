@@ -39,7 +39,7 @@
 
 ### Task 1: Backend `workspace_tree` `{ entries, truncated }` payload and truncation tests
 
-**Design Decision:** Introduce `WorkspaceTree { entries, truncated }` in `src-tauri/src/ipc/mod.rs` and mirror it in `src/lib/ipc.ts`. Factor `walk_workspace(root)` into `walk_workspace_with_limits(root, max_entries, max_depth)` with constants `MAX_TREE_ENTRIES = 2000` and `MAX_TREE_DEPTH = 6`: check `out.len() >= max_entries` *after* skipping `TREE_IGNORE` so an ignored sibling does not trigger false truncation, and when `depth > max_depth` mark `truncated = true` only if `dir` contains at least one non-ignored entry. Keep `FilesPanel.tsx` and `tests/editors.test.tsx` compiling and green in the same task since `workspaceTree()` changes return shape.
+**Design Decision:** Introduce `WorkspaceTree { entries, truncated }` in `src-tauri/src/ipc/mod.rs` and mirror it in `src/lib/ipc.ts`. Factor `walk_workspace(root)` into `walk_workspace_with_limits(root, max_entries, max_depth)` with constants `MAX_TREE_ENTRIES = 2000` and `MAX_TREE_DEPTH = 6`: check `out.len() >= max_entries` _after_ skipping `TREE_IGNORE` so an ignored sibling does not trigger false truncation, and when `depth > max_depth` mark `truncated = true` only if `dir` contains at least one non-ignored entry. Keep `FilesPanel.tsx` and `tests/editors.test.tsx` compiling and green in the same task since `workspaceTree()` changes return shape.
 
 **Files:**
 

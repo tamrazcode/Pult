@@ -1,10 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, File as FileIcon, Folder, FolderOpen } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  File as FileIcon,
+  Folder,
+  FolderOpen,
+  RefreshCw,
+} from "lucide-react";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { EditorSplitButton } from "../ui/EditorSplitButton";
 import { getEditorMeta } from "../../lib/editors";
+import { buildFileGitStatusMap } from "../../lib/fileGitStatus";
 import { openInEditor, readImageDataUrl, workspaceReadText, workspaceTree } from "../../lib/ipc";
 import type { WorkspaceEntry } from "../../lib/ipc";
+import { useGitStore } from "../../stores/git";
 import { useSettingsStore } from "../../stores/settings";
 import { useThreadsStore } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
@@ -25,6 +34,9 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
   const [preview, setPreview] = useState<string | null>(null);
   const [image, setImage] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; entry: WorkspaceEntry } | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [loadingTree, setLoadingTree] = useState(false);
+  const treeRequest = useRef(0);
   const filePreview = useUiStore((s) => s.filePreview);
   const openFilePreview = useUiStore((s) => s.openFilePreview);
   const preferredEditor = useSettingsStore((s) => s.preferredEditor);
@@ -37,24 +49,32 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
   });
   const root = thread?.workspace ?? project?.rootPath ?? "";
   const selected = filePreview;
+  const gitStatus = useGitStore((s) => (threadId ? s.byThread[threadId]?.status : undefined));
+  const gitByPath = useMemo(() => buildFileGitStatusMap(gitStatus), [gitStatus]);
+
+  const loadTree = useCallback(async () => {
+    if (!threadId) return;
+    const request = ++treeRequest.current;
+    setLoadingTree(true);
+    try {
+      const tree = await workspaceTree(threadId);
+      if (request !== treeRequest.current) return;
+      setEntries(tree.entries);
+      setTruncated(tree.truncated);
+      setError(null);
+    } catch (err) {
+      if (request === treeRequest.current) setError(String(err));
+    } finally {
+      if (request === treeRequest.current) setLoadingTree(false);
+    }
+  }, [threadId]);
 
   useEffect(() => {
-    if (!threadId) return;
-    let cancelled = false;
-    workspaceTree(threadId)
-      .then((tree) => {
-        if (!cancelled) {
-          setEntries(tree.entries);
-          setError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setError(String(err));
-      });
+    void loadTree();
     return () => {
-      cancelled = true;
+      treeRequest.current += 1;
     };
-  }, [threadId]);
+  }, [loadTree]);
 
   useEffect(() => {
     if (!threadId || !selected) return;
@@ -153,6 +173,16 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
         <div className="min-w-0 flex-1 truncate text-xs text-text-tertiary" title={selected ?? ""}>
           {breadcrumb.length > 0 ? breadcrumb.join(" › ") : "Files"}
         </div>
+        <button
+          type="button"
+          aria-label="Refresh files"
+          title="Refresh files"
+          disabled={loadingTree}
+          onClick={() => void loadTree()}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-60"
+        >
+          <RefreshCw size={13} className={loadingTree ? "animate-spin" : undefined} />
+        </button>
         <EditorSplitButton
           onOpen={(editor) => {
             if (!selected || !root) return;
@@ -176,6 +206,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
             {error && <p className="px-2 py-1 text-xs text-danger">{error}</p>}
             {visible.map((entry) => {
               const isCollapsed = collapsed.has(entry.path);
+              const git = gitByPath.get(entry.path);
               return (
                 <button
                   key={entry.path}
@@ -212,11 +243,30 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
                   ) : (
                     <FileIcon size={11} className="shrink-0 text-text-tertiary" />
                   )}
-                  <span className="truncate">{entry.name}</span>
+                  <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                  {git && (
+                    <span
+                      data-git-status={git.code}
+                      title={git.label}
+                      aria-label={git.label}
+                      className={`ml-auto shrink-0 font-mono text-xs font-medium ${git.colorClass}`}
+                    >
+                      {git.code}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
+          {truncated && (
+            <p
+              role="status"
+              data-truncated-notice
+              className="border-t border-border-subtle px-2 py-1 text-xs text-text-tertiary"
+            >
+              Showing first 2,000 entries (depth 6)
+            </p>
+          )}
         </div>
 
         <div className="min-w-0 flex-1 overflow-auto p-2">
