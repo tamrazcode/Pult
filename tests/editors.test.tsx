@@ -13,10 +13,13 @@ const {
   settingsSet,
 } = vi.hoisted(() => ({
   openInEditor: vi.fn(async () => undefined),
-  workspaceTree: vi.fn(async () => [
-    { path: "src", name: "src", isDir: true, size: 0 },
-    { path: "src/app.ts", name: "app.ts", isDir: false, size: 10 },
-  ]),
+  workspaceTree: vi.fn(async () => ({
+    entries: [
+      { path: "src", name: "src", isDir: true, size: 0 },
+      { path: "src/app.ts", name: "app.ts", isDir: false, size: 10 },
+    ],
+    truncated: false,
+  })),
   workspaceReadText: vi.fn(async () => "const x = 1;"),
   readImageDataUrl: vi.fn(async () => ""),
   settingsGet: vi.fn(async () => null),

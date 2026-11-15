@@ -42,9 +42,9 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     if (!threadId) return;
     let cancelled = false;
     workspaceTree(threadId)
-      .then((list) => {
+      .then((tree) => {
         if (!cancelled) {
-          setEntries(list);
+          setEntries(tree.entries);
           setError(null);
         }
       })

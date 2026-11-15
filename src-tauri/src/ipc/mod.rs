@@ -986,15 +986,64 @@ const TREE_IGNORE: &[&str] = &[
     ".superpowers",
 ];
 
-fn walk_workspace(root: &std::path::Path) -> Result<Vec<WorkspaceEntry>, PultError> {
+const MAX_TREE_ENTRIES: usize = 2000;
+const MAX_TREE_DEPTH: usize = 6;
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTree {
+    pub entries: Vec<WorkspaceEntry>,
+    pub truncated: bool,
+}
+
+fn ignored(name: &str) -> bool {
+    TREE_IGNORE.contains(&name)
+}
+
+/// True when a cut subtree still contains a file the user would see.
+fn has_visible_content(dir: &std::path::Path) -> bool {
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    read.flatten().any(|entry| {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if ignored(&name) {
+            return false;
+        }
+        match entry.file_type() {
+            Ok(kind) if kind.is_file() => true,
+            Ok(kind) if kind.is_dir() => has_visible_content(&entry.path()),
+            _ => false,
+        }
+    })
+}
+
+fn walk_workspace(root: &std::path::Path) -> Result<WorkspaceTree, PultError> {
+    walk_workspace_with_limits(root, MAX_TREE_ENTRIES, MAX_TREE_DEPTH)
+}
+
+fn walk_workspace_with_limits(
+    root: &std::path::Path,
+    max_entries: usize,
+    max_depth: usize,
+) -> Result<WorkspaceTree, PultError> {
     let mut out = Vec::new();
+    let mut truncated = false;
+    #[allow(clippy::too_many_arguments)]
     fn visit(
         root: &std::path::Path,
         dir: &std::path::Path,
         depth: usize,
+        max_entries: usize,
+        max_depth: usize,
         out: &mut Vec<WorkspaceEntry>,
+        truncated: &mut bool,
     ) {
-        if depth > 6 || out.len() >= 2000 {
+        if *truncated {
+            return;
+        }
+        if depth > max_depth {
+            *truncated = has_visible_content(dir);
             return;
         }
         let Ok(read) = std::fs::read_dir(dir) else {
@@ -1006,12 +1055,13 @@ fn walk_workspace(root: &std::path::Path) -> Result<Vec<WorkspaceEntry>, PultErr
             (!is_dir, entry.file_name().to_string_lossy().to_lowercase())
         });
         for entry in entries {
-            if out.len() >= 2000 {
-                return;
-            }
             let name = entry.file_name().to_string_lossy().into_owned();
-            if TREE_IGNORE.contains(&name.as_str()) {
+            if ignored(&name) {
                 continue;
+            }
+            if out.len() >= max_entries {
+                *truncated = true;
+                return;
             }
             let path = entry.path();
             let rel = path.strip_prefix(root).unwrap_or(&path);
@@ -1025,12 +1075,31 @@ fn walk_workspace(root: &std::path::Path) -> Result<Vec<WorkspaceEntry>, PultErr
                 size,
             });
             if is_dir {
-                visit(root, &path, depth + 1, out);
+                visit(
+                    root,
+                    &path,
+                    depth + 1,
+                    max_entries,
+                    max_depth,
+                    out,
+                    truncated,
+                );
             }
         }
     }
-    visit(root, root, 1, &mut out);
-    Ok(out)
+    visit(
+        root,
+        root,
+        1,
+        max_entries,
+        max_depth,
+        &mut out,
+        &mut truncated,
+    );
+    Ok(WorkspaceTree {
+        entries: out,
+        truncated,
+    })
 }
 
 /// Lists a thread workspace (flattened, ignored build dirs, capped).
@@ -1038,7 +1107,7 @@ fn walk_workspace(root: &std::path::Path) -> Result<Vec<WorkspaceEntry>, PultErr
 pub async fn workspace_tree(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
-) -> Result<Vec<WorkspaceEntry>, PultError> {
+) -> Result<WorkspaceTree, PultError> {
     let runtime = runtime.inner().clone();
     tokio::task::spawn_blocking(move || {
         let thread = runtime.store().get_thread(&thread_id)?;
@@ -1379,3 +1448,77 @@ mod payload_cap_tests {
 }
 
 
+
+#[cfg(test)]
+mod workspace_tree_tests {
+    use super::{walk_workspace, walk_workspace_with_limits};
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    fn temp_workspace(name: &str) -> PathBuf {
+        let unique = format!(
+            "pult-tree-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_file(path: &Path) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, "x").unwrap();
+    }
+
+    #[test]
+    fn truncates_at_entry_cap_and_marks_truncated() {
+        let dir = temp_workspace("cap");
+        for index in 0..3 {
+            write_file(&dir.join(format!("f{index}.txt")));
+        }
+        let tree = walk_workspace_with_limits(&dir, 3, 6).unwrap();
+        assert_eq!(tree.entries.len(), 3);
+        assert!(!tree.truncated);
+
+        write_file(&dir.join("f3.txt"));
+        write_file(&dir.join("node_modules/ignored.js"));
+        let tree = walk_workspace_with_limits(&dir, 3, 6).unwrap();
+        assert_eq!(tree.entries.len(), 3);
+        assert!(tree.truncated);
+        assert!(tree.entries.iter().all(|entry| entry.name != "node_modules"));
+
+        let wide = temp_workspace("wide");
+        for index in 0..2001 {
+            write_file(&wide.join(format!("f{index}.txt")));
+        }
+        let tree = walk_workspace(&wide).unwrap();
+        assert_eq!(tree.entries.len(), 2000);
+        assert!(tree.truncated);
+
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&wide).unwrap();
+    }
+
+    #[test]
+    fn truncates_at_depth_limit_and_skips_empty_or_ignored_subtrees() {
+        let dir = temp_workspace("depth");
+        fs::create_dir_all(dir.join("a/b/c/d/e/f/empty_at_6")).unwrap();
+        write_file(&dir.join("a/b/c/d/e/f/node_modules/x.js"));
+        let tree = walk_workspace(&dir).unwrap();
+        assert!(!tree.truncated);
+
+        write_file(&dir.join("a/b/c/d/e/f/deep.txt"));
+        let tree = walk_workspace(&dir).unwrap();
+        assert!(tree.truncated);
+        assert!(tree.entries.iter().all(|entry| !entry.path.ends_with("deep.txt")));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+}

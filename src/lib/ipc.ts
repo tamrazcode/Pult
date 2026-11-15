@@ -187,8 +187,13 @@ export interface WorkspaceEntry {
   size: number;
 }
 
-export function workspaceTree(threadId: string): Promise<WorkspaceEntry[]> {
-  return invokeRequired<WorkspaceEntry[]>("workspace_tree", { threadId });
+export interface WorkspaceTree {
+  entries: WorkspaceEntry[];
+  truncated: boolean;
+}
+
+export function workspaceTree(threadId: string): Promise<WorkspaceTree> {
+  return invokeRequired<WorkspaceTree>("workspace_tree", { threadId });
 }
 
 /** UTF-8 text preview from a thread workspace (max 512 KB). */
