@@ -9,6 +9,8 @@ import type {
   QueueItem,
   Run,
   SessionConfigOption,
+  SessionConfigSelectGroup,
+  SessionConfigSelectOption,
 } from "../lib/types";
 import { useThreadsStore } from "./threads";
 
@@ -476,6 +478,8 @@ interface RunsState {
   /** Config picks per thread ("" = the draft on /chat). */
   desiredConfigByThread: Record<string, Record<string, ConfigOptionValue>>;
   setDesiredConfig: (threadId: string, configId: string, value: ConfigOptionValue) => void;
+  /** Drops picks the newly selected provider cannot accept. */
+  pruneDesiredConfigForInstance: (slot: string, options: SessionConfigOption[]) => void;
   clearDesiredConfig: (threadId: string) => void;
   /** Upserts a run (from runs_dispatch / threads_get) and seeds its view. */
   registerRun: (run: Run) => void;
@@ -731,6 +735,20 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         [threadId]: { ...s.desiredConfigByThread[threadId], [configId]: value },
       },
     })),
+  pruneDesiredConfigForInstance: (slot, options) =>
+    set((s) => {
+      const current = s.desiredConfigByThread[slot];
+      if (!current) return s;
+      const next: Record<string, ConfigOptionValue> = {};
+      for (const [id, value] of Object.entries(current)) {
+        const option = options.find((candidate) => candidate.id === id);
+        if (option && configValueFits(option, value)) next[id] = value;
+      }
+      const desiredConfigByThread = { ...s.desiredConfigByThread };
+      if (Object.keys(next).length === 0) delete desiredConfigByThread[slot];
+      else desiredConfigByThread[slot] = next;
+      return { desiredConfigByThread };
+    }),
   clearDesiredConfig: (threadId) =>
     set((s) => {
       const desiredConfigByThread = { ...s.desiredConfigByThread };
@@ -738,6 +756,18 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       return { desiredConfigByThread };
     }),
 }));
+
+/** True when a persisted value is still one of the option's advertised values. */
+function configValueFits(option: SessionConfigOption, value: ConfigOptionValue): boolean {
+  if (option.type === "boolean") return typeof value === "boolean";
+  if (typeof value !== "string") return false;
+  const first = option.options[0];
+  const flat =
+    first && "group" in first
+      ? (option.options as SessionConfigSelectGroup[]).flatMap((group) => group.options)
+      : (option.options as SessionConfigSelectOption[]);
+  return flat.some((candidate) => candidate.value === value);
+}
 
 function threadIdForRun(
   s: { runsByThread: Record<string, Run[]> },

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 import type { InstanceInfo, Run, SessionConfigOption } from "../src/lib/types";
 
@@ -75,9 +75,12 @@ import {
 } from "../src/components/chat/Composer";
 import {
   ConfigOptionPickers,
+  ProviderModelPicker,
+  isReasoningOption,
   pickerConfigValue,
   pickerModeId,
 } from "../src/components/chat/ComposerControls";
+import { ProviderLogo } from "../src/components/chat/ProviderLogo";
 import { useProjectsStore } from "../src/stores/projects";
 import { useRunsStore } from "../src/stores/runs";
 import { useSettingsStore } from "../src/stores/settings";
@@ -142,7 +145,12 @@ describe("composer", () => {
       activeElicitation: null,
     });
     useRunsStore.getState().registerRun(runningRun);
-    useUiStore.setState({ selectedInstanceId: "mock", paletteOpen: false, instances: [] });
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instanceByThread: {},
+      paletteOpen: false,
+      instances: [],
+    });
     useSettingsStore.setState({ permissionMode: "supervised" });
     useThreadsStore.setState({ threads: [], activeThreadId: null });
     useProjectsStore.setState({ projects: [], selectedProjectId: null });
@@ -245,6 +253,52 @@ describe("composer", () => {
     expect(configForSend(desired, "th2")).toEqual({ web_search: true });
     expect(configForSend(desired, "th3")).toBeNull();
     expect(configForSend(desired)).toEqual({ model: "mock-pro" });
+  });
+
+  it("filters configForSend against optional instanceOptions when provided", () => {
+    const desired = {
+      "": { model: "mock-pro" },
+      th2: { model: "gpt-5", thinking_level: "high", effort: "max", web_search: true },
+    };
+    // undefined preserves 2-arg legacy behavior
+    expect(configForSend(desired, "th2", undefined)).toEqual({
+      model: "gpt-5",
+      thinking_level: "high",
+      effort: "max",
+      web_search: true,
+    });
+    // [] drops all config and returns null
+    expect(configForSend(desired, "th2", [])).toBeNull();
+    expect(configForSend(desired, undefined, [])).toBeNull();
+
+    const codexOptions: SessionConfigOption[] = [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "gpt-5",
+        options: [{ value: "gpt-5", name: "GPT-5" }],
+      },
+      {
+        type: "boolean",
+        id: "web_search",
+        name: "Web search",
+        category: "other",
+        currentValue: false,
+      },
+    ];
+    expect(configForSend(desired, "th2", codexOptions)).toEqual({
+      model: "gpt-5",
+      web_search: true,
+    });
+    expect(
+      configForSend(
+        { th2: { model: "claude-sonnet-4", thinking_level: "high" } },
+        "th2",
+        codexOptions,
+      ),
+    ).toBeNull();
   });
 
   it("falls back when a remembered config value is invalid", () => {
@@ -385,7 +439,7 @@ describe("composer", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
   });
 
-  it("hides permission and mode pills from the bar and deduplicates mode configOption inside overflow", () => {
+  it("hides permission and mode pills from the bar and deduplicates mode configOption inside overflow without Effort/Reasoning", () => {
     useUiStore.setState({
       selectedInstanceId: "mock",
       instances: [
@@ -460,15 +514,20 @@ describe("composer", () => {
     expect(screen.getByRole("button", { name: /Pro/ })).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
+    const dialog = screen.getByRole("dialog", { name: "Composer options" });
 
-    expect(screen.getAllByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toHaveLength(1);
-    expect(screen.getAllByText("Architect")).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: /^Mode:/i })).toBeNull();
-    expect(screen.getByText("Web search")).toBeTruthy();
-    expect(screen.getByText(/High/)).toBeTruthy();
+    expect(within(dialog).getAllByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toHaveLength(
+      1,
+    );
+    expect(within(dialog).getAllByText("Architect")).toHaveLength(1);
+    expect(within(dialog).queryByRole("button", { name: /^Mode:/i })).toBeNull();
+    expect(within(dialog).getByText("Web search")).toBeTruthy();
+    expect(within(dialog).queryByText(/^(Reasoning|Effort|Agent)$/i)).toBeNull();
+    expect(within(dialog).queryByText(/High/i)).toBeNull();
+    expect(within(dialog).queryByText(/thought_level/i)).toBeNull();
   });
 
-  it("opens overflow with Effort, Session mode, Permission mode, Agent switcher, closes on Escape, and updates permission", async () => {
+  it("opens overflow with Session mode, Permission, and extra options without Agent or Reasoning/Effort, closes on Escape, and updates permission", async () => {
     useUiStore.setState({
       selectedInstanceId: "mock",
       instances: [
@@ -492,6 +551,13 @@ describe("composer", () => {
                 { value: "high", name: "High" },
               ],
             },
+            {
+              type: "boolean",
+              id: "web_search",
+              name: "Web search",
+              category: "other",
+              currentValue: false,
+            },
           ],
         }),
         makeInstance({ id: "codex", displayName: "Codex" }),
@@ -501,13 +567,20 @@ describe("composer", () => {
     render(<Composer threadId="th" />);
 
     fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
-    expect(screen.getByText(/Effort/i)).toBeTruthy();
-    expect(screen.getByText(/Session mode/i)).toBeTruthy();
-    expect(screen.getByText(/Permission/i)).toBeTruthy();
-    expect(screen.getByText(/Agent/i)).toBeTruthy();
+    const dialog = screen.getByRole("dialog", { name: "Composer options" });
+    expect(within(dialog).getByText(/Session mode/i)).toBeTruthy();
+    expect(within(dialog).getByText(/Permission/i)).toBeTruthy();
+    expect(within(dialog).getByText("Web search")).toBeTruthy();
+    expect(within(dialog).queryByText(/Effort/i)).toBeNull();
+    expect(within(dialog).queryByText(/Reasoning/i)).toBeNull();
+    expect(within(dialog).queryByText(/Medium/i)).toBeNull();
+    expect(within(dialog).queryByText(/^Agent$/i)).toBeNull();
+    expect(within(dialog).queryByText("Codex")).toBeNull();
 
     fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByText(/Permission/i)).toBeNull());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Composer options" })).toBeNull(),
+    );
     expect(runsCancel).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
@@ -518,6 +591,397 @@ describe("composer", () => {
 
     expect(useSettingsStore.getState().permissionMode).toBe("full_access");
     expect(runsSetPermissionMode).toHaveBeenCalledWith("th", "full_access");
+  });
+
+  it("renders unified ProviderModelPicker trigger with provider logo, model name, and gray reasoning text", () => {
+    const modelOption: SessionConfigOption = {
+      type: "select",
+      id: "model",
+      name: "Model",
+      category: "model",
+      currentValue: "claude-sonnet-4",
+      options: [
+        { value: "claude-sonnet-4", name: "Sonnet 4" },
+        { value: "claude-opus-4", name: "Opus 4" },
+      ],
+    };
+    const thinkingOption: SessionConfigOption = {
+      type: "select",
+      id: "thinking_level",
+      name: "Thinking",
+      category: "thought_level",
+      currentValue: "high",
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    };
+    const boolReasoningOption: SessionConfigOption = {
+      type: "boolean",
+      id: "reasoning",
+      name: "Reasoning",
+      category: "reasoning",
+      currentValue: false,
+    };
+    const webSearchOption: SessionConfigOption = {
+      type: "boolean",
+      id: "web_search",
+      name: "Web search",
+      category: "other",
+      currentValue: false,
+    };
+
+    expect(isReasoningOption(thinkingOption)).toBe(true);
+    expect(isReasoningOption(boolReasoningOption)).toBe(true);
+    expect(isReasoningOption(modelOption)).toBe(false);
+    expect(isReasoningOption(webSearchOption)).toBe(false);
+
+    const claude = makeInstance({
+      id: "claude",
+      displayName: "Claude Code",
+      driver: "claude",
+      command: "claude",
+      configOptions: [modelOption, thinkingOption],
+    });
+    useUiStore.setState({ selectedInstanceId: "claude", instances: [claude] });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const trigger = screen.getByRole("button", { name: /Claude Code/i });
+    const ariaLabel = trigger.getAttribute("aria-label") ?? "";
+    expect(ariaLabel).toContain("Claude Code");
+    expect(ariaLabel).toContain("Sonnet 4");
+    expect(ariaLabel).toContain("High");
+
+    expect(trigger.querySelector('svg[data-provider-logo="claude"]')).toBeTruthy();
+    expect(within(trigger).getByText("Sonnet 4")).toBeTruthy();
+    const reasoningSpan = within(trigger).getByText("High");
+    expect(reasoningSpan.className).toContain("text-text-tertiary");
+
+    cleanup();
+    const { container } = render(
+      <>
+        <ProviderLogo
+          instance={makeInstance({
+            id: "claude",
+            displayName: "Claude Code",
+            driver: "claude",
+            command: "claude",
+          })}
+        />
+        <ProviderLogo
+          instance={makeInstance({
+            id: "codex",
+            displayName: "Codex",
+            driver: "codex",
+            command: "codex",
+          })}
+        />
+        <ProviderLogo
+          instance={makeInstance({
+            id: "gemini",
+            displayName: "Gemini",
+            driver: "gemini",
+            command: "gemini",
+          })}
+        />
+        <ProviderLogo
+          instance={makeInstance({
+            id: "opencode",
+            displayName: "OpenCode",
+            driver: "opencode",
+            command: "opencode",
+          })}
+        />
+      </>,
+    );
+    expect(container.querySelector('svg[data-provider-logo="claude"]')).toBeTruthy();
+    expect(container.querySelector('svg[data-provider-logo="codex"]')).toBeTruthy();
+    expect(container.querySelector('svg[data-provider-logo="gemini"]')).toBeTruthy();
+    expect(container.querySelector('svg[data-provider-logo="opencode"]')).toBeTruthy();
+  });
+
+  it("handles boolean reasoning option with Off/On trigger text and radiogroup toggle", () => {
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instances: [
+        makeInstance({
+          id: "claude",
+          displayName: "Claude Code",
+          driver: "claude",
+          command: "claude",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "claude-sonnet-4",
+              options: [{ value: "claude-sonnet-4", name: "Sonnet 4" }],
+            },
+            {
+              type: "boolean",
+              id: "reasoning",
+              name: "Reasoning",
+              category: "reasoning",
+              currentValue: false,
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const trigger = screen.getByRole("button", { name: /Claude Code/i });
+    const offSpan = within(trigger).getByText("Off");
+    expect(offSpan.className).toContain("text-text-tertiary");
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    const onRadio = within(dialog).getByRole("radio", { name: "On" });
+    fireEvent.click(onRadio);
+
+    expect(runsSetConfigOption).toHaveBeenCalledWith("th", "reasoning", true);
+    const onSpan = within(trigger).getByText("On");
+    expect(onSpan.className).toContain("text-text-tertiary");
+    expect(within(trigger).queryByText("Off")).toBeNull();
+  });
+
+  it("opens one dialog with Provider, Model, and Reasoning sections, updates trigger immediately, and stays open on provider click", async () => {
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instances: [
+        makeInstance({
+          id: "claude",
+          displayName: "Claude Code",
+          driver: "claude",
+          command: "claude",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "claude-sonnet-4",
+              options: [
+                { value: "claude-sonnet-4", name: "Sonnet 4" },
+                { value: "claude-opus-4", name: "Opus 4" },
+              ],
+            },
+            {
+              type: "select",
+              id: "thinking_level",
+              name: "Thinking",
+              category: "thought_level",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        }),
+        makeInstance({
+          id: "codex",
+          displayName: "Codex",
+          driver: "codex",
+          command: "codex",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "gpt-5",
+              options: [{ value: "gpt-5", name: "GPT-5" }],
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const trigger = screen.getByRole("button", { name: /Claude Code/i });
+    fireEvent.click(trigger);
+
+    const dialogs = screen.getAllByRole("dialog");
+    expect(dialogs).toHaveLength(1);
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    expect(within(dialog).getByText("Provider")).toBeTruthy();
+    expect(within(dialog).getByText("Model")).toBeTruthy();
+    expect(within(dialog).getByText("Reasoning")).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /Opus 4/ }));
+    expect(runsSetConfigOption).toHaveBeenCalledWith("th", "model", "claude-opus-4");
+    expect(within(trigger).getByText("Opus 4")).toBeTruthy();
+
+    fireEvent.click(within(dialog).getByRole("radio", { name: "Low" }));
+    expect(runsSetConfigOption).toHaveBeenCalledWith("th", "thinking_level", "low");
+    expect(within(trigger).getByText("Low")).toBeTruthy();
+
+    // UX ruling: clicking a Provider row MUST keep the one popover open.
+    fireEvent.click(within(dialog).getByRole("button", { name: /Codex/ }));
+    expect(screen.getByRole("dialog", { name: "Provider, model, and reasoning" })).toBeTruthy();
+
+    // Outside click closes it
+    fireEvent.mouseDown(document.body);
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Provider, model, and reasoning" })).toBeNull(),
+    );
+
+    // Escape closes it without cancelling active run
+    fireEvent.click(screen.getByRole("button", { name: /Codex/i }));
+    expect(screen.getByRole("dialog", { name: "Provider, model, and reasoning" })).toBeTruthy();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "Provider, model, and reasoning" })).toBeNull(),
+    );
+    expect(runsCancel).not.toHaveBeenCalled();
+
+    // Manage providers closes it and navigates
+    fireEvent.click(screen.getByRole("button", { name: /Codex/i }));
+    const reopened = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    fireEvent.click(within(reopened).getByRole("button", { name: /Manage providers/i }));
+    expect(screen.queryByRole("dialog", { name: "Provider, model, and reasoning" })).toBeNull();
+    expect(navigate).toHaveBeenCalledWith({ to: "/settings/providers" });
+  });
+
+  it("prunes stale thinking_level/effort/model when switching provider and never dispatches stale keys", async () => {
+    useRunsStore.setState({
+      runsByThread: {},
+      desiredConfigByThread: {
+        th: { model: "claude-sonnet-4", thinking_level: "high", effort: "max" },
+      },
+    });
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instances: [
+        makeInstance({
+          id: "claude",
+          displayName: "Claude Code",
+          driver: "claude",
+          command: "claude",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "claude-sonnet-4",
+              options: [
+                { value: "claude-sonnet-4", name: "Sonnet 4" },
+                { value: "claude-opus-4", name: "Opus 4" },
+              ],
+            },
+            {
+              type: "select",
+              id: "thinking_level",
+              name: "Thinking",
+              category: "thought_level",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        }),
+        makeInstance({
+          id: "codex",
+          displayName: "Codex",
+          driver: "codex",
+          command: "codex",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "gpt-5",
+              options: [
+                { value: "gpt-5", name: "GPT-5" },
+                { value: "o3", name: "o3" },
+              ],
+            },
+            {
+              type: "select",
+              id: "reasoning_effort",
+              name: "Reasoning",
+              category: "reasoning",
+              currentValue: "medium",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "medium", name: "Medium" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<Composer threadId="th" />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code/i }));
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Codex/ }));
+
+    // Popover stays open and shows Codex models & reasoning
+    expect(screen.getByRole("dialog", { name: "Provider, model, and reasoning" })).toBeTruthy();
+    expect(within(dialog).getByText("GPT-5")).toBeTruthy();
+    expect(within(dialog).getByText("o3")).toBeTruthy();
+    expect(within(dialog).getByText("Low")).toBeTruthy();
+    expect(within(dialog).getByText("Medium")).toBeTruthy();
+
+    const desiredAfterSwitch = useRunsStore.getState().desiredConfigByThread["th"];
+    expect(desiredAfterSwitch?.thinking_level).toBeUndefined();
+    expect(desiredAfterSwitch?.effort).toBeUndefined();
+    expect(desiredAfterSwitch?.model).not.toBe("claude-sonnet-4");
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "Run on Codex" } });
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+    await waitFor(() => expect(runsDispatch).toHaveBeenCalledTimes(1));
+    const [threadArg, textArg, instanceArg, , , configArg] = runsDispatch.mock.calls[0] as [
+      string,
+      string,
+      string,
+      unknown[],
+      string | null,
+      Record<string, unknown> | null,
+    ];
+    expect(threadArg).toBe("th");
+    expect(textArg).toBe("Run on Codex");
+    expect(instanceArg).toBe("codex");
+    if (configArg !== null) {
+      expect(configArg).not.toHaveProperty("thinking_level");
+      expect(configArg).not.toHaveProperty("effort");
+      expect(configArg.model).not.toBe("claude-sonnet-4");
+    }
+  });
+
+  it("opens dialog for optionless instance with displayName trigger and provider-managed model message", () => {
+    useUiStore.setState({
+      selectedInstanceId: "custom",
+      instances: [
+        makeInstance({
+          id: "custom",
+          displayName: "Custom CLI",
+          driver: "custom",
+          command: "custom-cli",
+          configOptions: [],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const trigger = screen.getByRole("button", { name: /Custom CLI/i });
+    expect(within(trigger).getByText("Custom CLI")).toBeTruthy();
+
+    fireEvent.click(trigger);
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    expect(within(dialog).getByText("Provider")).toBeTruthy();
+    expect(within(dialog).getByText("Default model (provider-managed)")).toBeTruthy();
   });
 
   it("sends on Enter, keeps newline on Shift+Enter, and keeps slash and @ popups working", async () => {

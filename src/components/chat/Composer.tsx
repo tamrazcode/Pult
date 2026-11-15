@@ -5,10 +5,10 @@ import { ArrowUp, MoreHorizontal, Paperclip, Square, X } from "lucide-react";
 import { Button } from "../ui/button";
 import {
   AgentModePicker,
-  AgentPicker,
   ConfigOptionPickers,
   ModePill,
-  ModelPill,
+  ProviderModelPicker,
+  configValueValid,
 } from "./ComposerControls";
 import {
   ipcErrorMessage,
@@ -24,7 +24,12 @@ import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
-import type { CommandInfo, ConfigOptionValue, ImageInput } from "../../lib/types";
+import type {
+  CommandInfo,
+  ConfigOptionValue,
+  ImageInput,
+  SessionConfigOption,
+} from "../../lib/types";
 
 const MAX_HEIGHT = 10 * 24; // 10 rows at the 24px effective line step
 
@@ -51,9 +56,17 @@ export function modeForSend(desired: Record<string, string>, threadId?: string):
 export function configForSend(
   desired: Record<string, Record<string, ConfigOptionValue>>,
   threadId?: string,
+  instanceOptions?: SessionConfigOption[],
 ): Record<string, ConfigOptionValue> | null {
   const config = threadId ? desired[threadId] : desired[""];
-  return config && Object.keys(config).length > 0 ? config : null;
+  if (!config) return null;
+  if (!instanceOptions) return config;
+  const valid: Record<string, ConfigOptionValue> = {};
+  for (const [id, value] of Object.entries(config)) {
+    const option = instanceOptions.find((candidate) => candidate.id === id);
+    if (option && configValueValid(option, value)) valid[id] = value;
+  }
+  return Object.keys(valid).length > 0 ? valid : null;
 }
 
 /** Esc cancels the run only when nothing above (overlay, decision) owns the key. */
@@ -104,6 +117,10 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const modes =
+    useUiStore(
+      (s) => s.instances.find((instance) => instance.id === s.selectedInstanceId)?.modes,
+    ) ?? [];
   useEffect(() => {
     if (!open) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -145,32 +162,21 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
           data-escape-layer
           className="absolute right-0 bottom-full z-50 mb-2 w-72 space-y-3 rounded-(--radius-md) border border-border-strong bg-surface-raised p-3 shadow-(--shadow-composer)"
         >
-          <section>
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
-              Reasoning
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              <ConfigOptionPickers threadId={threadId} excludeIds={["model"]} />
-            </div>
-          </section>
-          <section>
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
-              Session mode
-            </p>
-            <AgentModePicker threadId={threadId} />
-          </section>
+          {modes.length > 0 && (
+            <section>
+              <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
+                Session mode
+              </p>
+              <AgentModePicker threadId={threadId} />
+            </section>
+          )}
           <section>
             <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
               Permission
             </p>
             <ModePill threadId={threadId} />
           </section>
-          <section>
-            <p className="mb-1.5 text-[10px] font-semibold tracking-wider text-text-tertiary uppercase">
-              Agent
-            </p>
-            <AgentPicker threadId={threadId} />
-          </section>
+          <ConfigOptionPickers threadId={threadId} heading="Options" excludeModelAndReasoning />
         </div>
       )}
     </div>
@@ -222,9 +228,10 @@ export function Composer({ threadId }: { threadId?: string }) {
   const runActive =
     activeRun !== undefined && (activeRun.status === "running" || activeRun.status === "queued");
 
+  const selectedInstance = instances.find((i) => i.id === selectedInstanceId);
   // Image attach is capability-gated: only agents that declared
   // promptCapabilities.image show the chip affordance.
-  const imageCapable = instances.find((i) => i.id === selectedInstanceId)?.promptImage === true;
+  const imageCapable = selectedInstance?.promptImage === true;
 
   // Slash menu: active while the draft is a "/command…" query. Agent commands
   // merge with pult's built-ins (/commit).
@@ -381,7 +388,11 @@ export function Composer({ threadId }: { threadId?: string }) {
           // new-thread options (workspace / worktree), then navigate into it.
           const desired = useRunsStore.getState().desiredModeByThread;
           const pendingMode = modeForSend(desired);
-          const pendingConfig = configForSend(useRunsStore.getState().desiredConfigByThread);
+          const pendingConfig = configForSend(
+            useRunsStore.getState().desiredConfigByThread,
+            undefined,
+            selectedInstance?.configOptions,
+          );
           const selectedProjectId = useProjectsStore.getState().selectedProjectId;
           const project = useProjectsStore
             .getState()
@@ -416,7 +427,11 @@ export function Composer({ threadId }: { threadId?: string }) {
           // Queue-aware: the backend queues while a run is active and
           // auto-dispatches when it finishes.
           const desired = useRunsStore.getState().desiredModeByThread;
-          const config = configForSend(useRunsStore.getState().desiredConfigByThread, threadId);
+          const config = configForSend(
+            useRunsStore.getState().desiredConfigByThread,
+            threadId,
+            selectedInstance?.configOptions,
+          );
           await dispatchRun(threadId, text, images, modeForSend(desired, threadId), config);
         }
         resetDraft();
@@ -427,7 +442,18 @@ export function Composer({ threadId }: { threadId?: string }) {
         setBusy(false);
       }
     })();
-  }, [value, chips, busy, awaitingDecision, threadId, resetDraft, router, dispatchRun]);
+  }, [
+    value,
+    chips,
+    busy,
+    awaitingDecision,
+    threadId,
+    resetDraft,
+    router,
+    dispatchRun,
+    selectedInstance,
+    selectedInstanceId,
+  ]);
 
   const handleStop = useCallback(() => {
     if (!activeRun || activeRun.status !== "running") return;
@@ -781,7 +807,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           )}
           <ComposerStatusLine threadId={threadId} awaitingDecision={awaitingDecision} />
           <div className="flex-1" />
-          <ModelPill threadId={threadId} />
+          <ProviderModelPicker threadId={threadId} />
           <ComposerOverflowMenu threadId={threadId} />
           {activeRun?.status === "running" && !value.trim() && chips.length === 0 ? (
             <button

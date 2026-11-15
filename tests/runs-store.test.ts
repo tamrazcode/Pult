@@ -523,4 +523,57 @@ describe("runs store", () => {
     expect(views["r1"].suggestedCommit).toBe("fix: one");
     expect(views["r2"].suggestedCommit).toBeUndefined();
   });
+
+  it("prunes incompatible desired config keys and values on provider switch", () => {
+    useRunsStore.setState({
+      desiredConfigByThread: {
+        th: {
+          model: "claude-sonnet-4",
+          thinking_level: "high",
+          effort: "max",
+          web_search: true,
+        },
+      },
+    });
+
+    useRunsStore.getState().pruneDesiredConfigForInstance("th", [
+      {
+        type: "select",
+        id: "model",
+        name: "Model",
+        category: "model",
+        currentValue: "gpt-5",
+        options: [
+          { value: "gpt-5", name: "GPT-5" },
+          { value: "o3", name: "o3" },
+        ],
+      },
+      {
+        type: "select",
+        id: "reasoning_effort",
+        name: "Reasoning",
+        category: "reasoning",
+        currentValue: "medium",
+        options: [
+          { value: "low", name: "Low" },
+          { value: "medium", name: "Medium" },
+        ],
+      },
+      {
+        type: "boolean",
+        id: "web_search",
+        name: "Web search",
+        category: "other",
+        currentValue: false,
+      },
+    ]);
+
+    expect(useRunsStore.getState().desiredConfigByThread["th"]).toEqual({
+      web_search: true,
+    });
+
+    useRunsStore.getState().pruneDesiredConfigForInstance("th", []);
+    const afterEmpty = useRunsStore.getState().desiredConfigByThread["th"];
+    expect(afterEmpty === undefined || Object.keys(afterEmpty).length === 0).toBe(true);
+  });
 });
