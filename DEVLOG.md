@@ -8,6 +8,8 @@ One entry per milestone — decisions made, deviations from the spec, known issu
 
 **User-requested additions.** New-chat welcome screen (large logo, "What should we do in Pult?", deterministic ASCII backdrop, inline composer), composer width capped to the transcript column, taller glass composer with stronger blur, and a backlog entry for agent-generated images (Codex `imagegen`) — see the plan's Backlog section.
 
+**Post-walkthrough fixes (2026-11-15).** Liquid Glass surfaces are now neutral instead of blue-tinted. Markdown images with local paths (`C:\...`, `file:///...`) render through a new `read_image_data_url` command, restricted to the thread/project workspace or pult home, 20 MB, raster-only, with UNC rejected before any SMB lookup. Stale desired config picks are filtered against the options each agent actually advertised, fixing Codex's `-32602 Invalid params` for `thinking_level`/`effort`. The selected provider is remembered per thread (and restored from the last run), `/chat` picks are copied to the new thread, and stale send errors clear on thread switch. The sidebar filter popover now anchors to the search row instead of clipping off the left edge.
+
 **Verification.** `pnpm typecheck`, `pnpm lint`, `pnpm test` 196/196 green; `cargo test --lib` 138/138 green with the known pre-existing ConPTY flake skipped (`runtime::ptys::tests::pty_round_trip_output_exit_and_input_write`, reproduces at base `1258ec2`, passes alone); `cargo clippy --all-targets -- -D warnings` clean; `pnpm build` and `pnpm tauri build --no-bundle` pass.
 
 **Performance (fresh process, `scripts/perf-turn.mjs`).** These numbers intentionally measure a fresh process; the pool removes them from repeated turns.
@@ -23,7 +25,7 @@ Pooled turns skip spawn/initialize/session entirely (integration test: two seque
 
 **Decisions.** (1) Katagami TTFs are kept as source/provenance, while the app loads subset WOFF2 (16.6 MB → ~487 KB) with `OFL.txt` bundled under `/fonts/katagami/`. (2) A desired mode is re-sent on pooled turns rather than trusting a stale `applied_mode`; correctness beats one round-trip. (3) Full `cargo test` documents the PTY flake instead of hiding it; task gates run the suite with that one environmental test skipped. (4) `katex` is now a direct dependency because pnpm's strict resolver blocked its CSS after the font packages were removed.
 
-**Known issues / gaps.** The live desktop walkthrough is limited to launching the built app and capturing the new-chat/shell screenshots (`docs/screenshots/v2-new-chat.png`, `docs/screenshots/v2-shell-final.png`): headless desktop automation cannot click this WebView. The native folder picker, context-menu actions and Liquid Glass theme are covered by tests but not clicked end-to-end in the window. Agent-generated image artifacts remain backlog. The Rust PTY round-trip test is order-dependent in this environment.
+**Known issues / gaps.** The live desktop walkthrough is limited to launching the built app and capturing the new-chat/shell screenshots (`docs/screenshots/v2-new-chat.png`, `docs/screenshots/v2-shell-final.png`): headless desktop automation cannot click this WebView. The native folder picker, context-menu actions and Liquid Glass theme are covered by tests but not clicked end-to-end in the window. Local image artifacts are limited to raster files under a known workspace (remote URLs are never auto-fetched). The Rust PTY round-trip test is order-dependent in this environment.
 
 ## Connection fixes — required `mcpServers`, Antigravity (2026-11-14)
 
