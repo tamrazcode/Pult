@@ -65,7 +65,7 @@ export function LivingAscii() {
           const brightness = cellBrightness(x, y, now, pointerRef.current, pulsesRef.current);
           const glyph = cellGlyph(col, row, brightness);
           if (glyph === " ") continue;
-          ctx.globalAlpha = Math.min(0.85, 0.1 + brightness * 1.1);
+          ctx.globalAlpha = Math.min(0.9, 0.12 + brightness * 1.25);
           ctx.fillText(glyph, x - CELL_W / 2, y);
         }
       }

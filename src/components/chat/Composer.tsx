@@ -314,6 +314,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         config,
       );
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
+      else if (outcome.queued) useRunsStore.getState().clearPendingUser(targetThreadId);
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
       if (config) {
         for (const [id, value] of Object.entries(config)) {
@@ -429,10 +430,17 @@ export function Composer({ threadId }: { threadId?: string }) {
               useRunsStore.getState().setDesiredConfig(thread.id, configId, configValue);
             }
           }
+          // Show the bubble immediately, then navigate and dispatch; a failure
+          // clears it and surfaces in the global banner (the composer unmounts).
+          useRunsStore.getState().setPendingUser(thread.id, text, images);
+          await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           try {
             await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
-            await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
-            // The pending picks now belong to this thread; never to the next one.
+          } catch (err) {
+            useRunsStore.getState().clearPendingUser(thread.id);
+            useUiStore
+              .getState()
+              .setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
           } finally {
             if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
             if (pendingConfig) useRunsStore.getState().clearDesiredConfig("");
@@ -446,7 +454,13 @@ export function Composer({ threadId }: { threadId?: string }) {
             threadId,
             selectedInstance?.configOptions,
           );
-          await dispatchRun(threadId, text, images, modeForSend(desired, threadId), config);
+          useRunsStore.getState().setPendingUser(threadId, text, images);
+          try {
+            await dispatchRun(threadId, text, images, modeForSend(desired, threadId), config);
+          } catch (err) {
+            useRunsStore.getState().clearPendingUser(threadId);
+            throw err;
+          }
         }
         resetDraft();
       } catch (err) {

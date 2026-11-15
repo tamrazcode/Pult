@@ -91,6 +91,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const runId = activeRun?.id;
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
   const entries = threadTimelineItems(runs, views);
+  const pendingUser = useRunsStore((s) => (threadId ? s.pendingUserByThread[threadId] : undefined));
   const hasView = view !== undefined;
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -207,6 +208,12 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             </button>
           )}
           {windowedEntries.length > 0 && <TimelineRows entries={windowedEntries} />}
+
+          {pendingUser && (
+            <div>
+              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
+            </div>
+          )}
 
           {view.streaming && activeRun?.startedAt !== undefined && (
             <WorkingTimer startedAt={activeRun.startedAt} />

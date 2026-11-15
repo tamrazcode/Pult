@@ -51,7 +51,7 @@ export function cellBrightness(
   pointer: Ripple | null,
   pulses: Ripple[],
 ): number {
-  let value = 0.16 + ambientValue(x, y, nowMs) * 0.18;
+  let value = 0.2 + ambientValue(x, y, nowMs) * 0.3;
   if (pointer) value += rippleValue(x, y, pointer.x, pointer.y, nowMs, pointer.strength) * 0.55;
   for (const pulse of pulses) value += pulseValue(x, y, pulse, nowMs) * 0.8;
   return Math.min(1, value);
@@ -62,6 +62,7 @@ export function cellGlyph(x: number, y: number, brightness: number): string {
   const noise = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
   const pick = Math.abs(noise - Math.floor(noise));
   if (brightness > 0.62) return pick > 0.5 ? "+" : "*";
-  if (brightness > 0.4) return pick > 0.5 ? "·" : "⋅";
-  return pick > 0.55 ? "." : " ";
+  if (brightness > 0.46) return pick > 0.5 ? "·" : "⋅";
+  if (brightness > 0.3) return pick > 0.4 ? "." : "·";
+  return pick > 0.7 ? "." : " ";
 }

@@ -14,36 +14,25 @@ page.on("console", (message) => {
 
 async function open(path) {
   await page.goto(`${base}${path}`, { waitUntil: "domcontentloaded" });
-  await page.waitForTimeout(500);
+  await page.waitForTimeout(700);
   await page.evaluate(() => document.fonts.ready);
 }
 
-async function shot(path, name) {
-  await open(path);
-  await page.screenshot({ path: `${out}/${name}.png` });
-}
-
-await shot("/chat", "v3-shell-browser");
-await shot("/settings/appearance", "v3-theme-previews");
-await shot("/settings/providers", "v3-providers-empty");
+await open("/chat");
+await page.screenshot({ path: `${out}/v3-shell-browser.png` });
+await page.screenshot({ path: `${out}/v3-live-ascii.png` });
 
 await open("/chat");
-await page.locator("textarea").first().waitFor();
-await page.keyboard.press("Control+k");
-await page.getByRole("dialog", { name: "Command palette" }).waitFor();
-await page.screenshot({ path: `${out}/v3-palette.png` });
-await page.keyboard.press("Escape");
-
 await page.getByTitle("Provider, model, and reasoning").click();
 await page.screenshot({ path: `${out}/v3-composer-picker.png` });
+await page.keyboard.press("Escape");
 
-await open("/chat");
-await page.locator("textarea").first().waitFor();
-await page.evaluate(() => {
-  document.documentElement.dataset.theme = "light";
-});
-await page.waitForTimeout(250);
-await page.screenshot({ path: `${out}/v3-light.png` });
+await open("/settings/general");
+await page.screenshot({ path: `${out}/v3-settings-general.png` });
+await open("/settings/chat");
+await page.screenshot({ path: `${out}/v3-settings-chat.png` });
+await open("/settings/projects");
+await page.screenshot({ path: `${out}/v3-settings-projects.png` });
 
 console.log(JSON.stringify({ errors }, null, 2));
 await browser.close();

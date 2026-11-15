@@ -476,6 +476,10 @@ interface RunsState {
   clearElicitation: () => void;
   /** Backend-owned message queue per thread (auto-dispatch on run end). */
   queueByThread: Record<string, QueueItem[]>;
+  /** User bubbles shown immediately while the run is dispatching. */
+  pendingUserByThread: Record<string, UserChatItem | undefined>;
+  setPendingUser: (threadId: string, text: string, images: ImageInput[]) => void;
+  clearPendingUser: (threadId: string) => void;
   /** Files the agent touched via fs callbacks (Changed-files projection). */
   filesByThread: Record<string, FileChange[]>;
   /** Currently surfaced elicitation, or null (ElicitationModal). */
@@ -521,6 +525,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   commandsByThread: {},
   filesByThread: {},
   queueByThread: {},
+  pendingUserByThread: {},
   activeElicitation: null,
   desiredModeByThread: {},
   desiredConfigByThread: {},
@@ -579,7 +584,31 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       if (!exists && !(run.id in viewsByRun)) {
         viewsByRun[run.id] = emptyRunView(run.status === "running" || run.status === "queued");
       }
-      return { runsByThread: { ...s.runsByThread, [run.threadId]: nextRuns }, viewsByRun };
+      // The real run exists now; the optimistic bubble is replaced by its
+      // user_message event (which arrives right after run:started).
+      const { [run.threadId]: _dropped, ...pendingUserByThread } = s.pendingUserByThread;
+      void _dropped;
+      return {
+        runsByThread: { ...s.runsByThread, [run.threadId]: nextRuns },
+        viewsByRun,
+        pendingUserByThread,
+      };
+    }),
+
+  setPendingUser: (threadId, text, images) =>
+    set((s) => ({
+      pendingUserByThread: {
+        ...s.pendingUserByThread,
+        [threadId]: { type: "user", text, images, ts: Date.now() },
+      },
+    })),
+
+  clearPendingUser: (threadId) =>
+    set((s) => {
+      if (!(threadId in s.pendingUserByThread)) return s;
+      const { [threadId]: _dropped, ...pendingUserByThread } = s.pendingUserByThread;
+      void _dropped;
+      return { pendingUserByThread };
     }),
 
   hydrateThread: (threadId, runs, events, queue, activeRunId, desiredMode, desiredConfig) =>
