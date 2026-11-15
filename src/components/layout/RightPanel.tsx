@@ -98,7 +98,7 @@ export function RightPanel({ width }: { width: number }) {
       </div>
 
       {tab === "diff" ? (
-        <DiffPanel threadId={activeThreadId} />
+        <DiffPanel key={activeThreadId ?? "none"} threadId={activeThreadId} />
       ) : tab === "terminal" ? (
         <TerminalPanel threadId={activeThreadId} />
       ) : tab === "files" && files && files.length > 0 ? (

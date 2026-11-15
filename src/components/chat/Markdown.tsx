@@ -17,7 +17,8 @@ import rehypeKatex from "rehype-katex";
 import { createHighlighter, createJavaScriptRegexEngine } from "shiki";
 import type { Highlighter } from "shiki";
 import { Check, Copy } from "lucide-react";
-import { readImageDataUrl } from "../../lib/ipc";
+import { openExternalUrl, readImageDataUrl } from "../../lib/ipc";
+import { isTauri } from "../../lib/tauri";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
 
@@ -262,6 +263,8 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
 
   useEffect(() => {
     if (!local || !src) return;
+    setDataUrl(null);
+    setFailed(false);
     let cancelled = false;
     readImageDataUrl(fileUrlToPath(src))
       .then((url) => {
@@ -307,6 +310,25 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
 }
 
 const COMPONENTS: Components = {
+  a: ({ href, children, node, ...props }) => {
+    void node;
+    const external = typeof href === "string" && /^https?:\/\//i.test(href);
+    return (
+      <a
+        {...props}
+        href={href}
+        target="_blank"
+        rel="noreferrer noopener"
+        onClick={(event) => {
+          if (!external || !isTauri() || !href) return;
+          event.preventDefault();
+          void openExternalUrl(href).catch((err) => console.error("open_external_url failed", err));
+        }}
+      >
+        {children}
+      </a>
+    );
+  },
   img: ({ src, alt }) => <LocalImage src={src} alt={alt} />,
   pre: ({ children }) => {
     const { code, lang } = extractCode(children);

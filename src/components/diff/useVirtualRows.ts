@@ -123,6 +123,15 @@ export function useVirtualRows({
     if (element.clientHeight > 0) setViewportHeight(element.clientHeight);
   }, [scrollRef]);
 
+  useEffect(() => {
+    onScroll();
+    const element = scrollRef.current;
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => onScroll());
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onScroll, scrollRef]);
+
   const keys: string[] = [];
   const rowHeights: number[] = [];
   const offsets: number[] = [];
@@ -135,6 +144,17 @@ export function useVirtualRows({
     offsets.push(totalHeight);
     totalHeight += height;
   }
+
+  // Content shrinking must not leave scrollTop past the new end.
+  useEffect(() => {
+    const element = scrollRef.current;
+    if (!element) return;
+    const max = Math.max(0, totalHeight - element.clientHeight);
+    if (element.scrollTop > max) {
+      element.scrollTop = max;
+      setScrollTop(max);
+    }
+  }, [totalHeight, scrollRef]);
 
   // First item whose offset is below the viewport bottom.
   let low = 0;

@@ -711,6 +711,7 @@ describe("composer", () => {
   });
 
   it("handles boolean reasoning option with Off/On trigger text and radiogroup toggle", () => {
+    useRunsStore.setState({ runsByThread: {} });
     useUiStore.setState({
       selectedInstanceId: "claude",
       instances: [
@@ -756,7 +757,44 @@ describe("composer", () => {
     expect(within(trigger).queryByText("Off")).toBeNull();
   });
 
+  it("does not push a pick into another provider's live run", () => {
+    // beforeEach leaves a running "mock" run on "th"; the picker now shows "claude".
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instances: [
+        makeInstance({
+          id: "claude",
+          displayName: "Claude Code",
+          driver: "claude",
+          command: "claude",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "claude-sonnet-4",
+              options: [
+                { value: "claude-sonnet-4", name: "Sonnet 4" },
+                { value: "claude-opus-4", name: "Opus 4" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code/i }));
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    fireEvent.click(within(dialog).getByRole("button", { name: /Opus 4/ }));
+
+    expect(runsSetConfigOption).not.toHaveBeenCalled();
+    expect(useRunsStore.getState().desiredConfigByThread["th"]?.model).toBe("claude-opus-4");
+  });
+
   it("opens one dialog with Provider, Model, and Reasoning sections, updates trigger immediately, and stays open on provider click", async () => {
+    useRunsStore.setState({ runsByThread: {} });
     useUiStore.setState({
       selectedInstanceId: "claude",
       instances: [

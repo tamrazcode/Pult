@@ -248,6 +248,18 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
     estimateHeight: (index) => (rows[index].kind === "dir" ? 30 : 38),
     overscan: 6,
   });
+  // Stable per-row refs: inline callbacks re-observe every row on every render.
+  const measureRef = useRef(measureElement);
+  measureRef.current = measureElement;
+  const rowRefs = useRef(new Map<string, (element: HTMLDivElement | null) => void>());
+  const refFor = (key: string) => {
+    let callback = rowRefs.current.get(key);
+    if (!callback) {
+      callback = (element) => measureRef.current(key, element);
+      rowRefs.current.set(key, callback);
+    }
+    return callback;
+  };
 
   useEffect(() => {
     void loadGhAvailability();
@@ -447,7 +459,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
               return (
                 <div
                   key={item.key}
-                  ref={(element) => measureElement(item.key, element)}
+                  ref={refFor(item.key)}
                   data-diff-dir-row={row.kind === "dir" ? "" : undefined}
                   data-diff-file-row={row.kind === "file" ? "" : undefined}
                   className={`absolute inset-x-0 ${row.kind === "file" && row.nested ? "pl-3" : ""}`}

@@ -86,6 +86,7 @@ function RootLayout() {
       </div>
       {activeElicitation && (
         <ElicitationModal
+          key={activeElicitation.requestId}
           request={activeElicitation}
           onSubmit={(action, content) => {
             const { runId, requestId } = activeElicitation;

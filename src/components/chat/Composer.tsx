@@ -418,11 +418,14 @@ export function Composer({ threadId }: { threadId?: string }) {
               useRunsStore.getState().setDesiredConfig(thread.id, configId, configValue);
             }
           }
-          await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
-          await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
-          // The pending picks now belong to this thread; never to the next one.
-          if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
-          if (pendingConfig) useRunsStore.getState().clearDesiredConfig("");
+          try {
+            await dispatchRun(thread.id, text, images, pendingMode, pendingConfig);
+            await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
+            // The pending picks now belong to this thread; never to the next one.
+          } finally {
+            if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
+            if (pendingConfig) useRunsStore.getState().clearDesiredConfig("");
+          }
         } else {
           // Queue-aware: the backend queues while a run is active and
           // auto-dispatches when it finishes.
@@ -501,9 +504,12 @@ export function Composer({ threadId }: { threadId?: string }) {
     const onKey = (e: WindowEventMap["keydown"]) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       const target = e.target as HTMLElement | null;
-      if (target && target.tagName === "TEXTAREA" && !(target as HTMLTextAreaElement).readOnly) {
-        return;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "SELECT" || target.isContentEditable) return;
+        if (tag === "TEXTAREA" && !(target as HTMLTextAreaElement).readOnly) return;
       }
+      if (useUiStore.getState().paletteOpen || useRunsStore.getState().activeElicitation) return;
       const options = pendingApproval.options;
       const pick = (match: (kind: string) => boolean) =>
         options.find((o) => match(o.kind))?.optionId;
@@ -860,10 +866,6 @@ function ComposerStatusLine({
   const branch = useGitStore((s) =>
     threadId ? (s.byThread[threadId]?.status?.branch ?? null) : null,
   );
-  const refresh = useGitStore((s) => s.refresh);
-  useEffect(() => {
-    if (threadId) void refresh(threadId);
-  }, [threadId, refresh]);
 
   if (awaitingDecision) {
     return <span className="truncate text-xs text-warning">Decision needed — see above</span>;

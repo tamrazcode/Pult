@@ -120,6 +120,7 @@ function ProvidersSettings() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [authenticating, setAuthenticating] = useState<Record<string, boolean>>({});
   const [authAttempted, setAuthAttempted] = useState<Record<string, boolean>>({});
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const reload = async () => {
     if (!isTauri()) {
@@ -136,7 +137,7 @@ function ProvidersSettings() {
   };
 
   useEffect(() => {
-    void reload();
+    void reload().catch((err) => setSaveError(ipcErrorMessage(err)));
   }, []);
 
   const selected = useMemo(
@@ -153,8 +154,12 @@ function ProvidersSettings() {
     await reload();
   };
 
-  const toggle = (info: InstanceInfo) =>
-    void saveSpecs(specList(instances, info.id, { enabled: !info.enabled }));
+  const toggle = (info: InstanceInfo) => {
+    setSaveError(null);
+    void saveSpecs(specList(instances, info.id, { enabled: !info.enabled })).catch((err) =>
+      setSaveError(ipcErrorMessage(err)),
+    );
+  };
 
   const check = async (id: string) => {
     setChecking((m) => ({ ...m, [id]: true }));
@@ -198,34 +203,43 @@ function ProvidersSettings() {
   };
 
   const remove = async (id: string) => {
-    await providersInstancesSave(
-      instances
-        .filter((i) => i.id !== id)
-        .map((i) => ({
-          id: i.id,
-          displayName: i.displayName,
-          driver: i.driver,
-          command: i.command,
-          args: i.args,
-          env: i.env,
-          enabled: i.enabled,
-        })),
-    );
-    void reload();
+    setSaveError(null);
+    try {
+      await providersInstancesSave(
+        instances
+          .filter((i) => i.id !== id)
+          .map((i) => ({
+            id: i.id,
+            displayName: i.displayName,
+            driver: i.driver,
+            command: i.command,
+            args: i.args,
+            env: i.env,
+            enabled: i.enabled,
+          })),
+      );
+      await reload();
+    } catch (err) {
+      setSaveError(ipcErrorMessage(err));
+    }
   };
 
   const saveName = () => {
     if (!selected || nameDraft === null || !nameDraft.trim()) return;
-    void saveSpecs(specList(instances, selected.id, { displayName: nameDraft.trim() }));
-    setNameDraft(null);
+    setSaveError(null);
+    void saveSpecs(specList(instances, selected.id, { displayName: nameDraft.trim() }))
+      .then(() => setNameDraft(null))
+      .catch((err) => setSaveError(ipcErrorMessage(err)));
   };
 
   const saveRuntime = () => {
     if (!selected || !runtimeDraft) return;
     const { command, args } = fromRuntime(runtimeDraft);
     if (!command) return;
-    void saveSpecs(specList(instances, selected.id, { command, args }));
-    setRuntimeDraft(null);
+    setSaveError(null);
+    void saveSpecs(specList(instances, selected.id, { command, args }))
+      .then(() => setRuntimeDraft(null))
+      .catch((err) => setSaveError(ipcErrorMessage(err)));
   };
 
   return (
@@ -252,27 +266,37 @@ function ProvidersSettings() {
           {instances.map((info) => {
             const st = statusLine(info, reports[info.id], checking[info.id]);
             return (
-              <button
+              <div
                 key={info.id}
-                onClick={() => setSelectedId(info.id)}
-                className={`w-full rounded-(--radius-md) px-3 py-2 text-left transition ${
+                className={`w-full rounded-(--radius-md) transition ${
                   selectedId === info.id ? "bg-active" : "hover:bg-hover"
                 }`}
               >
-                <span className="flex items-center gap-2">
-                  <span
-                    className={`min-w-0 flex-1 truncate text-sm ${
-                      info.enabled ? "text-text-primary" : "text-text-tertiary"
-                    }`}
+                <div className="flex items-start gap-2 px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(info.id)}
+                    aria-pressed={selectedId === info.id}
+                    className="min-w-0 flex-1 text-left"
                   >
-                    {info.displayName}
-                  </span>
-                  <Toggle on={info.enabled} onClick={() => toggle(info)} />
-                </span>
-                <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
-                  {st.text}
-                </span>
-              </button>
+                    <span
+                      className={`block truncate text-sm ${
+                        info.enabled ? "text-text-primary" : "text-text-tertiary"
+                      }`}
+                    >
+                      {info.displayName}
+                    </span>
+                    <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
+                      {st.text}
+                    </span>
+                  </button>
+                  <Toggle
+                    on={info.enabled}
+                    label={`${info.enabled ? "Disable" : "Enable"} ${info.displayName}`}
+                    onClick={() => toggle(info)}
+                  />
+                </div>
+              </div>
             );
           })}
           {loaded && (
@@ -289,6 +313,11 @@ function ProvidersSettings() {
       {/* Detail pane (T3-style right column) */}
       <div className="relative min-w-0 flex-1 overflow-y-auto p-5">
         {!loaded && <p className="text-sm text-text-tertiary">Loading providers…</p>}
+        {saveError && (
+          <p className="mb-3 rounded-(--radius-md) border border-danger/40 bg-diff-del-bg px-3 py-2 text-sm text-danger">
+            {saveError}
+          </p>
+        )}
         {!selected && loaded && instances.length === 0 && (
           <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center">
             <Bot size={24} className="text-text-tertiary" aria-hidden />
@@ -496,11 +525,12 @@ function ProvidersSettings() {
 }
 
 /** T3-style switch. */
-function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
+function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; label: string }) {
   return (
     <button
       role="switch"
       aria-checked={on}
+      aria-label={label}
       onClick={(e) => {
         e.stopPropagation();
         onClick();

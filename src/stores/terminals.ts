@@ -31,9 +31,17 @@ interface TerminalsState {
 /** Live data subscribers — xterm panes register per terminal id. */
 const dataListeners = new Map<string, Set<DataListener>>();
 
-function base64ToText(b64: string): string {
+/** One decoder per terminal: a UTF-8 codepoint can straddle two chunks. */
+const decoders = new Map<string, TextDecoder>();
+
+function decodeChunk(terminalId: string, b64: string): string {
+  let decoder = decoders.get(terminalId);
+  if (!decoder) {
+    decoder = new TextDecoder("utf-8", { fatal: false });
+    decoders.set(terminalId, decoder);
+  }
   const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+  return decoder.decode(bytes, { stream: true });
 }
 
 export const useTerminalsStore = create<TerminalsState>((set, get) => ({
@@ -42,7 +50,9 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
   backfill: {},
 
   pushChunk: (payload) => {
-    const text = base64ToText(payload.data);
+    const text = decodeChunk(payload.terminalId, payload.data);
+    // A split codepoint is buffered inside the decoder; nothing to deliver yet.
+    if (text === "") return;
     const listeners = dataListeners.get(payload.terminalId);
     if (listeners && listeners.size > 0) {
       for (const listener of listeners) listener(text);
@@ -50,12 +60,10 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
     }
     // No live pane: keep for backfill (cap ~512 KiB per terminal).
     set((s) => {
-      const chunks = s.backfill[payload.terminalId] ?? [];
-      chunks.push(text);
+      const chunks = [...(s.backfill[payload.terminalId] ?? []), text];
       let size = chunks.reduce((acc, c) => acc + c.length, 0);
       while (size > 512 * 1024 && chunks.length > 1) {
-        size -= chunks[0].length;
-        chunks.shift();
+        size -= (chunks.shift() ?? "").length;
       }
       return { backfill: { ...s.backfill, [payload.terminalId]: chunks } };
     });
@@ -106,14 +114,18 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
 
   removeTerminal: (threadId, terminalId) =>
     set((s) => {
+      decoders.delete(terminalId);
       const list = (s.byThread[threadId] ?? []).filter((t) => t.terminalId !== terminalId);
       const active =
         s.activeByThread[threadId] === terminalId
           ? (list[list.length - 1]?.terminalId ?? null)
           : s.activeByThread[threadId];
+      const { [terminalId]: _dropped, ...backfill } = s.backfill;
+      void _dropped;
       return {
         byThread: { ...s.byThread, [threadId]: list },
         activeByThread: { ...s.activeByThread, [threadId]: active },
+        backfill,
       };
     }),
 

@@ -86,15 +86,24 @@ function useInstanceOptions(threadId?: string) {
     activeRunId ? s.viewsByRun[activeRunId]?.configOptions : undefined,
   );
   const instance = instances.find((candidate) => candidate.id === selectedInstanceId);
-  const options =
-    (activeRun &&
-    (activeRun.status === "running" || activeRun.status === "queued") &&
-    activeRun.instanceId === selectedInstanceId
-      ? liveOptions
-      : undefined) ??
-    instance?.configOptions ??
-    [];
-  return { instances, instance, options, activeRun, liveOptions, desired, selectedInstanceId };
+  // A live session only owns this picker when the running agent is the selected one.
+  const hasLiveRun = Boolean(
+    activeRun && (activeRun.status === "running" || activeRun.status === "queued"),
+  );
+  // A live session only owns this picker when the running agent is the selected one.
+  const liveOnSelected = hasLiveRun && activeRun?.instanceId === selectedInstanceId;
+  const options = (liveOnSelected ? liveOptions : undefined) ?? instance?.configOptions ?? [];
+  return {
+    instances,
+    instance,
+    options,
+    activeRun,
+    liveOptions,
+    hasLiveRun,
+    liveOnSelected,
+    desired,
+    selectedInstanceId,
+  };
 }
 
 const REASONING_OPTION_IDS = new Set([
@@ -325,6 +334,8 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     options,
     activeRun,
     liveOptions,
+    hasLiveRun,
+    liveOnSelected,
     desired,
   } = useInstanceOptions(threadId);
   const setSelectedInstanceId = useUiStore((s) => s.setSelectedInstanceId);
@@ -375,7 +386,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
 
   const pickConfig = (id: string, value: ConfigOptionValue) => {
     useRunsStore.getState().setDesiredConfig(threadId ?? "", id, value);
-    if (threadId && isTauri()) {
+    if (threadId && isTauri() && (!hasLiveRun || liveOnSelected)) {
       runsSetConfigOption(threadId, id, value).catch((err) =>
         console.error("runs_set_config_option failed", err),
       );

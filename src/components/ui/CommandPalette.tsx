@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useThreadsStore } from "../../stores/threads";
+import { useProjectsStore } from "../../stores/projects";
 import { useUiStore } from "../../stores/ui";
 import { buildCommands, type Command } from "../../lib/commands";
 import { bindingFor, formatBinding, matchesBinding } from "../../lib/hotkeys";
@@ -26,6 +27,7 @@ export function CommandPalette({ open, onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const navigate = useMemo(() => (path: string) => void router.navigate({ to: path }), [router]);
 
@@ -50,10 +52,12 @@ export function CommandPalette({ open, onClose }: Props) {
 
   useEffect(() => {
     if (open) {
+      previousFocusRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setCursor(0);
       // focus after the modal mounts
       requestAnimationFrame(() => inputRef.current?.focus());
+      return () => previousFocusRef.current?.focus();
     }
   }, [open]);
 
@@ -216,6 +220,7 @@ export function useGlobalHotkeys(openPalette: () => void): void {
       if (typing) return;
       if (b("chat.new") && matchesBinding(e, b("chat.new")!)) {
         e.preventDefault();
+        useProjectsStore.getState().selectProject(null);
         navigate("/chat");
         return;
       }
