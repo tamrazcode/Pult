@@ -1086,6 +1086,128 @@ pub async fn workspace_read_text(
     .map_err(|e| PultError::internal(format!("read text failed: {e}")))?
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderUpdate {
+    pub instance_id: String,
+    pub display_name: String,
+    pub package: Option<String>,
+    pub current: Option<String>,
+    pub latest: Option<String>,
+    pub managed: bool,
+}
+
+fn npm_outdated() -> std::collections::BTreeMap<String, (Option<String>, Option<String>)> {
+    let mut command = std::process::Command::new("cmd");
+    command.args(["/c", "npm", "outdated", "-g", "--json"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let Ok(output) = command.output() else {
+        return Default::default();
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&output.stdout) else {
+        return Default::default();
+    };
+    let mut map = std::collections::BTreeMap::new();
+    if let Some(entries) = value.as_object() {
+        for (package, info) in entries {
+            let current = info.get("current").and_then(|v| v.as_str()).map(str::to_string);
+            let latest = info.get("latest").and_then(|v| v.as_str()).map(str::to_string);
+            if current != latest {
+                map.insert(package.clone(), (current, latest));
+            }
+        }
+    }
+    map
+}
+
+fn match_updates(
+    instances: &[crate::config::InstanceSpec],
+    outdated: &std::collections::BTreeMap<String, (Option<String>, Option<String>)>,
+) -> Vec<ProviderUpdate> {
+    instances
+        .iter()
+        .map(|instance| {
+            let haystack = format!("{} {}", instance.command, instance.args.join(" "));
+            let package = outdated
+                .keys()
+                .find(|package| haystack.contains(package.as_str()))
+                .cloned();
+            let found = package.as_ref().and_then(|pkg| outdated.get(pkg));
+            ProviderUpdate {
+                instance_id: instance.id.clone(),
+                display_name: instance.display_name.clone(),
+                package,
+                current: found.and_then(|(current, _)| current.clone()),
+                latest: found.and_then(|(_, latest)| latest.clone()),
+                managed: found.is_some(),
+            }
+        })
+        .collect()
+}
+
+/// Checks installed global npm packages for updates matching configured agents.
+#[tauri::command]
+pub async fn providers_update_check(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<Vec<ProviderUpdate>, PultError> {
+    let instances = runtime.instances_spec();
+    tokio::task::spawn_blocking(move || Ok(match_updates(&instances, &npm_outdated())))
+        .await
+        .map_err(|e| PultError::internal(format!("update check failed: {e}")))?
+}
+
+/// Installs the verified latest version of one agent's npm package.
+#[tauri::command]
+pub async fn providers_update_install(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    instance_id: String,
+) -> Result<(), PultError> {
+    let instances = runtime.instances_spec();
+    let instance = instances
+        .iter()
+        .find(|instance| instance.id == instance_id)
+        .ok_or_else(|| PultError::internal("unknown instance"))?
+        .clone();
+    tokio::task::spawn_blocking(move || {
+        let outdated = npm_outdated();
+        let haystack = format!("{} {}", instance.command, instance.args.join(" "));
+        let package = outdated
+            .keys()
+            .find(|package| haystack.contains(package.as_str()))
+            .cloned()
+            .ok_or_else(|| PultError::internal("no managed update for this provider"))?;
+        if !package
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '/' | '.' | '-' | '_'))
+        {
+            return Err(PultError::internal("unsafe package name"));
+        }
+        let mut command = std::process::Command::new("cmd");
+        command.args(["/c", "npm", "install", "-g", &format!("{package}@latest")]);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let output = command
+            .output()
+            .map_err(|e| PultError::internal(format!("npm install failed: {e}")))?;
+        if !output.status.success() {
+            return Err(PultError::internal(format!(
+                "npm install failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            )));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("update install failed: {e}")))?
+}
+
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
 #[tauri::command]
@@ -1157,6 +1279,35 @@ mod external_url_tests {
         assert!(validate_external_url("https://example.com/\nnext").is_err());
         assert!(validate_external_url("https://example.com/a b").is_err());
         assert!(validate_external_url("https://example.com/\"q\"").is_err());
+    }
+}
+
+#[cfg(test)]
+mod update_tests {
+    use super::match_updates;
+    use crate::config::InstanceSpec;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn matches_instances_to_outdated_npm_packages() {
+        let mut outdated = BTreeMap::new();
+        outdated.insert(
+            "@scope/agent".to_string(),
+            (Some("1.0.0".to_string()), Some("1.1.0".to_string())),
+        );
+        let instances = vec![InstanceSpec {
+            id: "agent".to_string(),
+            display_name: "Agent".to_string(),
+            driver: "acp".to_string(),
+            command: "node".to_string(),
+            args: vec!["/npm/@scope/agent/cli.js".to_string()],
+            env: Default::default(),
+            enabled: true,
+        }];
+        let updates = match_updates(&instances, &outdated);
+        assert_eq!(updates[0].package.as_deref(), Some("@scope/agent"));
+        assert_eq!(updates[0].latest.as_deref(), Some("1.1.0"));
+        assert!(updates[0].managed);
     }
 }
 

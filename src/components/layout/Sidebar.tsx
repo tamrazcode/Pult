@@ -5,8 +5,10 @@ import {
   BarChart3,
   ChevronDown,
   ChevronRight,
+  Download,
   FolderPlus,
   GitPullRequest,
+  Loader2,
   Plus,
   RefreshCw,
   Search,
@@ -17,7 +19,12 @@ import {
 } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
-import { runsCancel } from "../../lib/ipc";
+import {
+  providersUpdateCheck,
+  providersUpdateInstall,
+  runsCancel,
+  type ProviderUpdate,
+} from "../../lib/ipc";
 import { useUiStore } from "../../stores/ui";
 import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
@@ -234,6 +241,8 @@ export function Sidebar({ width }: { width: number }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [updates, setUpdates] = useState<ProviderUpdate[]>([]);
+  const [installing, setInstalling] = useState(false);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -285,6 +294,27 @@ export function Sidebar({ width }: { width: number }) {
     void useProjectsStore.getState().loadProjects();
     void useThreadsStore.getState().loadThreads();
     void useUiStore.getState().loadInstances();
+    if (!isTauri()) return;
+    void providersUpdateCheck()
+      .then(setUpdates)
+      .catch(() => setUpdates([]));
+  };
+
+  const installUpdates = () => {
+    if (installing) return;
+    setInstalling(true);
+    void (async () => {
+      for (const update of updates) {
+        try {
+          await providersUpdateInstall(update.instanceId);
+        } catch (err) {
+          console.error("provider update failed", err);
+        }
+      }
+      setUpdates([]);
+      refresh();
+      setInstalling(false);
+    })();
   };
 
   const copyPath = (path: string) => {
@@ -596,14 +626,38 @@ export function Sidebar({ width }: { width: number }) {
             <BarChart3 size={16} />
           </button>
         </Tooltip>
-        <Tooltip label="Refresh">
+        <Tooltip
+          label={
+            installing
+              ? "Updating providers…"
+              : updates.length > 0
+                ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
+                : "Check provider updates"
+          }
+        >
           <button
             type="button"
             aria-label="Refresh"
-            onClick={refresh}
-            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            title={
+              installing
+                ? "Updating providers…"
+                : updates.length > 0
+                  ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
+                  : "Check provider updates"
+            }
+            onClick={updates.length > 0 ? installUpdates : refresh}
+            className="relative flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
           >
-            <RefreshCw size={15} />
+            {installing ? (
+              <Loader2 size={15} className="animate-spin" />
+            ) : updates.length > 0 ? (
+              <Download size={15} className="text-accent" />
+            ) : (
+              <RefreshCw size={15} />
+            )}
+            {updates.length > 0 && !installing && (
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent" />
+            )}
           </button>
         </Tooltip>
       </footer>

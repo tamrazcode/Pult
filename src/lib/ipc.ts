@@ -302,6 +302,25 @@ export function providersWarmup(instanceId: string, workspace?: string | null): 
   return invokeRequired<void>("providers_warmup", { instanceId, workspace });
 }
 
+export interface ProviderUpdate {
+  instanceId: string;
+  displayName: string;
+  package: string | null;
+  current: string | null;
+  latest: string | null;
+  managed: boolean;
+}
+
+/** Checks npm-distributed provider CLIs for newer global versions. */
+export function providersUpdateCheck(): Promise<ProviderUpdate[]> {
+  return invokeRequired<ProviderUpdate[]>("providers_update_check");
+}
+
+/** Installs the verified latest version of one provider package. */
+export function providersUpdateInstall(instanceId: string): Promise<void> {
+  return invokeRequired<void>("providers_update_install", { instanceId });
+}
+
 /** Agent-managed sign-in: authenticate + session re-probe. */
 export function providersAuthenticate(
   instanceId: string,

@@ -433,7 +433,7 @@ describe("Sidebar", () => {
       { name: /^settings$/i, label: /settings/i },
       { name: /^pull requests$/i, label: /pull requests/i },
       { name: /^usage$/i, label: /usage/i },
-      { name: /refresh/i, label: /refresh/i },
+      { name: /^refresh$/i, label: /check provider updates/i },
     ];
 
     for (const entry of footerButtons) {

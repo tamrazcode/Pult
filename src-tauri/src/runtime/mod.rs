@@ -450,6 +450,15 @@ impl AgentRuntime {
         &self.store
     }
 
+    /// Raw configured instances (update checks need command/args).
+    pub fn instances_spec(&self) -> Vec<crate::config::InstanceSpec> {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .instances
+            .clone()
+    }
+
     /// Agent matrix projection (§4.3): configured instances + capabilities
     /// from the last handshake each completed (empty until the first run).
     pub fn instances(&self) -> Vec<InstanceInfo> {

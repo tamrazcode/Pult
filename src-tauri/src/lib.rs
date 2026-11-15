@@ -181,6 +181,8 @@ pub fn run() {
             ipc::settings_set,
             ipc::providers_preflight,
             ipc::providers_warmup,
+            ipc::providers_update_check,
+            ipc::providers_update_install,
             ipc::providers_authenticate,
             ipc::usage_report,
         ])
