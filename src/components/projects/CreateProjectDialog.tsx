@@ -15,7 +15,9 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
   const router = useRouter();
   const [rootPath, setRootPath] = useState("");
   const [name, setName] = useState("");
-  const [color, setColor] = useState(PROJECT_COLORS[0]);
+  const [color, setColor] = useState(
+    () => PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)],
+  );
   const [strategy, setStrategy] = useState<"root" | "worktree">("root");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -26,7 +28,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
     if (!open) return;
     setRootPath("");
     setName("");
-    setColor(PROJECT_COLORS[0]);
+    setColor(PROJECT_COLORS[Math.floor(Math.random() * PROJECT_COLORS.length)]);
     setStrategy("root");
     setError(null);
     setBusy(false);

@@ -122,4 +122,28 @@ describe("thread actions", () => {
     expect(navigate).not.toHaveBeenCalled();
     expect(useThreadsStore.getState().threads).toHaveLength(1);
   });
+
+  it("closes the Thread actions menu on outside mousedown and on Escape", async () => {
+    render(<ChatHeader title="Old title" threadId="th" />);
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(screen.getByRole("menuitem", { name: /Snooze/ })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: /Mark settled/ })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: /Delete thread/ })).toBeVisible();
+
+    fireEvent.mouseDown(document.body);
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: /Snooze/ })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: /Mark settled/ })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: /Delete thread/ })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Thread actions" }));
+    expect(screen.getByRole("menuitem", { name: /Delete thread/ })).toBeVisible();
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => {
+      expect(screen.queryByRole("menuitem", { name: /Snooze/ })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: /Mark settled/ })).toBeNull();
+      expect(screen.queryByRole("menuitem", { name: /Delete thread/ })).toBeNull();
+    });
+  });
 });

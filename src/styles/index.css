@@ -95,7 +95,7 @@
   }
 
   ::selection {
-    background: color-mix(in oklab, var(--accent) 32%, transparent);
+    background: color-mix(in oklab, var(--text-primary) 18%, transparent);
   }
 
   /* T3 Code's faint fractal-noise grain: subtle brightening over true black. */
@@ -110,8 +110,8 @@
   }
 
   :where(button, a, input, textarea, select, [tabindex]):focus-visible {
-    box-shadow: var(--focus-ring) !important;
-    outline: none;
+    outline: 1px solid var(--border-strong);
+    outline-offset: 1px;
   }
 
   ::-webkit-scrollbar {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as IpcModule from "../src/lib/ipc";
 import type { Project, Run, Thread } from "../src/lib/types";
@@ -317,16 +317,29 @@ describe("Sidebar", () => {
     expect(screen.queryByRole("button", { name: /new thread with workspace/i })).toBeNull();
   });
 
-  it("renders project rows with colored initials", () => {
+  it("renders project rows with colored initials badge and right-aligned chevron", () => {
     render(<Sidebar width={288} />);
 
-    expect(screen.getByText("Alpha")).toBeVisible();
-    const alphaBadge = Array.from(document.querySelectorAll("[style]")).find(
-      (el) =>
-        (el as HTMLElement).style.backgroundColor === "rgb(52, 107, 241)" &&
-        /^a/i.test(el.textContent?.trim() ?? ""),
+    const alphaName = screen.getByText("Alpha");
+    expect(alphaName).toBeVisible();
+    const row = alphaName.closest("[data-project-row]");
+    expect(row).not.toBeNull();
+
+    const badge = row!.querySelector<HTMLElement>("[data-project-badge]");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent?.trim()).toBe("AL");
+    expect(badge!.style.color).toBe("rgb(52, 107, 241)");
+
+    const toggle = row!.querySelector<HTMLButtonElement>("button[aria-expanded]");
+    expect(toggle).not.toBeNull();
+    expect(toggle).toHaveAttribute("data-project-chevron", "right");
+
+    const nameInToggle = within(toggle!).getByText("Alpha");
+    const chevron = toggle!.querySelector("svg.lucide-chevron-down, svg.lucide-chevron-right");
+    expect(chevron).not.toBeNull();
+    expect(nameInToggle.compareDocumentPosition(chevron!) & Node.DOCUMENT_POSITION_FOLLOWING).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
     );
-    expect(alphaBadge).toBeTruthy();
   });
 
   it("collapsing a project hides its nested threads", async () => {
@@ -375,13 +388,13 @@ describe("Sidebar", () => {
     expect(readRow!.querySelector(unreadDotSelector)).toBeNull();
   });
 
-  it("renders footer navigation and a toolbar refresh action", async () => {
+  it("renders footer navigation and a footer refresh action", async () => {
     render(<Sidebar width={288} />);
 
-    const settingsBtn = screen.getByRole("button", { name: /settings/i });
-    const prsBtn = screen.getByRole("button", { name: /pull requests/i });
-    const usageBtn = screen.getByRole("button", { name: /usage/i });
-    const refreshBtn = screen.getByRole("button", { name: /refresh projects and threads/i });
+    const settingsBtn = screen.getByRole("button", { name: /^settings$/i });
+    const prsBtn = screen.getByRole("button", { name: /^pull requests$/i });
+    const usageBtn = screen.getByRole("button", { name: /^usage$/i });
+    const refreshBtn = screen.getByRole("button", { name: /^refresh$/i });
 
     await userEvent.click(settingsBtn);
     expect(navigate).toHaveBeenCalledWith(
@@ -404,6 +417,39 @@ describe("Sidebar", () => {
       expect(projectsList).toHaveBeenCalled();
       expect(threadsList).toHaveBeenCalled();
     });
+  });
+
+  it("renders Search placeholder and icon-only footer buttons with tooltips", async () => {
+    const user = userEvent.setup();
+    render(<Sidebar width={288} />);
+
+    const searchInput = screen.getByPlaceholderText("Search");
+    expect(searchInput).toHaveAttribute("aria-label", "Search threads");
+
+    const footer = document.querySelector<HTMLElement>("aside footer");
+    expect(footer).not.toBeNull();
+
+    const footerButtons = [
+      { name: /^settings$/i, label: /settings/i },
+      { name: /^pull requests$/i, label: /pull requests/i },
+      { name: /^usage$/i, label: /usage/i },
+      { name: /refresh/i, label: /refresh/i },
+    ];
+
+    for (const entry of footerButtons) {
+      const btn = within(footer!).getByRole("button", { name: entry.name });
+      expect(btn.textContent?.trim()).toBe("");
+      expect(btn.querySelector("svg")).not.toBeNull();
+
+      await user.hover(btn);
+      await waitFor(() => {
+        expect(screen.getByRole("tooltip")).toHaveTextContent(entry.label);
+      });
+      await user.unhover(btn);
+      await waitFor(() => {
+        expect(screen.queryByRole("tooltip")).toBeNull();
+      });
+    }
   });
 
   it("opens project context menu with exact items and requires two-step Delete confirmation", async () => {

@@ -87,6 +87,7 @@ import {
   pickerModeId,
 } from "../src/components/chat/ComposerControls";
 import { ProviderLogo } from "../src/components/chat/ProviderLogo";
+import { useGitStore } from "../src/stores/git";
 import { useProjectsStore } from "../src/stores/projects";
 import { useRunsStore } from "../src/stores/runs";
 import { useSettingsStore } from "../src/stores/settings";
@@ -1088,5 +1089,87 @@ describe("composer", () => {
     workspaceFiles.mockResolvedValue(["src/App.tsx"]);
     fireEvent.change(multilineTextarea, { target: { value: "inspect @App" } });
     expect(await screen.findByRole("listbox", { name: "Workspace files" })).toBeTruthy();
+  });
+
+  it("omits workspace and branch status line while keeping attach, provider picker, overflow, and send", () => {
+    useRunsStore.setState({ runsByThread: {} });
+    useProjectsStore.setState({ projects: [], selectedProjectId: null });
+    useThreadsStore.setState({ threads: [], activeThreadId: null });
+    useGitStore.setState({ byThread: {} });
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance({ displayName: "Claude Code", promptImage: true })],
+    });
+
+    const { unmount } = render(<Composer />);
+    expect(screen.queryByText("No workspace selected")).toBeNull();
+    unmount();
+
+    useProjectsStore.setState({
+      projects: [
+        {
+          id: "p1",
+          name: "Alpha",
+          rootPath: "C:\\work\\alpha",
+          color: "#346bf1",
+          worktreeStrategy: "root",
+          pinned: false,
+          createdAt: 0,
+        },
+      ],
+      selectedProjectId: "p1",
+    });
+    useThreadsStore.setState({
+      threads: [
+        {
+          id: "th",
+          projectId: "p1",
+          title: "Alpha thread",
+          workspace: "C:\\work\\alpha",
+          status: "draft",
+          pinned: false,
+          createdAt: 0,
+          updatedAt: 0,
+        },
+      ],
+      activeThreadId: "th",
+    });
+    useGitStore.setState({
+      byThread: {
+        th: {
+          status: {
+            repoRoot: "C:\\work\\alpha",
+            branch: "feat/no-status",
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            entries: [],
+          },
+          diff: null,
+          filePatches: {},
+          notRepo: false,
+          loading: false,
+          error: null,
+          commitMessage: "",
+          busy: null,
+          lastCommit: null,
+          lastCommitMessage: null,
+          pushedSha: null,
+          prUrl: null,
+          reviewed: {},
+        },
+      },
+    });
+
+    const { container } = render(<Composer threadId="th" />);
+    expect(screen.queryByText("No workspace selected")).toBeNull();
+    expect(screen.queryByText(/C:\\work\\alpha/i)).toBeNull();
+    expect(container.textContent).not.toContain("C:\\work\\alpha");
+    expect(container.textContent).not.toContain("No workspace selected");
+
+    expect(screen.getByLabelText("Attach images")).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Claude Code/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Composer options" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 });

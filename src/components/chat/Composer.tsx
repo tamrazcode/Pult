@@ -811,7 +811,6 @@ export function Composer({ threadId }: { threadId?: string }) {
               <Paperclip size={15} />
             </span>
           )}
-          <ComposerStatusLine threadId={threadId} awaitingDecision={awaitingDecision} />
           <div className="flex-1" />
           <ProviderModelPicker threadId={threadId} />
           <ComposerOverflowMenu threadId={threadId} />
@@ -840,45 +839,5 @@ export function Composer({ threadId }: { threadId?: string }) {
         </div>
       </div>
     </div>
-  );
-}
-
-/**
- * Identity of where the next run lands (§6.1 status line): the thread's
- * workspace and its git branch. Decisions that need attention surface here
- * too ("Decision needed") because it sits on the send path.
- */
-function ComposerStatusLine({
-  threadId,
-  awaitingDecision,
-}: {
-  threadId?: string;
-  awaitingDecision: boolean;
-}) {
-  const threadWorkspace = useThreadsStore((s) =>
-    threadId ? (s.threads.find((t) => t.id === threadId)?.workspace ?? null) : null,
-  );
-  const projectRoot = useProjectsStore((s) =>
-    threadId
-      ? null
-      : (s.projects.find((project) => project.id === s.selectedProjectId)?.rootPath ?? null),
-  );
-  const branch = useGitStore((s) =>
-    threadId ? (s.byThread[threadId]?.status?.branch ?? null) : null,
-  );
-
-  if (awaitingDecision) {
-    return <span className="truncate text-xs text-warning">Decision needed — see above</span>;
-  }
-  const raw = threadWorkspace ?? projectRoot;
-  if (!raw) {
-    return <span className="truncate text-xs text-text-tertiary">No workspace selected</span>;
-  }
-  const path = raw.replace(/^\\\\\?\\/, "").replace(/^C:\\Users\\[^\\]+/i, "~");
-  return (
-    <span title={raw} className="min-w-0 truncate font-mono text-xs text-text-tertiary tnum">
-      {path}
-      {branch ? ` · ${branch}` : ""}
-    </span>
   );
 }

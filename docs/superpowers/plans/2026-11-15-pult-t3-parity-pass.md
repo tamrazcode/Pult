@@ -38,7 +38,7 @@
 1. **Right panel & project context resolution:** `RightPanel` must resolve project metadata cleanly both on `/thread/$threadId` (via `thread.projectId`) and `/chat` (via `projectsStore.selectedProjectId`), keep `DiffPanel` / `TerminalPanel` state intact across surface switches, and validate `open_in_editor` paths against canonical directories with no shell interpolation.
 2. **Preflight boundedness & warm pool safety:** Startup preflight must never block `lib.rs` window creation, must bound concurrency (`<= 3`) and per-provider timeout (`20s`), and `IdlePool` pre-warmed slots must check `spawn_sig`, `instance_id`, `root`, `!conn.is_dead()`, and `IDLE_TTL` before reuse.
 3. **Image sandbox & memory safety:** `read_image_data_url` must confine relative workspace paths via canonical `starts_with` inside the thread/project workspace (rejecting `..` escapes, UNC paths, and `> 20 MB` files), and inline base64 images must persist losslessly in SQLite `events`.
-4. **Native context menu & selection preservation:** Capturing selection ranges *before* rendering the custom `ContextMenu` prevents button focus from wiping `textarea.selectionStart`/`selectionEnd` or `window.getSelection()`.
+4. **Native context menu & selection preservation:** Capturing selection ranges _before_ rendering the custom `ContextMenu` prevents button focus from wiping `textarea.selectionStart`/`selectionEnd` or `window.getSelection()`.
 5. **Warm latency & optimistic reconciliation:** Optimistic user turns in `useRunsStore` must never duplicate the real `user_message` event when `run:started` and `run:event` arrive, and must roll back cleanly on IPC error.
 
 ---
@@ -169,7 +169,8 @@
     inst: Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">,
   ): ProviderBrand;
   export function ProviderLogo(props: {
-    instance: Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args"> | null | undefined;
+    instance:
+      Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args"> | null | undefined;
     className?: string;
   }): ReactElement;
   ```
@@ -463,7 +464,8 @@
 ### Task 10: App-wide custom Context Menus (disable native menu, editable/selection, thread/project/message)
 
 **Design Decision:** Register a global `contextmenu` listener in `src/routes/__root.tsx` that calls `e.preventDefault()` everywhere so the native Tauri/WebView2 right-click menu never appears. When an element handles its own domain menu (`Sidebar` project/thread rows, `MessagesTimeline` message rows), it opens a global or local `ContextMenu` and calls `e.stopPropagation()` (or sets a flag). Otherwise, our global context menu handler inspects:
-1. Editable target (`HTMLInputElement`, `HTMLTextAreaElement`, `[contenteditable="true"]`): captures selection range `{ start, end }` *before* menu mount and opens `ContextMenu` with **Cut**, **Copy**, **Paste**, separator, **Select All** (using clipboard API + `setRangeText` + synthetic `input` event for React controlled inputs).
+
+1. Editable target (`HTMLInputElement`, `HTMLTextAreaElement`, `[contenteditable="true"]`): captures selection range `{ start, end }` _before_ menu mount and opens `ContextMenu` with **Cut**, **Copy**, **Paste**, separator, **Select All** (using clipboard API + `setRangeText` + synthetic `input` event for React controlled inputs).
 2. Non-editable non-empty text selection (`window.getSelection()?.toString()`): opens `ContextMenu` with **Copy**.
 3. For thread rows in `Sidebar.tsx`: keep real `Pin`/`Unpin`, `Settle`, `Snooze`, `Rename`, `Mark unread`, `Copy path`, `Project settings`, `Archive`, `Delete`, and add real **`Filter by project`** (toggles `projectFilterId` filter in `Sidebar.tsx` with a clearable filter pill in the sidebar filter strip). **Explicitly skip `Regenerate title`** because ACP has no standalone stateless title-regeneration endpoint (no dead/fake control).
 4. Add right-click `ContextMenu` on `UserRow` and `TextRow` in `MessagesTimeline.tsx` (`Copy`, `Branch`).
@@ -489,7 +491,9 @@
     selection: { start: number; end: number; text: string },
   ): Array<ContextMenuItem | "separator">;
 
-  export function buildSelectionMenuItems(selectedText: string): Array<ContextMenuItem | "separator">;
+  export function buildSelectionMenuItems(
+    selectedText: string,
+  ): Array<ContextMenuItem | "separator">;
   ```
 
 **Steps:**
@@ -518,6 +522,7 @@
 ### Task 11: Streamlined Empty State (`"What should we work on?"`) & inline flat Composer controls
 
 **Design Decision:** Match T3 Code's quiet centered empty state and minimal bottom composer bar:
+
 - In `NewChatEmptyState.tsx`: delete the large `<PultLogo />`; keep `asciiBackdrop()` as the live background (upgraded by Task 24); render `"What should we work on?"` with active project context subtitle (e.g. `Alpha · C:\work\alpha` or `"Select a project or start typing."`).
 - In `ComposerControls.tsx` & `Composer.tsx`: strip the pill border/background (`border border-border-subtle bg-surface`) off `ProviderModelPicker` so `[ProviderLogo] Model Reasoning ▾` reads as one flat inline line; promote `ModePill` (`"Full access"` / `"Supervised"` / `"Auto edits"` with `ShieldCheck` icon) directly into the composer bottom bar as a flat inline trigger; keep `AgentModePicker` + remaining non-model/non-reasoning options in `ComposerOverflowMenu`, hiding the `⋯` overflow trigger whenever it has 0 items. Confirm zero microphone control exists.
 
@@ -549,6 +554,7 @@
 ### Task 12: Neutral focus rings, text selection, and T3-style user message bubbles
 
 **Design Decision:** Remove loud purple/accent focus glows and tinted selections while keeping WCAG accessibility (`>= 4.5:1` contrast tests in `tests/theme-contrast.test.ts` remain green):
+
 - Update `--focus-ring` in `src/styles/tokens.css`, `src/styles/themes/{light,graphite,liquid}.css`, and `src/lib/theme.ts` to subtle neutral `0 0 0 1px var(--border-strong)` (no accent color glow).
 - Update `::selection` in `src/styles/index.css` from `color-mix(in oklab, var(--accent) 32%, transparent)` to neutral `color-mix(in oklab, var(--text-primary) 15%, transparent)`.
 - Replace `bg-mention-bg` on `UserRow` in `src/components/chat/MessagesTimeline.tsx` with neutral outlined/soft surface styling (`rounded-(--radius-lg) border border-border-subtle bg-surface px-3.5 py-2 text-base whitespace-pre-wrap text-text-primary`).
@@ -621,6 +627,7 @@
 ### Task 14: Perf baseline + Pre-warm selected provider/session & `IdlePool` warm reuse
 
 **Design Decision:** `IdlePool` currently keys exclusively by `thread_id`, which forces every brand-new thread or `/chat` send to pay cold process spawn + `initialize()` + `session/new` (`~1.5–25s` depending on agent). Generalize `IdlePool` with a standby warm map keyed by `(instance_id, root, spawn_sig)` (bounded within `MAX_IDLE_CONNS`):
+
 1. Add `providers_warmup(instance_id, workspace)` IPC command + `AgentRuntime::warmup` invoked non-blockingly at startup (for the first/selected enabled instance on active workspace) and from the frontend whenever `selectedInstanceId` or active project changes.
 2. When `run_turn` runs for a thread with no `thread_id` entry in `IdlePool` and no prior `remote_session_id` to `session/load`, it first checks `pool.take_warm(instance_id, root, spawn_sig)`. If found and `!conn.is_dead()`, it skips spawn + `initialize()` + `session/new` completely and sends `session/prompt` immediately (targeting warm first delta `<= 2s`).
 3. Measure cold vs warm turns with `node scripts/perf-turn.mjs` before and after, documenting numbers honestly in `DEVLOG.md`.
@@ -761,6 +768,7 @@
 **Files:** `src/components/layout/Sidebar.tsx`, `src/lib/projectColor.ts` (new), `src/routes/settings.projects.tsx` (creation color), tests `tests/sidebar.test.tsx`.
 
 **Requirements:**
+
 - Move the collapse/expand chevron to the **right edge** of the project row (before star and `+`); the name stays left with the badge.
 - Project badge: at creation assign a random hue (persisted in `project.color` as a hue seed, not a solid fill). Render background `hsl(h 45% 16%)` and initials `hsl(h 70% 72%)` — same hue, dark surface, normal-bright text. Existing projects without a hue derive one deterministically from the project id/name so colors are stable.
 - Initials font smaller (10–11px), generous padding, 6–7px radius; badge ~20–22px.
@@ -771,6 +779,7 @@
 **Files:** `src/components/chat/Composer.tsx`, tests `tests/composer.test.tsx`.
 
 **Requirements:**
+
 - Delete `ComposerStatusLine` and its git refresh effect: the Right Panel `ProjectCard` is now the single place for workspace/branch. No duplicate "~\Desktop\... · main" row inside the composer.
 - Composer bottom row then starts with the attach button; keep "Decision needed" surfacing on the approval card instead.
 
@@ -779,6 +788,7 @@
 **Files:** `src/components/chat/ComposerControls.tsx`, `src/stores/settings.ts`, `src/lib/types.ts`, tests `tests/composer.test.tsx` / new `tests/provider-picker.test.tsx`.
 
 **Requirements:**
+
 - The composer picker popover gets a top **provider icon tab row** (real logos; selected tab highlighted; `+` opens Manage providers), a `Search models…` input filtering the model list, model rows with name + `Ctrl 1…9` shortcut badges + favorite star, a checked row for the current model, and a reasoning control at the bottom: slider/segmented values plus a `Select effort` dropdown label (from the agent's reasoning option; hide the slider when the agent exposes only a boolean toggle, show On/Off).
 - Favorites persist in settings (`favoriteModels: Record<instanceId, string[]>`); shortcuts are shown and actually select the nth visible model while the popover is open.
 - Only real advertised models/options; no invented entries. When a provider has no model list, show "Default model (provider-managed)" and hide the search.
@@ -789,6 +799,7 @@
 **Files:** `src/components/chat/Composer.tsx`, `src/lib/ipc.ts`, tests `tests/composer.test.tsx`.
 
 **Requirements:**
+
 - Queued messages render as compact rows above the composer: drag-handle glyph, message text, `↑ Edit` ("Скорректировать") control, pencil, trash. Edit removes the queue item and loads its text (and images) back into the composer; trash removes it. Drag handle may be decorative only if reordering is not implemented — otherwise implement reorder; no fake drag that silently does nothing (use a static grip with tooltip "Queued" if no reorder).
 - Keep the "queued sends when the current turn ends" semantics; add the hint line under the queue rows ("Keep typing to queue another message").
 - While a run is active and the composer has text/images, the primary button becomes the **queue icon** (list-plus, blue circle), not an arrow and not stop; clicking queues. With an empty composer it stays Stop.
@@ -798,6 +809,7 @@
 **Files:** `src/components/chat/MessagesTimeline.tsx`, `src/lib/toolSummary.ts` (new), tests `tests/messages-timeline.test.tsx` (new or existing).
 
 **Requirements:**
+
 - Expanded tool details show a readable summary first: command text, file path, query, or output text. Never show opaque `exec-…` ids as the primary content.
 - Raw input/output JSON moves behind a `Raw`/`Details` toggle (collapsed by default). Strip `id`/`exec-*` fields from the readable layer.
 - `Image generation` tool output renders the generated image inline when present (wired with Task 6); otherwise a short status line.
@@ -808,6 +820,7 @@
 **Files:** `src/components/ui/Popover.tsx` (new shared primitive if not present), `src/components/chat/ChatHeader.tsx`, `src/components/layout/Sidebar.tsx`, `src/components/chat/ComposerControls.tsx`, `src/components/chat/Composer.tsx`, `src/components/ui/CommandPalette.tsx`, `src/components/diff/DiffPanel.tsx`, `src/routes/settings.providers.tsx`, tests for each menu.
 
 **Requirements:**
+
 - Any open popover/menu/dialog (thread actions, filters, project menu, provider picker, slash/mention menus, settings add-provider drawer, diff commit menu) closes on a pointerdown outside its root, on Escape, and on route change.
 - Use one shared hook (`useDismissOnOutside(rootRef, open, onClose)`) or `Popover` primitive so behavior is identical everywhere; do not close when the click lands inside the popover or on its trigger (trigger toggles).
 - Preserve focus and textarea selection; outside-click must not submit forms.
@@ -817,13 +830,16 @@
 **Files:** `scripts/gen-icon.mjs`, `pult-icon.svg`, `src-tauri/icons/*`, visual check.
 
 **Requirements:**
+
 - Regenerate the app icon so the pult mark fills more of the rounded dark tile (reduce outer padding ~30–40% while keeping safe margins for Windows taskbar masking), with the blue accent bar retained.
 - Re-run the existing icon generation script and verify the built exe/taskbar icon at 16/32/48 px.
 
 ### Task 24: Living, theme-colored ASCII background
+
 **Files:** `src/components/chat/NewChatEmptyState.tsx`, `src/components/chat/LivingAscii.tsx` (new), `src/styles/index.css` (keyframes if needed), tests (deterministic math helpers).
 
 **Requirements:**
+
 - Keep the ASCII field behind the empty state but raise its base visibility (user says it is barely visible) and color it from the active theme/accent tokens, not a hardcoded gray.
 - Animate it: a slow ambient drift/pulse at rest, and a smooth, uneven ripple centered on the pointer as it moves; clicking the background emits a stronger pulse. Ripple brightness is highest at the wave crest and fades toward the edges (gaussian falloff), never a hard ring.
 - Pointer/click listeners only on the background layer, not on the composer or text; respect `prefers-reduced-motion` (static but more visible), cap to ~30 fps, use `requestAnimationFrame`, and pause when the tab/window is hidden.
@@ -835,6 +851,7 @@
 **Files:** `src/routes/settings.tsx`, `src/routes/settings.*.tsx`, `src/stores/settings.ts`, `src/lib/types.ts`, `src/lib/ipc.ts`, `src-tauri/src/ipc/mod.rs` (only if a setting needs backend), tests for each page and the settings store.
 
 **Requirements:**
+
 - Rebuild the Settings left rail like the reference: a `Search` field with `/` shortcut, grouped nav (`General`, `Appearance`, `Chat`, `Diffs & pull requests`, `Keybindings`; group `Agents`: `Providers`, `Threads`; group `Code`: `Projects`, `Source control`, `Worktrees`) and a local user chip at the bottom (opens General; no fake avatar upload).
 - Search filters the nav live and jumps to the first match on Enter. Every nav item opens a page that actually configures and persists something; do NOT add Voice, Browser, Devices, Scheduled tasks, SnapShots or any other page without a real backing feature.
 - Real settings to implement (persisted via existing settings store/`settings_set`, applied live):
@@ -847,5 +864,3 @@
   - Code > Worktrees: default strategy, worktree root preview, and a list of current worktrees from threads (read-only is fine if actions are not available).
 - The settings store must expose typed getters/setters with defaults; pages read/write through it; changes survive restart. Update the keybindings/defaults docs where relevant.
 - Tests: nav grouping/search filtering, persistence of each setting (round-trip), and that each page renders its controls. Gemini authors the tests; unsupported T3 pages are explicitly omitted from the nav.
-
-

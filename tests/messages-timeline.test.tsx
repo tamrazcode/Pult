@@ -273,4 +273,46 @@ describe("MessagesTimeline", () => {
       cafSpy.mockRestore();
     }
   });
+
+  it("omits token usage text from a finished run while keeping the stop reason label", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "Check usage", images: [] },
+            { type: "assistant", text: "Done", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+          usage: { used: 12300, size: 200000 },
+        },
+      },
+    });
+
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.queryByText(/tokens/i)).toBeNull();
+    expect(container.textContent).not.toMatch(/tokens/i);
+  });
+
+  it("renders user message bubbles with neutral surface and subtle border instead of bg-mention-bg", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [{ type: "user", text: "Neutral bubble check", images: [] }],
+          streaming: false,
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+    const bubble = screen.getByText("Neutral bubble check");
+    expect(bubble).not.toHaveClass("bg-mention-bg");
+    expect(bubble).toHaveClass("border-border-subtle");
+    expect(bubble.classList.contains("bg-surface") || bubble.classList.contains("bg-panel")).toBe(
+      true,
+    );
+  });
 });

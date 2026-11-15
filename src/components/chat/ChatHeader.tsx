@@ -17,6 +17,7 @@ import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { PanelToggleButtons, WindowControls } from "../layout/WindowChrome";
+import { projectInitials, projectMonogram } from "../../lib/projectColor";
 
 /**
  * Thread identity only (§6.1): title + worktree badge, plus the thread's own
@@ -47,6 +48,7 @@ export function ChatHeader({
 
   const heading = thread?.title ?? title;
   const worktreeName = thread?.worktreeName;
+  const projectMonogramStyle = project ? projectMonogram(project.color) : null;
 
   // Esc closes this header's own layer without reaching the composer's
   // run-cancel handler.
@@ -65,6 +67,19 @@ export function ChatHeader({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [menuOpen, confirmDelete, editing, heading]);
+
+  // Outside click closes this header's own layers (menu, delete confirm).
+  useEffect(() => {
+    if (!menuOpen && !confirmDelete) return;
+    const onPointer = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[data-thread-menu]")) return;
+      setMenuOpen(false);
+      setConfirmDelete(false);
+    };
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [menuOpen, confirmDelete]);
 
   const commitRename = () => {
     setEditing(false);
@@ -125,14 +140,19 @@ export function ChatHeader({
         />
       ) : (
         <>
-          {project && (
+          {project && projectMonogramStyle && (
             <span className="flex shrink-0 items-center gap-1.5">
               <span
                 aria-hidden
-                className="flex h-5.5 w-5.5 items-center justify-center rounded-(--radius-sm) text-xs font-semibold text-white"
-                style={{ backgroundColor: project.color ?? "#346bf1" }}
+                data-project-badge
+                className="flex h-5.5 w-5.5 items-center justify-center rounded-md border text-xs leading-none font-semibold tracking-tight"
+                style={{
+                  backgroundColor: projectMonogramStyle.background,
+                  color: projectMonogramStyle.color,
+                  borderColor: projectMonogramStyle.border,
+                }}
               >
-                {project.name.slice(0, 2).toUpperCase()}
+                {projectInitials(project.name)}
               </span>
               <span className="text-sm text-text-secondary">{project.name}</span>
               <span aria-hidden className="text-text-tertiary">
@@ -167,7 +187,7 @@ export function ChatHeader({
       )}
       <div data-tauri-drag-region className="min-w-2 flex-1" />
       {threadId && (
-        <div className="relative flex shrink-0 items-center gap-1">
+        <div data-thread-menu className="relative flex shrink-0 items-center gap-1">
           <button
             aria-label={thread?.pinned ? "Unpin thread" : "Pin thread"}
             title={thread?.pinned ? "Unpin" : "Pin"}
@@ -243,6 +263,7 @@ export function ChatHeader({
           role="dialog"
           aria-label="Confirm thread deletion"
           data-escape-layer
+          data-thread-menu
           className="absolute top-9 right-36 z-40 w-72 rounded-(--radius-md) border border-danger/40 bg-surface-raised p-3 shadow-(--shadow-composer)"
         >
           <p className="text-sm text-text-primary">Delete this thread?</p>

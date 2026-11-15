@@ -25,6 +25,8 @@ import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import type { Project, Thread } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
+import { Tooltip } from "../ui/Tooltip";
+import { projectInitials, projectMonogram } from "../../lib/projectColor";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import { ProjectSettingsDialog } from "../projects/ProjectSettingsDialog";
 
@@ -160,7 +162,8 @@ function ProjectRow({
   onStar: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
-  const initials = project.name.slice(0, 2).toUpperCase();
+  const initials = projectInitials(project.name);
+  const monogram = projectMonogram(project.color);
   return (
     <div
       data-project-row
@@ -171,21 +174,29 @@ function ProjectRow({
         type="button"
         onClick={onToggle}
         aria-expanded={!collapsed}
+        data-project-chevron="right"
         className="flex min-w-0 flex-1 items-center gap-2 rounded-(--radius-sm) px-1 py-1 text-left transition hover:bg-hover"
       >
-        {collapsed ? (
-          <ChevronRight size={12} className="shrink-0 text-text-tertiary" />
-        ) : (
-          <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
-        )}
         <span
-          className="flex h-5.5 w-5.5 shrink-0 items-center justify-center rounded-(--radius-sm) text-xs font-semibold text-white"
-          style={{ backgroundColor: project.color ?? "#346bf1" }}
+          data-project-badge
+          aria-hidden
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border px-0.5 text-xs leading-none font-semibold tracking-tight"
+          style={{
+            backgroundColor: monogram.background,
+            color: monogram.color,
+            borderColor: monogram.border,
+          }}
         >
           {initials}
         </span>
         <span className="truncate text-sm font-medium text-text-primary">{project.name}</span>
         {project.pinned && <Star size={10} className="shrink-0 text-warning" fill="currentColor" />}
+        <span className="flex-1" />
+        {collapsed ? (
+          <ChevronRight size={12} className="shrink-0 text-text-tertiary" />
+        ) : (
+          <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
+        )}
       </button>
       <button
         type="button"
@@ -435,7 +446,7 @@ export function Sidebar({ width }: { width: number }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search threads"
+            placeholder="Search"
             aria-label="Search threads"
             type="search"
             className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-8 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
@@ -453,15 +464,6 @@ export function Sidebar({ width }: { width: number }) {
             <SlidersHorizontal size={13} />
           </button>
         </div>
-        <button
-          type="button"
-          aria-label="Refresh projects and threads"
-          title="Refresh projects and threads"
-          onClick={refresh}
-          className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-        >
-          <RefreshCw size={14} />
-        </button>
         {filterOpen && (
           <div
             role="menu"
@@ -560,34 +562,47 @@ export function Sidebar({ width }: { width: number }) {
         })}
       </nav>
 
-      <footer className="border-t border-border-subtle p-2">
-        <button
-          type="button"
-          aria-label="Settings"
-          onClick={() => void router.navigate({ to: "/settings/appearance" })}
-          className="flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-sm text-text-secondary transition hover:bg-hover"
-        >
-          <Settings size={15} className="text-text-tertiary" />
-          <span>Settings</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Pull requests"
-          onClick={() => void router.navigate({ to: "/pull-requests" })}
-          className="flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-sm text-text-secondary transition hover:bg-hover"
-        >
-          <GitPullRequest size={15} className="text-text-tertiary" />
-          <span>Pull requests</span>
-        </button>
-        <button
-          type="button"
-          aria-label="Usage"
-          onClick={() => void router.navigate({ to: "/usage" })}
-          className="flex w-full items-center gap-2 rounded-(--radius-sm) px-2 py-1.5 text-sm text-text-secondary transition hover:bg-hover"
-        >
-          <BarChart3 size={15} className="text-text-tertiary" />
-          <span>Usage</span>
-        </button>
+      <footer className="flex items-center gap-1 border-t border-border-subtle p-2">
+        <Tooltip label="Settings">
+          <button
+            type="button"
+            aria-label="Settings"
+            onClick={() => void router.navigate({ to: "/settings/appearance" })}
+            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            <Settings size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip label="Pull requests">
+          <button
+            type="button"
+            aria-label="Pull requests"
+            onClick={() => void router.navigate({ to: "/pull-requests" })}
+            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            <GitPullRequest size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip label="Usage">
+          <button
+            type="button"
+            aria-label="Usage"
+            onClick={() => void router.navigate({ to: "/usage" })}
+            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            <BarChart3 size={16} />
+          </button>
+        </Tooltip>
+        <Tooltip label="Refresh">
+          <button
+            type="button"
+            aria-label="Refresh"
+            onClick={refresh}
+            className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            <RefreshCw size={15} />
+          </button>
+        </Tooltip>
       </footer>
 
       <CreateProjectDialog open={createOpen} onClose={() => setCreateOpen(false)} />

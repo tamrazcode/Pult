@@ -21,12 +21,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { ipcErrorMessage, runsDispatch } from "../../lib/ipc";
-import {
-  activeRunForThread,
-  threadTimelineItems,
-  usageLine,
-  useRunsStore,
-} from "../../stores/runs";
+import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 import type {
   ApprovalRequest,
@@ -239,9 +234,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             />
           )}
 
-          {!view.streaming && view.stopReason && (
-            <FinishDivider stopReason={view.stopReason} usage={view.usage} />
-          )}
+          {!view.streaming && view.stopReason && <FinishDivider stopReason={view.stopReason} />}
 
           {/* Space for the overlaid composer; must sit ABOVE the sentinel so
               scrollIntoView(end) still lands at the true bottom. */}
@@ -318,7 +311,7 @@ function UserRow({ text, images }: { text: string; images: { data: string; mimeT
           </div>
         )}
         {text && (
-          <div className="rounded-(--radius-md) bg-mention-bg px-3.5 py-2 text-base whitespace-pre-wrap text-text-primary">
+          <div className="rounded-(--radius-md) border border-border-subtle bg-surface px-3.5 py-2 text-base whitespace-pre-wrap text-text-primary">
             {text}
           </div>
         )}
@@ -619,14 +612,12 @@ function retryLastMessage(threadId: string, text: string): void {
   );
 }
 
-function FinishDivider({ stopReason, usage }: { stopReason: string; usage?: unknown }) {
-  const usageText = usageLine(usage as Parameters<typeof usageLine>[0]);
+function FinishDivider({ stopReason }: { stopReason: string }) {
   return (
     <div className="flex items-center gap-3 py-1">
       <div className="h-px flex-1 bg-border-subtle" />
       <span className="text-xs text-text-tertiary">
         {STOP_REASON_LABELS[stopReason] ?? stopReason}
-        {usageText ? ` · ${usageText}` : ""}
       </span>
       <div className="h-px flex-1 bg-border-subtle" />
     </div>

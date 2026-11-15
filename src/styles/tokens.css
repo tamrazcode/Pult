@@ -37,7 +37,7 @@
   --radius-md: 10px;
   --radius-lg: 14px;
   --shadow-composer: 0 14px 32px -18px rgb(0 0 0 / 75%);
-  --focus-ring: 0 0 0 2px var(--canvas), 0 0 0 4px var(--accent);
+  --focus-ring: 0 0 0 1px var(--border-strong);
 
   /* fonts (bundled via @fontsource-variable, see main.tsx) */
   --font-family-ui: "Katagami Sans", system-ui, -apple-system, sans-serif;

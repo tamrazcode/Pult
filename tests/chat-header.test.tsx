@@ -124,12 +124,10 @@ describe("ChatHeader", () => {
 
     render(<ChatHeader threadId="th-1" />);
 
-    const alphaBadge = Array.from(document.querySelectorAll("[style]")).find(
-      (el) =>
-        (el as HTMLElement).style.backgroundColor === "rgb(52, 107, 241)" &&
-        /^a/i.test(el.textContent?.trim() ?? ""),
-    );
+    const alphaBadge = document.querySelector<HTMLElement>("[data-project-badge]");
     expect(alphaBadge).toBeTruthy();
+    expect(alphaBadge!.style.color).toBe("rgb(52, 107, 241)");
+    expect(alphaBadge!.style.backgroundColor).toContain("color-mix");
     expect(screen.getByText("Alpha")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Fix parser" })).toBeVisible();
     expect(screen.getByText(/worktree/i)).toBeVisible();
@@ -140,12 +138,10 @@ describe("ChatHeader", () => {
 
     render(<ChatHeader />);
 
-    const alphaBadge = Array.from(document.querySelectorAll("[style]")).find(
-      (el) =>
-        (el as HTMLElement).style.backgroundColor === "rgb(52, 107, 241)" &&
-        /^a/i.test(el.textContent?.trim() ?? ""),
-    );
+    const alphaBadge = document.querySelector<HTMLElement>("[data-project-badge]");
     expect(alphaBadge).toBeTruthy();
+    expect(alphaBadge!.style.color).toBe("rgb(52, 107, 241)");
+    expect(alphaBadge!.style.backgroundColor).toContain("color-mix");
     expect(screen.getByText("Alpha")).toBeVisible();
     expect(screen.getByRole("heading", { name: "New thread" })).toBeVisible();
   });
