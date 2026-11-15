@@ -450,7 +450,7 @@ describe("composer", () => {
     expect(screen.queryByRole("button", { name: "Send message" })).toBeNull();
   });
 
-  it("hides permission and mode pills from the bar and deduplicates mode configOption inside overflow without Effort/Reasoning", () => {
+  it("keeps permission inline in the composer bar and deduplicates mode configOption inside overflow", () => {
     useUiStore.setState({
       selectedInstanceId: "mock",
       instances: [
@@ -517,8 +517,8 @@ describe("composer", () => {
 
     render(<Composer threadId="th" />);
 
-    expect(screen.queryByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toBeNull();
-    expect(screen.queryByRole("button", { name: /Permission mode/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Permission mode/i })).toBeTruthy();
+    expect(screen.getByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toBeTruthy();
     expect(screen.queryByText("Architect")).toBeNull();
     expect(screen.queryByText("Web search")).toBeNull();
     expect(screen.queryByRole("button", { name: /^Mode:/i })).toBeNull();
@@ -527,9 +527,7 @@ describe("composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
     const dialog = screen.getByRole("dialog", { name: "Composer options" });
 
-    expect(within(dialog).getAllByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toHaveLength(
-      1,
-    );
+    expect(within(dialog).queryByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toBeNull();
     expect(within(dialog).getAllByText("Architect")).toHaveLength(1);
     expect(within(dialog).queryByRole("button", { name: /^Mode:/i })).toBeNull();
     expect(within(dialog).getByText("Web search")).toBeTruthy();
@@ -538,7 +536,7 @@ describe("composer", () => {
     expect(within(dialog).queryByText(/thought_level/i)).toBeNull();
   });
 
-  it("opens overflow with Session mode, Permission, and extra options without Agent or Reasoning/Effort, closes on Escape, and updates permission", async () => {
+  it("keeps permission inline in the composer bar and opens overflow with Session mode and extra options", async () => {
     useUiStore.setState({
       selectedInstanceId: "mock",
       instances: [
@@ -580,7 +578,7 @@ describe("composer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
     const dialog = screen.getByRole("dialog", { name: "Composer options" });
     expect(within(dialog).getByText(/Session mode/i)).toBeTruthy();
-    expect(within(dialog).getByText(/Permission/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Permission mode/i })).toBeTruthy();
     expect(within(dialog).getByText("Web search")).toBeTruthy();
     expect(within(dialog).queryByText(/Effort/i)).toBeNull();
     expect(within(dialog).queryByText(/Reasoning/i)).toBeNull();
@@ -594,10 +592,7 @@ describe("composer", () => {
     );
     expect(runsCancel).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
-    if (!screen.queryByRole("button", { name: /Full access/i })) {
-      fireEvent.click(screen.getByRole("button", { name: /Permission mode|Supervised/i }));
-    }
+    fireEvent.click(screen.getByRole("button", { name: /Permission mode|Supervised/i }));
     fireEvent.click(screen.getByRole("button", { name: /Full access/i }));
 
     expect(useSettingsStore.getState().permissionMode).toBe("full_access");

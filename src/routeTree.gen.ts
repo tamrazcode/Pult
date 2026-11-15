@@ -19,6 +19,7 @@ import { Route as SettingsAboutRouteImport } from './routes/settings.about'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsChatRouteImport } from './routes/settings.chat'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
+import { Route as SettingsDiffsRouteImport } from './routes/settings.diffs'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
@@ -75,6 +76,11 @@ const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsDiffsRoute = SettingsDiffsRouteImport.update({
+  id: '/diffs',
+  path: '/diffs',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsGeneralRoute = SettingsGeneralRouteImport.update({
   id: '/general',
   path: '/general',
@@ -112,6 +118,7 @@ export interface FileRoutesByFullPath {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/chat': typeof SettingsChatRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
+  '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/projects'
@@ -183,6 +193,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/projects'
@@ -200,6 +211,7 @@ export interface FileRouteTypes {
     | '/settings/appearance'
     | '/settings/chat'
     | '/settings/diagnostics'
+    | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
     | '/settings/projects'
@@ -289,6 +301,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsDiagnosticsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/diffs': {
+      id: '/settings/diffs'
+      path: '/diffs'
+      fullPath: '/settings/diffs'
+      preLoaderRoute: typeof SettingsDiffsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/general': {
       id: '/settings/general'
       path: '/general'
@@ -332,6 +351,7 @@ interface SettingsRouteChildren {
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsChatRoute: typeof SettingsChatRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
+  SettingsDiffsRoute: typeof SettingsDiffsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
@@ -343,6 +363,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsChatRoute: SettingsChatRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
+  SettingsDiffsRoute: SettingsDiffsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,

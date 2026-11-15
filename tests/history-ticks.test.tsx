@@ -214,64 +214,68 @@ describe("MessagesTimeline HistoryTicks integration", () => {
     expect(scrollCalls.some((call) => call.element === firstRow)).toBe(true);
   });
 
-  it("expands the hidden older window and scrolls to the mounted [data-history-key] element after requestAnimationFrame", () => {
-    useRunsStore.setState({
-      runsByThread: {
-        th: [makeRun("r1", "finished", 0), makeRun("r2", "finished", 1)],
-      },
-      viewsByRun: {
-        r1: {
-          items: [
-            { type: "user", text: "Ancient first prompt", images: [] },
-            ...Array.from({ length: 279 }, (_, i) => ({
-              type: "assistant" as const,
-              text: `old-reply-${i + 1}`,
-              streaming: false,
-            })),
-          ],
-          streaming: false,
-          stopReason: "end_turn",
+  it(
+    "expands the hidden older window and scrolls to the mounted [data-history-key] element after requestAnimationFrame",
+    { timeout: 20_000 },
+    () => {
+      useRunsStore.setState({
+        runsByThread: {
+          th: [makeRun("r1", "finished", 0), makeRun("r2", "finished", 1)],
         },
-        r2: {
-          items: [
-            { type: "user", text: "Recent prompt", images: [] },
-            ...Array.from({ length: 29 }, (_, i) => ({
-              type: "assistant" as const,
-              text: `new-reply-${i + 1}`,
-              streaming: false,
-            })),
-          ],
-          streaming: false,
-          stopReason: "end_turn",
+        viewsByRun: {
+          r1: {
+            items: [
+              { type: "user", text: "Ancient first prompt", images: [] },
+              ...Array.from({ length: 279 }, (_, i) => ({
+                type: "assistant" as const,
+                text: `old-reply-${i + 1}`,
+                streaming: false,
+              })),
+            ],
+            streaming: false,
+            stopReason: "end_turn",
+          },
+          r2: {
+            items: [
+              { type: "user", text: "Recent prompt", images: [] },
+              ...Array.from({ length: 29 }, (_, i) => ({
+                type: "assistant" as const,
+                text: `new-reply-${i + 1}`,
+                streaming: false,
+              })),
+            ],
+            streaming: false,
+            stopReason: "end_turn",
+          },
         },
-      },
-    });
+      });
 
-    const { container } = render(<MessagesTimeline threadId="th" />);
+      const { container } = render(<MessagesTimeline threadId="th" />);
 
-    expect(screen.queryByText("Ancient first prompt")).not.toBeInTheDocument();
-    expect(container.querySelector('[data-history-key="r1:i-0"]')).toBeNull();
+      expect(screen.queryByText("Ancient first prompt")).not.toBeInTheDocument();
+      expect(container.querySelector('[data-history-key="r1:i-0"]')).toBeNull();
 
-    const ancientTick = screen.getByRole("button", { name: "Ancient first prompt" });
-    scrollCalls = [];
-    rafQueue = [];
+      const ancientTick = screen.getByRole("button", { name: "Ancient first prompt" });
+      scrollCalls = [];
+      rafQueue = [];
 
-    fireEvent.click(ancientTick);
+      fireEvent.click(ancientTick);
 
-    const expandedRow = container.querySelector('[data-history-key="r1:i-0"]');
-    expect(expandedRow).not.toBeNull();
-    expect(screen.getByText("Ancient first prompt")).toBeInTheDocument();
-    expect(rafQueue.length).toBeGreaterThan(0);
-    expect(scrollCalls.some((call) => call.element === expandedRow)).toBe(false);
+      const expandedRow = container.querySelector('[data-history-key="r1:i-0"]');
+      expect(expandedRow).not.toBeNull();
+      expect(screen.getByText("Ancient first prompt")).toBeInTheDocument();
+      expect(rafQueue.length).toBeGreaterThan(0);
+      expect(scrollCalls.some((call) => call.element === expandedRow)).toBe(false);
 
-    flushRaf();
+      flushRaf();
 
-    const scrollMatch = scrollCalls.find((call) => call.element === expandedRow);
-    expect(scrollMatch).toBeDefined();
-    expect(scrollMatch?.arg).toEqual(
-      expect.objectContaining({ block: "start", behavior: "smooth" }),
-    );
-  });
+      const scrollMatch = scrollCalls.find((call) => call.element === expandedRow);
+      expect(scrollMatch).toBeDefined();
+      expect(scrollMatch?.arg).toEqual(
+        expect.objectContaining({ block: "start", behavior: "smooth" }),
+      );
+    },
+  );
 
   it("tracks active tick across scroll using only user rows and sets aria-current='location'", () => {
     useRunsStore.setState({

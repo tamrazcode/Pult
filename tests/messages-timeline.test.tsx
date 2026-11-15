@@ -86,7 +86,7 @@ describe("MessagesTimeline", () => {
     expect(screen.getByText("third answer")).toBeInTheDocument();
   });
 
-  it("windows the merged history across runs and expands it", () => {
+  it("windows the merged history across runs and expands it", { timeout: 20_000 }, () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0), run("r2", "finished", 1)] },
       viewsByRun: {

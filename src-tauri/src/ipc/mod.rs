@@ -286,6 +286,45 @@ pub fn threads_list(
     runtime.store().list_threads()
 }
 
+/// Historical event payloads can carry multi-megabyte tool output. Cap what
+/// crosses the IPC boundary; the row itself stays in SQLite.
+fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
+    const MAX_BYTES: usize = 2_000_000;
+    fn cap_value(slot: &mut Option<serde_json::Value>) {
+        let Some(value) = slot else { return };
+        let Ok(text) = serde_json::to_string(value) else {
+            return;
+        };
+        if text.len() > MAX_BYTES {
+            *slot = Some(serde_json::json!({
+                "truncated": true,
+                "bytes": text.len(),
+                "note": "large historical payload omitted",
+            }));
+        }
+    }
+    for event in events {
+        match &mut event.kind {
+            crate::events::EventKind::ToolCall { raw_input, .. } => cap_value(raw_input),
+            crate::events::EventKind::ToolCallUpdate {
+                content, raw_output, ..
+            } => {
+                cap_value(content);
+                cap_value(raw_output);
+            }
+            crate::events::EventKind::AgentMessageDelta { delta } => {
+                if delta.len() > MAX_BYTES {
+                    *delta = "\n\n_(large generated payload omitted)_\n\n".to_string();
+                }
+            }
+            crate::events::EventKind::FileChanged { diff, .. } if diff.len() > MAX_BYTES => {
+                *diff = "_(diff too large to display)_".to_string();
+            }
+            _ => {}
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn threads_get(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
@@ -300,7 +339,11 @@ pub async fn threads_get(
         let desired_mode = runtime.desired_mode(&thread_id);
         let desired_config = runtime.desired_config(&thread_id);
         let runs = runtime.store().list_runs(&thread_id)?;
-        let events = runtime.store().load_thread_events(&thread_id)?;
+        let mut events = runtime.store().load_thread_events(&thread_id)?;
+        // Historical rows may predate the live payload caps (multi-MB tool
+        // output / base64 images). Truncate before crossing IPC: opening such a
+        // thread must never freeze the WebView.
+        cap_ui_event_payloads(&mut events);
         let queue = runtime.store().list_queue(&thread_id)?;
         Ok(ThreadDetail {
             thread,
@@ -968,7 +1011,6 @@ pub async fn read_image_data_url(
 #[cfg(test)]
 mod external_url_tests {
     use super::validate_external_url;
-
     #[test]
     fn validate_external_url_allows_http_https_and_rejects_others() {
         assert!(validate_external_url("https://example.com/auth?a=1&b=2").is_ok());
@@ -979,5 +1021,32 @@ mod external_url_tests {
         assert!(validate_external_url("https://example.com/\nnext").is_err());
         assert!(validate_external_url("https://example.com/a b").is_err());
         assert!(validate_external_url("https://example.com/\"q\"").is_err());
+    }
+}
+
+#[cfg(test)]
+mod payload_cap_tests {
+    use super::cap_ui_event_payloads;
+    use crate::events::{Event, EventKind};
+
+    #[test]
+    fn caps_oversized_historical_payloads() {
+        let mut events = vec![Event::new(
+            "run-1".to_string(),
+            1,
+            EventKind::ToolCallUpdate {
+                tool_call_id: "t".to_string(),
+                status: Some("completed".to_string()),
+                content: None,
+                raw_output: Some(serde_json::json!({ "data": "A".repeat(2_000_001) })),
+            },
+        )];
+        cap_ui_event_payloads(&mut events);
+        match &events[0].kind {
+            EventKind::ToolCallUpdate { raw_output, .. } => {
+                assert_eq!(raw_output.as_ref().expect("payload")["truncated"], true);
+            }
+            other => panic!("unexpected kind: {other:?}"),
+        }
     }
 }

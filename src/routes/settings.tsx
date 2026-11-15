@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Outlet, createFileRoute, Link, useRouterState } from "@tanstack/react-router";
 import {
   Bot,
+  FileDiff,
   FolderTree,
   HeartPulse,
   Info,
@@ -27,6 +28,7 @@ const NAV_GROUPS: { title?: string; items: NavItem[] }[] = [
       { to: "/settings/general", label: "General", icon: Settings2 },
       { to: "/settings/appearance", label: "Appearance", icon: Palette },
       { to: "/settings/chat", label: "Chat", icon: MessageSquare },
+      { to: "/settings/diffs", label: "Diffs & pull requests", icon: FileDiff },
       { to: "/settings/keybindings", label: "Keybindings", icon: Keyboard },
     ],
   },

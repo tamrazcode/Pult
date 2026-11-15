@@ -49,23 +49,24 @@ function RootLayout() {
     void router.navigate({ to: "/thread/$threadId", params: { threadId: pendingThreadId } });
   }, [pendingThreadId, router]);
 
-  // Warm the selected provider in the project the next message will run in, so
-  // the first turn does not pay the 5–13 s CLI cold start. Debounced: a quick
-  // project/provider switch must not spawn several agents at once.
+  // Warm the selected provider so the first turn does not pay the 5–13 s CLI
+  // cold start. Only provider changes trigger this: project switches must not
+  // spawn agents (a cold Codex start on every project click looked like a hang).
   const projectRoot = projects.find((project) => project.id === selectedProjectId)?.rootPath;
-  const warmKey = `${selectedInstanceId ?? ""}|${projectRoot ?? ""}`;
-  const warmKeyRef = useRef("");
+  const projectRootRef = useRef(projectRoot);
+  projectRootRef.current = projectRoot;
+  const warmedInstanceRef = useRef("");
   useEffect(() => {
     if (!isTauri() || !selectedInstanceId) return;
-    if (warmKeyRef.current === warmKey) return;
+    if (warmedInstanceRef.current === selectedInstanceId) return;
     const timer = window.setTimeout(() => {
-      warmKeyRef.current = warmKey;
-      void providersWarmup(selectedInstanceId, projectRoot ?? null).catch(() => {
-        warmKeyRef.current = "";
+      warmedInstanceRef.current = selectedInstanceId;
+      void providersWarmup(selectedInstanceId, projectRootRef.current ?? null).catch(() => {
+        warmedInstanceRef.current = "";
       });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [selectedInstanceId, projectRoot, warmKey]);
+  }, [selectedInstanceId]);
   useEffect(() => {
     void hydrateLayout();
   }, []);

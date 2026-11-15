@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { settingsGet, settingsSet } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { applyTheme } from "../lib/theme";
+import { useGitStore } from "./git";
 
 export type PermissionMode = "supervised" | "auto_edit" | "auto" | "full_access";
 export type ThemeName = "dark" | "light" | "graphite" | "liquid";
@@ -26,6 +27,8 @@ interface SettingsState {
   showTimestamps: boolean;
   /** Keep the transcript pinned to streaming output. */
   followStreaming: boolean;
+  /** Default diff presentation (persisted; also seeds the git store). */
+  diffViewMode: "unified" | "split";
   /** Rebindable keyboard shortcuts (§6.7): command id → binding string. */
   keybindings: Record<string, string>;
   /** Starred model ids per provider instance (composer picker). */
@@ -37,6 +40,7 @@ interface SettingsState {
   setSendKey: (value: "enter" | "mod-enter") => void;
   setShowTimestamps: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
+  setDiffViewMode: (mode: "unified" | "split") => void;
   setKeybinding: (commandId: string, binding: string) => void;
   toggleFavoriteModel: (instanceId: string, modelId: string) => void;
   /** Loads persisted appearance + permission settings once at boot. */
@@ -54,6 +58,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   sendKey: "enter",
   showTimestamps: true,
   followStreaming: true,
+  diffViewMode: "unified",
   keybindings: {},
   favoriteModels: {},
   setTheme: (theme) => {
@@ -86,6 +91,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ followStreaming });
     if (isTauri()) void settingsSet("follow_streaming", followStreaming).catch(() => {});
   },
+  setDiffViewMode: (diffViewMode) => {
+    set({ diffViewMode });
+    useGitStore.setState({ viewMode: diffViewMode });
+    if (isTauri()) void settingsSet("diff_view_mode", diffViewMode).catch(() => {});
+  },
   setKeybinding: (commandId, binding) => {
     // A binding ending in a bare modifier ("Mod+Control") matches the
     // modifier's own keydown and hijacks the keyboard — refuse it.
@@ -116,6 +126,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       sendKey,
       showTimestamps,
       followStreaming,
+      diffViewMode,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -126,6 +137,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("send_key").catch(() => null),
       settingsGet("show_timestamps").catch(() => null),
       settingsGet("follow_streaming").catch(() => null),
+      settingsGet("diff_view_mode").catch(() => null),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "dark";
     const resolvedHue =
@@ -145,6 +157,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       sendKey: sendKey === "mod-enter" ? "mod-enter" : "enter",
       showTimestamps: showTimestamps !== false,
       followStreaming: followStreaming !== false,
+      diffViewMode: diffViewMode === "split" ? "split" : "unified",
       keybindings:
         keybindings && typeof keybindings === "object"
           ? (keybindings as Record<string, string>)
@@ -155,5 +168,6 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           : {},
     });
     applyTheme(resolvedTheme, resolvedHue);
+    useGitStore.setState({ viewMode: diffViewMode === "split" ? "split" : "unified" });
   },
 }));

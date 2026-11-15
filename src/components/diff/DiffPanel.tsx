@@ -13,6 +13,7 @@ import { openExternalUrl } from "../../lib/ipc";
 import { useGitStore } from "../../stores/git";
 import type { FilePatchState } from "../../stores/git";
 import { useRunsStore } from "../../stores/runs";
+import { useSettingsStore } from "../../stores/settings";
 import { useThreadsStore } from "../../stores/threads";
 import type { DiffFileSummary } from "../../lib/types";
 import { SplitLines, UnifiedLines } from "./DiffLines";
@@ -205,7 +206,6 @@ function ActionButton({
 export function DiffPanel({ threadId }: { threadId: string | null }) {
   const state = useGitStore((s) => (threadId ? s.byThread[threadId] : undefined));
   const viewMode = useGitStore((s) => s.viewMode);
-  const setViewMode = useGitStore((s) => s.setViewMode);
   const refresh = useGitStore((s) => s.refresh);
   const commit = useGitStore((s) => s.commit);
   const push = useGitStore((s) => s.push);
@@ -359,7 +359,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           {(["unified", "split"] as const).map((mode) => (
             <button
               key={mode}
-              onClick={() => setViewMode(mode)}
+              onClick={() => useSettingsStore.getState().setDiffViewMode(mode)}
               aria-pressed={viewMode === mode}
               className={`px-2 transition ${
                 viewMode === mode

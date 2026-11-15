@@ -171,12 +171,6 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
               <AgentModePicker threadId={threadId} />
             </section>
           )}
-          <section>
-            <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Permission
-            </p>
-            <ModePill threadId={threadId} />
-          </section>
           <ConfigOptionPickers threadId={threadId} heading="Options" excludeModelAndReasoning />
         </div>
       )}
@@ -851,6 +845,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               <Paperclip size={15} />
             </span>
           )}
+          <ModePill threadId={threadId} />
           <div className="flex-1" />
           <ProviderModelPicker threadId={threadId} />
           <ComposerOverflowMenu threadId={threadId} />
