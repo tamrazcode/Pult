@@ -50,7 +50,10 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     return id ? s.projects.find((candidate) => candidate.id === id) : undefined;
   });
   const globalWorkspaceRoot = useUiStore((s) => s.globalWorkspaceRoot);
-  const root = thread?.workspace ?? project?.rootPath ?? globalWorkspaceRoot ?? "";
+  const root =
+    thread?.workspace ??
+    project?.rootPath ??
+    (thread && thread.projectId == null ? (globalWorkspaceRoot ?? "") : "");
   const selected = filePreview;
   const gitStatus = useGitStore((s) => (threadId ? s.byThread[threadId]?.status : undefined));
   const gitByPath = useMemo(() => buildFileGitStatusMap(gitStatus), [gitStatus]);

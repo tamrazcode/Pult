@@ -239,9 +239,11 @@ function RootLayout() {
         target.closest<HTMLImageElement>("img") ??
         localHost?.querySelector<HTMLImageElement>("img") ??
         null;
-      if (image && !link) {
-        const localPath = (image.closest<HTMLElement>("[data-local-path]") ?? localHost)?.dataset
-          .localPath;
+      let localImagePath: string | null = null;
+      if (image) {
+        localImagePath =
+          (image.closest<HTMLElement>("[data-local-path]") ?? localHost)?.dataset.localPath ?? null;
+        const localPath = localImagePath;
         items.push({
           id: "open-image",
           label: t("chat.openImage"),
@@ -303,30 +305,32 @@ function RootLayout() {
             onSelect: () => useUiStore.getState().openInBrowserPanel(classified.relativePath),
           });
         }
-        items.push(
-          {
-            id: "reveal",
-            label: t("common.revealInExplorer"),
-            onSelect: () => void openInEditor(classified.fullPath, "explorer").catch(fail),
-          },
-          {
-            id: "open-editor",
-            label: t("common.openInEditor"),
-            onSelect: () =>
-              void openInEditor(
-                classified.fullPath,
-                useSettingsStore.getState().preferredEditor,
-              ).catch(fail),
-          },
-          {
-            id: "copy-path",
-            label: t("common.copyPath"),
-            onSelect: () =>
-              void navigator.clipboard.writeText(classified.fullPath).catch(() => undefined),
-          },
-        );
+        if (!localImagePath) {
+          items.push(
+            {
+              id: "reveal",
+              label: t("common.revealInExplorer"),
+              onSelect: () => void openInEditor(classified.fullPath, "explorer").catch(fail),
+            },
+            {
+              id: "open-editor",
+              label: t("common.openInEditor"),
+              onSelect: () =>
+                void openInEditor(
+                  classified.fullPath,
+                  useSettingsStore.getState().preferredEditor,
+                ).catch(fail),
+            },
+            {
+              id: "copy-path",
+              label: t("common.copyPath"),
+              onSelect: () =>
+                void navigator.clipboard.writeText(classified.fullPath).catch(() => undefined),
+            },
+          );
+        }
       } else {
-        const absolute = localFilePath(rawHref);
+        const absolute = !localImagePath && !workspace ? localFilePath(rawHref) : null;
         if (absolute) {
           items.push(
             {

@@ -10,10 +10,10 @@ export function activeWorkspaceRoot(): string | null {
   // A projectless thread must not inherit the project selected before it.
   const projectId = thread ? thread.projectId : useProjectsStore.getState().selectedProjectId;
   if (projectId) {
-    const root = useProjectsStore
-      .getState()
-      .projects.find((project) => project.id === projectId)?.rootPath;
-    if (root) return root;
+    return (
+      useProjectsStore.getState().projects.find((project) => project.id === projectId)?.rootPath ??
+      null
+    );
   }
   return useUiStore.getState().globalWorkspaceRoot;
 }

@@ -270,7 +270,7 @@ fn newest_antigravity_server(versions: &Path) -> Option<std::path::PathBuf> {
         if !server.is_file() {
             continue;
         }
-        let modified = entry
+        let modified = server
             .metadata()
             .and_then(|meta| meta.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);

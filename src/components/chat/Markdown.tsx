@@ -21,7 +21,7 @@ import { Check, Copy } from "lucide-react";
 import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
 import { activeWorkspaceRoot } from "../../lib/activeWorkspace";
 import { useT } from "../../lib/i18n";
-import { classifyMarkdownHref, type ClassifiedLink } from "../../lib/links";
+import { classifyMarkdownHref, localFilePath, type ClassifiedLink } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
 import { useThreadsStore } from "../../stores/threads";
@@ -314,6 +314,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const t = useT();
   const source = typeof src === "string" ? normalizeImageSource(src) : undefined;
   const local = typeof source === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(source);
+  const absolutePath = source ? (localFilePath(source) ?? fileUrlToPath(source)) : "";
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -322,7 +323,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     setDataUrl(null);
     setFailed(false);
     let cancelled = false;
-    readImageDataUrl(fileUrlToPath(source), useThreadsStore.getState().activeThreadId ?? "")
+    readImageDataUrl(absolutePath, useThreadsStore.getState().activeThreadId ?? "")
       .then((url) => {
         if (!cancelled) setDataUrl(url);
       })
@@ -332,7 +333,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [local, source]);
+  }, [local, source, absolutePath]);
 
   if (!local) {
     return (
@@ -370,7 +371,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
       type="button"
       aria-label={t("chat.openImage")}
       title={alt || src}
-      data-local-path={fileUrlToPath(source)}
+      data-local-path={absolutePath}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();

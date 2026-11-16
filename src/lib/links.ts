@@ -22,12 +22,17 @@ export function localFilePath(rawHref: string | null | undefined): string | null
   let path = raw;
   if (/^file:\/\//i.test(raw)) {
     try {
-      path = decodeURIComponent(new URL(raw).pathname);
+      const url = new URL(raw);
+      if (url.host && url.host !== "localhost") return null;
+      path = decodeURIComponent(url.pathname);
       if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
     } catch {
       return null;
     }
+  } else {
+    path = path.split("#")[0].split("?")[0];
   }
+  if (path.split(/[\\/]/).some((part) => part === "..")) return null;
   path = path.replace(/\\/g, "/").replace(/^([a-zA-Z]):\/+/, "$1:/");
   return /^[a-zA-Z]:\//.test(path) ? path.replace(/\//g, "\\") : null;
 }
