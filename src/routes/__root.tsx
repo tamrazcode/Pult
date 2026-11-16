@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Outlet, createRootRoute, useRouter } from "@tanstack/react-router";
+import { Outlet, createRootRoute, useRouter, useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { RightPanel } from "../components/layout/RightPanel";
 import { ElicitationModal } from "../components/chat/ElicitationModal";
@@ -57,6 +57,7 @@ function RootLayout() {
   const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const projects = useProjectsStore((s) => s.projects);
   const router = useRouter();
+  const onboarding = useRouterState({ select: (s) => s.location.pathname === "/welcome" });
   useGlobalHotkeys(() => setPaletteOpen(true));
 
   useEffect(() => {
@@ -298,7 +299,7 @@ function RootLayout() {
       onContextMenu={openContextMenu}
     >
       <div className="flex min-h-0 flex-1">
-        {sidebarOpen && (
+        {sidebarOpen && !onboarding && (
           <>
             <Sidebar width={sidebarWidth} />
             <ResizeHandle
@@ -315,7 +316,7 @@ function RootLayout() {
         <main className="flex min-w-0 flex-1 flex-col">
           <Outlet />
         </main>
-        {rightPanelOpen && (
+        {rightPanelOpen && !onboarding && (
           <>
             <ResizeHandle
               label={t("common.rightPanelWidth")}
@@ -352,7 +353,7 @@ function RootLayout() {
           onClose={() => setContextMenu(null)}
         />
       )}
-      <ErrorBanner />
+      {!onboarding && <ErrorBanner />}
       <FpsOverlay />
       {imagePreview && (
         <ImageLightbox src={imagePreview.src} alt={imagePreview.alt} onClose={closeImagePreview} />
