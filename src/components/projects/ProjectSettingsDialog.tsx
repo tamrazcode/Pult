@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Copy } from "lucide-react";
-import { ipcErrorMessage } from "../../lib/ipc";
 import { PROJECT_COLORS, useProjectsStore } from "../../stores/projects";
 import { Button } from "../ui/button";
+import { WorkspaceStrategyRadio } from "./WorkspaceStrategyRadio";
+import { localizeIpcError, useT } from "../../lib/i18n";
 
 /** Edit a project's identity, worktree strategy, pin state, or delete it. */
 export function ProjectSettingsDialog({
@@ -14,6 +15,7 @@ export function ProjectSettingsDialog({
   projectId: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const project = useProjectsStore((s) => s.projects.find((p) => p.id === projectId));
   const [name, setName] = useState("");
   const [color, setColor] = useState(PROJECT_COLORS[0]);
@@ -62,7 +64,7 @@ export function ProjectSettingsDialog({
         .updateProject(project.id, { name: trimmed, color, worktreeStrategy: strategy, pinned });
       onClose();
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
       setBusy(false);
     }
   };
@@ -75,7 +77,7 @@ export function ProjectSettingsDialog({
       await useProjectsStore.getState().deleteProject(project.id);
       onClose();
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
       setBusy(false);
     }
   };
@@ -90,19 +92,21 @@ export function ProjectSettingsDialog({
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="Project settings"
+        aria-label={t("settings.projects.settingsTitle")}
         onSubmit={(event) => {
           event.preventDefault();
           void save();
         }}
         className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-5 shadow-2xl"
       >
-        <h2 className="text-lg font-semibold text-text-primary">Project settings</h2>
+        <h2 className="text-lg font-semibold text-text-primary">
+          {t("settings.projects.settingsTitle")}
+        </h2>
 
         <div className="mt-4 space-y-4">
           <label className="block">
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Name
+              {t("common.name")}
             </span>
             <input
               ref={nameRef}
@@ -114,9 +118,13 @@ export function ProjectSettingsDialog({
 
           <div>
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Color
+              {t("common.color")}
             </span>
-            <div role="group" aria-label="Project color" className="mt-1.5 flex flex-wrap gap-2">
+            <div
+              role="group"
+              aria-label={t("settings.projects.colorLabel")}
+              className="mt-1.5 flex flex-wrap gap-2"
+            >
               {PROJECT_COLORS.map((swatch) => (
                 <button
                   key={swatch}
@@ -135,28 +143,22 @@ export function ProjectSettingsDialog({
 
           <div className="space-y-1.5">
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Workspace
+              {t("common.workspace")}
             </span>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-              <input
-                type="radio"
-                name="settings-worktree"
-                checked={strategy === "root"}
-                onChange={() => setStrategy("root")}
-                className="accent-(--accent)"
-              />
-              Direct folder
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-              <input
-                type="radio"
-                name="settings-worktree"
-                checked={strategy === "worktree"}
-                onChange={() => setStrategy("worktree")}
-                className="accent-(--accent)"
-              />
-              Git worktree
-            </label>
+            <WorkspaceStrategyRadio
+              name="settings-worktree"
+              label={t("settings.projects.strategyRoot")}
+              description={t("settings.projects.strategyRootDesc")}
+              checked={strategy === "root"}
+              onChange={() => setStrategy("root")}
+            />
+            <WorkspaceStrategyRadio
+              name="settings-worktree"
+              label={t("settings.projects.strategyWorktree")}
+              description={t("settings.projects.strategyWorktreeDesc")}
+              checked={strategy === "worktree"}
+              onChange={() => setStrategy("worktree")}
+            />
           </div>
 
           <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
@@ -166,7 +168,7 @@ export function ProjectSettingsDialog({
               onChange={(e) => setPinned(e.target.checked)}
               className="accent-(--accent)"
             />
-            Star this project
+            {t("settings.projects.star")}
           </label>
 
           <div className="flex items-center gap-2">
@@ -177,7 +179,7 @@ export function ProjectSettingsDialog({
               onClick={() => void navigator.clipboard.writeText(project.rootPath)}
             >
               <Copy size={13} />
-              Copy path
+              {t("settings.projects.copyPath")}
             </Button>
             <span className="min-w-0 truncate font-mono text-xs text-text-tertiary">
               {project.rootPath}
@@ -193,9 +195,7 @@ export function ProjectSettingsDialog({
           <div className="rounded-(--radius-md) border border-danger/40 p-3">
             {confirmDelete ? (
               <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-danger">
-                  Delete this project? Threads stay, their folder link clears.
-                </span>
+                <span className="text-sm text-danger">{t("settings.projects.deleteConfirm")}</span>
                 <Button
                   variant="danger"
                   size="sm"
@@ -203,13 +203,13 @@ export function ProjectSettingsDialog({
                   onClick={() => void remove()}
                   disabled={busy}
                 >
-                  Confirm delete
+                  {t("settings.projects.confirmDelete")}
                 </Button>
               </div>
             ) : (
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm text-text-secondary">
-                  Deleting keeps its threads; they lose the project link.
+                  {t("settings.projects.deleteHint")}
                 </span>
                 <Button
                   variant="danger_outline"
@@ -218,7 +218,7 @@ export function ProjectSettingsDialog({
                   onClick={() => setConfirmDelete(true)}
                   disabled={busy}
                 >
-                  Delete project
+                  {t("settings.projects.delete")}
                 </Button>
               </div>
             )}
@@ -227,10 +227,10 @@ export function ProjectSettingsDialog({
 
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" type="button" onClick={onClose} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button variant="primary" size="sm" type="submit" disabled={busy || !name.trim()}>
-            Save
+            {t("common.save")}
           </Button>
         </div>
       </form>

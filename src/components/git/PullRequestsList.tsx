@@ -1,18 +1,18 @@
 import { GitPullRequest } from "lucide-react";
 import { openExternalUrl } from "../../lib/ipc";
+import { useT } from "../../lib/i18n";
 import { useGitStore } from "../../stores/git";
 
 /** PRs opened from pult this session; used by the page and the right panel. */
 export function PullRequestsList() {
+  const t = useT();
   const prs = useGitStore((s) => s.prHistory);
   if (prs.length === 0) {
     return (
       <div className="mx-auto mt-10 flex max-w-md flex-col items-center gap-2 rounded-(--radius-lg) border border-dashed border-border-subtle px-6 py-10 text-center">
         <GitPullRequest size={20} className="text-text-tertiary" />
-        <p className="text-sm text-text-secondary">No pull requests yet</p>
-        <p className="text-xs text-text-tertiary">
-          Review a thread's diff, then Commit ▸ Push ▸ Create PR from the diff panel.
-        </p>
+        <p className="text-sm text-text-secondary">{t("panels.pr.empty")}</p>
+        <p className="text-xs text-text-tertiary">{t("panels.pr.emptyBody")}</p>
       </div>
     );
   }
@@ -28,7 +28,9 @@ export function PullRequestsList() {
             <GitPullRequest size={15} className="shrink-0 text-success" />
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm text-text-primary">{pr.title}</p>
-              <p className="truncate text-xs text-text-tertiary">from thread “{pr.threadTitle}”</p>
+              <p className="truncate text-xs text-text-tertiary">
+                {t("panels.pr.fromThread", { title: pr.threadTitle })}
+              </p>
             </div>
             <button
               type="button"

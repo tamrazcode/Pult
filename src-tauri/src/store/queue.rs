@@ -81,7 +81,7 @@ impl Store {
                 )
                 .map_err(|e| sql("update_queue_item_text update", e))?;
             if changed == 0 {
-                return Err(PultError::internal("queue item not found"));
+                return Err(PultError::with_code("queue.item_not_found", "queue item not found"));
             }
             Ok(())
         })
@@ -104,7 +104,7 @@ impl Store {
                     .iter()
                     .any(|id| !current.contains(id) || !seen.insert(id.as_str()))
             {
-                return Err(PultError::internal("queue order does not match the queue"));
+                return Err(PultError::with_code("queue.order_mismatch", "queue order does not match the queue"));
             }
 
             conn.execute("BEGIN IMMEDIATE", [])
@@ -143,7 +143,7 @@ impl Store {
                 )
                 .map_err(|e| sql("move_queue_item_to_head update", e))?;
             if changed == 0 {
-                return Err(PultError::internal("queue item not found"));
+                return Err(PultError::with_code("queue.item_not_found", "queue item not found"));
             }
             Ok(())
         })

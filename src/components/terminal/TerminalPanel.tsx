@@ -1,11 +1,7 @@
 import { useEffect, useState } from "react";
 import { Plus, SquareTerminal, X } from "lucide-react";
-import {
-  ipcErrorMessage,
-  terminalPtyCreate,
-  terminalPtyKill,
-  terminalPtyList,
-} from "../../lib/ipc";
+import { terminalPtyCreate, terminalPtyKill, terminalPtyList } from "../../lib/ipc";
+import { localizeIpcError, useT } from "../../lib/i18n";
 import { useRunsStore } from "../../stores/runs";
 import type { ToolChatItem } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
@@ -62,6 +58,7 @@ function AgentTerminalRow({ item }: { item: ToolChatItem }) {
  * as this tab's empty state).
  */
 export function TerminalPanel({ threadId }: { threadId: string | null }) {
+  const t = useT();
   const terminals = useTerminalsStore((s) => (threadId ? s.byThread[threadId] : undefined));
   const activeId = useTerminalsStore((s) => (threadId ? s.activeByThread[threadId] : undefined));
   const setActive = useTerminalsStore((s) => s.setActive);
@@ -82,7 +79,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
     if (!threadId) return;
     void terminalPtyList(threadId)
       .then((list) => setList(threadId, list))
-      .catch((err) => setError(ipcErrorMessage(err)));
+      .catch((err) => setError(localizeIpcError(err)));
   }, [threadId, setList]);
 
   const create = async () => {
@@ -96,7 +93,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
         exit: info.exit,
       });
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
     }
   };
 
@@ -109,15 +106,15 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
       // looks stopped while the process is still alive.
       removeTerminal(threadId, id);
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
     }
   };
 
   if (!threadId) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
-        <p className="text-sm text-text-secondary">No thread open</p>
-        <p className="text-xs text-text-tertiary">Terminals open inside a thread.</p>
+        <p className="text-sm text-text-secondary">{t("panels.terminal.noThread")}</p>
+        <p className="text-xs text-text-tertiary">{t("panels.terminal.noThreadBody")}</p>
       </div>
     );
   }
@@ -131,13 +128,15 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
       <div className="flex items-center gap-1 border-b border-border-subtle px-2 py-1.5">
         <button
           onClick={() => void create()}
-          title="Open a shell in this thread's workspace"
+          title={t("panels.terminal.openShell")}
           className="flex h-7 items-center gap-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-secondary transition hover:bg-hover"
         >
-          <Plus size={13} /> New terminal
+          <Plus size={13} /> {t("panels.terminal.new")}
         </button>
         <span className="ml-auto text-xs text-text-tertiary">
-          {active ? `${active.title} · ${workspaceLabel}` : `Shell · ${workspaceLabel}`}
+          {active
+            ? `${active.title} · ${workspaceLabel}`
+            : t("panels.terminal.shellWorkspace", { workspace: workspaceLabel })}
         </span>
       </div>
 
@@ -152,7 +151,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
             onClick={() => setError(null)}
             className="shrink-0 text-text-tertiary transition hover:text-text-secondary"
           >
-            Dismiss
+            {t("panels.terminal.dismiss")}
           </button>
         </div>
       )}
@@ -160,40 +159,39 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
       {showEmpty ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
           <SquareTerminal size={18} className="text-text-tertiary" />
-          <p className="text-sm text-text-secondary">No terminal yet</p>
-          <p className="text-xs text-text-tertiary">
-            Shells you open run in this thread's workspace. They are children of the app — after a
-            restart they end, and new ones start fresh.
-          </p>
+          <p className="text-sm text-text-secondary">{t("panels.terminal.empty")}</p>
+          <p className="text-xs text-text-tertiary">{t("panels.terminal.emptyBody")}</p>
         </div>
       ) : (
         <>
           <div className="flex flex-wrap items-center gap-1 border-b border-border-subtle px-2 py-1.5">
-            {terminals!.map((t) => (
+            {terminals!.map((terminal) => (
               <div
-                key={t.terminalId}
+                key={terminal.terminalId}
                 className={`flex items-center gap-1 rounded-(--radius-sm) border px-1.5 py-0.5 text-xs transition ${
-                  t.terminalId === activeId
+                  terminal.terminalId === activeId
                     ? "border-border-strong bg-active text-text-primary"
                     : "border-border-subtle text-text-tertiary hover:bg-hover"
                 }`}
               >
                 <button
-                  onClick={() => setActive(threadId, t.terminalId)}
+                  onClick={() => setActive(threadId, terminal.terminalId)}
                   className="flex items-center gap-1 truncate font-mono"
-                  title={t.title}
+                  title={terminal.title}
                 >
-                  {t.exit !== null ? (
-                    <span className="text-danger">exit {t.exit}</span>
+                  {terminal.exit !== null ? (
+                    <span className="text-danger">
+                      {t("panels.terminal.exit", { code: terminal.exit })}
+                    </span>
                   ) : (
                     <span className="text-success">●</span>
                   )}
-                  <span className="max-w-24 truncate">{t.title}</span>
+                  <span className="max-w-24 truncate">{terminal.title}</span>
                 </button>
                 <button
-                  onClick={() => void kill(t.terminalId)}
-                  aria-label="Kill terminal"
-                  title="Kill terminal"
+                  onClick={() => void kill(terminal.terminalId)}
+                  aria-label={t("panels.terminal.kill")}
+                  title={t("panels.terminal.kill")}
                   className="text-text-tertiary transition hover:text-danger"
                 >
                   <X size={11} />
@@ -206,8 +204,8 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
           ) : (
             <div className="flex flex-1 items-center justify-center px-8 text-center text-xs text-text-tertiary">
               {active
-                ? `This terminal exited with code ${active.exit}.`
-                : "Select a terminal above."}
+                ? t("panels.terminal.exited", { code: String(active.exit) })
+                : t("panels.terminal.select")}
             </div>
           )}
         </>
@@ -215,13 +213,11 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
 
       <div className="border-t border-border-subtle">
         <p className="px-2.5 py-1 text-xs tracking-wider text-text-tertiary uppercase">
-          Agent terminals
+          {t("panels.terminal.agent")}
         </p>
         <div className="max-h-40 space-y-1 overflow-y-auto px-2 pb-2">
           {agentTerminals.length === 0 ? (
-            <p className="px-0.5 text-xs text-text-tertiary">
-              Shells the agent runs appear here read-only.
-            </p>
+            <p className="px-0.5 text-xs text-text-tertiary">{t("panels.terminal.agentEmpty")}</p>
           ) : (
             agentTerminals.map((item) => (
               <AgentTerminalRow key={`${item.toolCallId}-${item.status}`} item={item} />

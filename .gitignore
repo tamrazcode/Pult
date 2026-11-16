@@ -4,6 +4,7 @@ dist/
 *.log
 .DS_Store
 .vite/
+.tanstack/
 src-tauri/target/
 src-tauri/gen/
 test-results/
@@ -15,3 +16,16 @@ fixtures/mock-repo/
 fixtures/mock-remote.git/
 fixtures/gh-mock-log.txt
 .superpowers/
+
+# Local runtime data (never publish)
+.pult/
+*.db
+*.db-wal
+*.db-shm
+outputs/
+docs/reviews/
+
+# Signing / updater secrets
+*.key
+*.pem
+.env

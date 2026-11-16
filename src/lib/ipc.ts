@@ -246,6 +246,50 @@ export function browserCheckFrameHeaders(url: string): Promise<EmbedCheck> {
 }
 
 /**
+ * Native child webview: any http(s) URL, or a local path (absolute,
+ * workspace-relative, or file://). Local files are served from a token-scoped
+ * loopback server so modules and relative assets resolve.
+ */
+export function browserNavigate(target: string, threadId?: string | null): Promise<string> {
+  return invokeRequired<string>("browser_navigate", { target, threadId: threadId ?? null });
+}
+
+export function browserSetBounds(bounds: {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  visible: boolean;
+}): Promise<void> {
+  return invokeRequired<void>("browser_set_bounds", bounds);
+}
+
+export function browserHistory(action: "back" | "forward" | "reload"): Promise<void> {
+  return invokeRequired<void>("browser_history", { action });
+}
+
+export function browserClose(): Promise<void> {
+  return invokeRequired<void>("browser_close");
+}
+
+/** Current child-webview URL (panel remounts restore the page). */
+export function browserState(): Promise<string | null> {
+  return invokeWithFallback<string | null>("browser_state", null);
+}
+
+/** Payload of the "browser:navigated" event emitted by the child webview. */
+export interface BrowserNavigatedPayload {
+  url: string;
+  event: "started" | "finished";
+}
+
+export function onBrowserNavigated(
+  handler: (payload: BrowserNavigatedPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<BrowserNavigatedPayload>("browser:navigated", handler);
+}
+
+/**
  * Workspace-relative files for composer `@` mentions (build/VCS dirs are
  * skipped server-side). Empty outside Tauri.
  */

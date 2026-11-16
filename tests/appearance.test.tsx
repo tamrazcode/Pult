@@ -22,6 +22,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
 
 import { Route } from "../src/routes/settings.appearance";
 import { THEMES } from "../src/lib/theme";
+import { translate } from "../src/lib/i18n";
 import { useSettingsStore } from "../src/stores/settings";
 
 const AppearanceSettings = Route.options.component!;
@@ -39,7 +40,8 @@ describe("AppearanceSettings theme previews", () => {
 
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
 
-    for (const { id, label } of THEMES) {
+    for (const { id, labelKey } of THEMES) {
+      const label = translate(labelKey);
       const card = screen.getByRole("radio", { name: label });
       const themed = card.querySelector<HTMLElement>(`[data-theme="${id}"]`);
       expect(themed, `${label} card should contain [data-theme="${id}"]`).not.toBeNull();

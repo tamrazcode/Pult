@@ -2,6 +2,9 @@ import { create } from "zustand";
 import { isEditorId, type EditorId } from "../lib/editors";
 import { settingsGet, settingsSet } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
+import { applyLocale } from "../lib/i18n/store";
+import type { LocaleId } from "../lib/i18n/types";
+import { isLocaleId } from "../lib/i18n/types";
 import { applyTheme } from "../lib/theme";
 import { useGitStore } from "./git";
 
@@ -28,6 +31,9 @@ interface SettingsState {
   theme: ThemeName;
   accentHue: number | null;
   permissionMode: PermissionMode;
+  /** UI language; English is the default and the fallback catalog. */
+  language: LocaleId;
+  setLanguage: (language: LocaleId) => void;
   /** Ask before deleting a thread (on by default). */
   confirmDeleteThread: boolean;
   /** Enter sends or inserts a newline; Mod+Enter always sends. */
@@ -69,6 +75,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: "dark",
   accentHue: null,
   permissionMode: "supervised",
+  language: "en",
   confirmDeleteThread: true,
   sendKey: "enter",
   showTimestamps: true,
@@ -91,6 +98,11 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setPermissionMode: (permissionMode) => {
     set({ permissionMode });
     if (isTauri()) void settingsSet("permission_mode", permissionMode).catch(() => {});
+  },
+  setLanguage: (language) => {
+    set({ language });
+    applyLocale(language);
+    if (isTauri()) void settingsSet("language", language).catch(() => {});
   },
   setConfirmDeleteThread: (confirmDeleteThread) => {
     set({ confirmDeleteThread });
@@ -155,6 +167,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       diffViewMode,
       preferredEditor,
       glassOpacity,
+      language,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -168,6 +181,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("diff_view_mode").catch(() => null),
       settingsGet("preferred_editor").catch(() => null),
       settingsGet("glass_opacity").catch(() => null),
+      settingsGet("language").catch(() => null),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "dark";
     const resolvedHue =
@@ -179,10 +193,13 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       permissionMode === "full_access"
         ? permissionMode
         : "supervised";
+    const resolvedLanguage: LocaleId = isLocaleId(language) ? language : "en";
+    applyLocale(resolvedLanguage);
     set({
       theme: resolvedTheme,
       accentHue: resolvedHue,
       permissionMode: resolvedMode,
+      language: resolvedLanguage,
       confirmDeleteThread: confirmDelete !== false,
       sendKey: sendKey === "mod-enter" ? "mod-enter" : "enter",
       showTimestamps: showTimestamps !== false,

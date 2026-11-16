@@ -1,12 +1,23 @@
-import { describe, expect, it } from "vitest";
+import { createElement } from "react";
+import { render, screen, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_BINDINGS,
   bindingFor,
   eventToBinding,
   formatBinding,
+  formatBindingParts,
+  MOD_KEY,
   matchesBinding,
 } from "../src/lib/hotkeys";
 import { buildCommands } from "../src/lib/commands";
+import { Route as KeybindingsRoute } from "../src/routes/settings.keybindings";
+import { useSettingsStore } from "../src/stores/settings";
+
+vi.mock("../src/lib/ipc", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  settingsSet: vi.fn(async () => undefined),
+}));
 
 const key = (over: Partial<KeyboardEvent> = {}): KeyboardEvent =>
   ({
@@ -49,9 +60,28 @@ describe("hotkeys (§6.7)", () => {
   });
 
   it("formatBinding renders the platform hint", () => {
-    const mod = formatBinding("Mod+k").endsWith("k") ? formatBinding("Mod+k").slice(0, -1) : "";
-    expect(["⌘", "Ctrl"]).toContain(mod);
+    expect(formatBindingParts("Mod+Shift+k")).toEqual([MOD_KEY, "⇧", "K"]);
+    expect(["⌘", "Ctrl"]).toContain(MOD_KEY);
+    expect(formatBinding("Mod+k")).toMatch(/K$/);
     expect(formatBinding("Mod+Alt+d")).toMatch(/Alt/);
+  });
+
+  it("renders visible plus separators between individual Kbd chips in keybinding settings", () => {
+    useSettingsStore.setState({ keybindings: { "palette.open": "Mod+Shift+k" } });
+    render(createElement(KeybindingsRoute.options.component!));
+    const button = screen.getByRole("button", { name: /Rebind.*command palette/i });
+    expect([...button.querySelectorAll("kbd")].map((chip) => chip.textContent)).toEqual([
+      MOD_KEY,
+      "⇧",
+      "K",
+    ]);
+    const separators = within(button).getAllByText("+", { exact: true });
+    expect(separators).toHaveLength(2);
+    for (const separator of separators) {
+      expect(separator).toBeVisible();
+      expect(separator.closest("kbd")).toBeNull();
+    }
+    expect(button.textContent?.replaceAll(/\s/g, "")).toBe(`${MOD_KEY}+⇧+K`);
   });
 });
 

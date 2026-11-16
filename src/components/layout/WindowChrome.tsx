@@ -1,37 +1,71 @@
 import { useEffect, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, PanelLeft, PanelRight, PanelTop, Square, X } from "lucide-react";
+import { Copy, Minus, PanelLeft, PanelRight, Square, X } from "lucide-react";
 import { isTauri } from "../../lib/tauri";
+import { useT } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
 
-/** Panel toggles live in each route's single header (T3-style chrome). */
-export function PanelToggleButtons(): ReactElement {
+/** The page-with-lines mark for the chat project widget. */
+export function PageIcon() {
+  return (
+    <svg
+      width="15"
+      height="15"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <rect x="4" y="3" width="16" height="18" rx="2" />
+      <path d="M8 9h8M8 13h8" />
+    </svg>
+  );
+}
+
+/** Sidebar toggle, rendered where the sidebar itself is not. */
+export function SidebarToggleButton(): ReactElement {
+  const t = useT();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
+  return (
+    <HeaderToggle
+      active={sidebarOpen}
+      onClick={toggleSidebar}
+      label={t("sidebar.toggle")}
+      icon={<PanelLeft size={15} />}
+    />
+  );
+}
+
+/** Panel toggles live in each route's single header (T3-style chrome). */
+export function PanelToggleButtons({
+  includeSidebar = false,
+}: {
+  includeSidebar?: boolean;
+} = {}): ReactElement {
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const projectWidgetOpen = useUiStore((s) => s.projectWidgetOpen);
-  const toggleSidebar = useUiStore((s) => s.toggleSidebar);
   const toggleRightPanel = useUiStore((s) => s.toggleRightPanel);
   const toggleProjectWidget = useUiStore((s) => s.toggleProjectWidget);
+  const t = useT();
 
   return (
     <>
-      <HeaderToggle
-        active={sidebarOpen}
-        onClick={toggleSidebar}
-        label="Toggle sidebar"
-        icon={<PanelLeft size={15} />}
-      />
+      {includeSidebar && <SidebarToggleButton />}
       <HeaderToggle
         active={projectWidgetOpen && !rightPanelOpen}
         onClick={toggleProjectWidget}
-        label="Toggle project info"
-        icon={<PanelTop size={15} />}
+        label={t("sidebar.toggleProjectInfo")}
+        icon={<PageIcon />}
       />
       <HeaderToggle
         active={rightPanelOpen}
         onClick={toggleRightPanel}
-        label="Toggle right panel"
+        label={t("sidebar.toggleRightPanel")}
         icon={<PanelRight size={15} />}
       />
     </>
@@ -73,6 +107,7 @@ export function WindowControls(): ReactElement | null {
 }
 
 function TauriWindowControls() {
+  const t = useT();
   const [maximized, setMaximized] = useState(false);
   const [win] = useState(() => {
     try {
@@ -102,10 +137,10 @@ function TauriWindowControls() {
   const base =
     "flex h-10 w-11 shrink-0 items-center justify-center text-text-secondary transition-colors duration-150";
   return (
-    <div className="fixed top-0 right-0 z-50 flex h-10 items-center border-b border-border-subtle bg-canvas pl-1">
+    <div className="fixed top-0 right-0 z-50 flex h-10 items-center bg-canvas pl-1">
       <button
         type="button"
-        aria-label="Minimize window"
+        aria-label={t("sidebar.minimizeWindow")}
         className={`${base} hover:bg-hover`}
         onClick={() => void win.minimize()}
       >
@@ -113,7 +148,7 @@ function TauriWindowControls() {
       </button>
       <button
         type="button"
-        aria-label={maximized ? "Restore window" : "Maximize window"}
+        aria-label={maximized ? t("sidebar.restoreWindow") : t("sidebar.maximizeWindow")}
         className={`${base} hover:bg-hover`}
         onClick={() => void win.toggleMaximize()}
       >
@@ -121,7 +156,7 @@ function TauriWindowControls() {
       </button>
       <button
         type="button"
-        aria-label="Close window"
+        aria-label={t("sidebar.closeWindow")}
         className={`${base} hover:bg-danger hover:text-white`}
         onClick={() => void win.close()}
       >
@@ -141,11 +176,16 @@ export function RouteHeader({
   subtitle?: string;
   actions?: ReactNode;
 }): ReactElement {
+  const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   return (
     <header
       data-tauri-drag-region
-      className={`flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle bg-canvas pl-4 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
+      className={`flex h-10 shrink-0 select-none items-center gap-2 bg-canvas pl-4 ${
+        isTauri() && !rightPanelOpen ? "pr-[136px]" : "pr-3"
+      }`}
     >
+      {!sidebarOpen && <SidebarToggleButton />}
       <h1 className="shrink-0 truncate text-base font-medium text-text-primary">{title}</h1>
       {subtitle && (
         <>

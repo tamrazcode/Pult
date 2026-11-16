@@ -5,6 +5,33 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
 
 ## [0.1.0] — milestone line
 
+### UI polish, native browser, i18n and open-source prep (2026-11-17)
+
+- **Native browser:** the preview surface is now a Tauri child `Webview` instead of a
+  sandboxed iframe. Any http(s) site renders regardless of `X-Frame-Options`/CSP, and local
+  HTML/JS/CSS assets are served from a token-scoped `127.0.0.1` server with canonical path
+  checks, so ES modules and relative imports work. The child HWND is hidden whenever a
+  modal, the palette or another surface owns the screen.
+- **Chrome:** sidebar toggle moved left of the logo (T3-style), app name capitalized to
+  “Pult”; header/sidebar/footer separator lines removed; middle header action got a page
+  icon; header toggles no longer shift when the right panel opens; footer refresh pinned
+  right; the thread `…` menu removed (pin stays, destructive actions live in the context
+  menu); thread title matches project-name size with a hover-only rename pencil.
+- **Sidebar:** search is borderless and matches project names as well as thread titles;
+  “No project” icon aligns with project badges.
+- **Composer:** permission pill is flat (no surface); workspace radios in project dialogs
+  are app-styled; keybindings render `Kbd + Kbd` with visible `+`.
+- **Timeline:** consecutive tools/thoughts/traces collapse into a T3-style summary row
+  (newest action visible, expand for the full chronological list); completed sub-second
+  “Thought for 0s” rows are suppressed; live thinking ticks seconds and switches to
+  minutes; a looping ASCII spinner precedes “Thinking”.
+- **i18n:** zero-dependency typed catalogs, language picker (English default, Russian,
+  German, Spanish, Japanese, Chinese, French), persisted per install, `Intl` date/number
+  formatting and localized IPC error codes.
+- **Open source:** MIT `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`, issue/PR templates,
+  hardened CI and `.gitignore`; dead `ProjectCard`/`badge` and the duplicate root SVG
+  removed.
+
 ### Connection fixes — OpenCode/Codex and Antigravity (2026-11-14)
 
 - `session/new` / `session/load` always send the schema-required `mcpServers` array;

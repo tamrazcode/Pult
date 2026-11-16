@@ -4,7 +4,7 @@ export function PultLogo({ className }: { className?: string }) {
     <svg
       viewBox="0 0 512 512"
       role="img"
-      aria-label="pult"
+      aria-label="Pult"
       className={className}
       fill="currentColor"
     >

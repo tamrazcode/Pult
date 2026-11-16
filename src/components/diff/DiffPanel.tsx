@@ -16,6 +16,7 @@ import { useRunsStore } from "../../stores/runs";
 import { useSettingsStore } from "../../stores/settings";
 import { useThreadsStore } from "../../stores/threads";
 import type { DiffFileSummary } from "../../lib/types";
+import { plural, useT } from "../../lib/i18n";
 import { SplitLines, UnifiedLines } from "./DiffLines";
 import { useVirtualRows } from "./useVirtualRows";
 
@@ -40,10 +41,10 @@ function Diffstat({ added, removed }: { added: number; removed: number }) {
   );
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  added: "new",
-  deleted: "deleted",
-  renamed: "renamed",
+const STATUS_KEY: Record<string, string> = {
+  added: "panels.diff.status.new",
+  deleted: "panels.diff.status.deleted",
+  renamed: "panels.diff.status.renamed",
   modified: "",
 };
 
@@ -64,7 +65,9 @@ function FileCard({
   onToggle: () => void;
   onToggleReviewed: () => void;
 }) {
-  const statusLabel = STATUS_LABEL[file.status] ?? "";
+  const t = useT();
+  const statusKey = STATUS_KEY[file.status];
+  const statusLabel = statusKey ? t(statusKey) : "";
   return (
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
       <div className="flex items-center gap-1.5 px-2 py-1.5">
@@ -86,15 +89,15 @@ function FileCard({
           )}
           {file.binary && (
             <span className="shrink-0 rounded-full bg-active px-1.5 text-xs text-text-tertiary">
-              binary
+              {t("panels.diff.binary")}
             </span>
           )}
         </button>
         <Diffstat added={file.added} removed={file.removed} />
         <button
           onClick={onToggleReviewed}
-          title={reviewed ? "Mark as not reviewed" : "Mark reviewed"}
-          aria-label={reviewed ? "Mark as not reviewed" : "Mark reviewed"}
+          title={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
+          aria-label={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
           aria-pressed={reviewed}
           className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) border transition ${
             reviewed
@@ -108,7 +111,7 @@ function FileCard({
       {open && (
         <div className="border-t border-border-subtle bg-canvas">
           {patch?.loading ? (
-            <p className="px-3 py-2 text-xs text-text-tertiary">Loading diff…</p>
+            <p className="px-3 py-2 text-xs text-text-tertiary">{t("panels.diff.loading")}</p>
           ) : patch?.error ? (
             <p className="px-3 py-2 text-xs text-danger">{patch.error}</p>
           ) : patch?.file ? (
@@ -118,7 +121,7 @@ function FileCard({
               <UnifiedLines raw={patch.file.raw} />
             )
           ) : (
-            <p className="px-3 py-2 text-xs text-text-tertiary">Loading diff…</p>
+            <p className="px-3 py-2 text-xs text-text-tertiary">{t("panels.diff.loading")}</p>
           )}
         </div>
       )}
@@ -155,6 +158,7 @@ function DirRow({
   open: boolean;
   onToggle: () => void;
 }) {
+  const t = useT();
   return (
     <button
       onClick={onToggle}
@@ -165,7 +169,7 @@ function DirRow({
         size={12}
         className={`shrink-0 transition-transform ${open ? "" : "-rotate-90"}`}
       />
-      <span className="truncate font-mono">{dir || "(root)"}</span>
+      <span className="truncate font-mono">{dir || t("panels.diff.root")}</span>
       <span className="tnum ml-auto shrink-0">{count}</span>
     </button>
   );
@@ -204,6 +208,7 @@ function ActionButton({
 }
 
 export function DiffPanel({ threadId }: { threadId: string | null }) {
+  const t = useT();
   const state = useGitStore((s) => (threadId ? s.byThread[threadId] : undefined));
   const viewMode = useGitStore((s) => s.viewMode);
   const refresh = useGitStore((s) => s.refresh);
@@ -284,7 +289,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   if (!state || (state.loading && !state.diff)) {
     return (
       <div className="flex flex-1 items-center justify-center px-8 text-center text-sm text-text-tertiary">
-        {state?.loading ? "Reading git state…" : "No git state loaded yet."}
+        {state?.loading ? t("panels.diff.reading") : t("panels.diff.noState")}
       </div>
     );
   }
@@ -293,10 +298,8 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-1 px-8 text-center">
         <CircleSlash size={18} className="text-text-tertiary" />
-        <p className="text-sm text-text-secondary">Not a git repository</p>
-        <p className="text-xs text-text-tertiary">
-          Pick a workspace inside a repo (or use a worktree thread) to review diffs here.
-        </p>
+        <p className="text-sm text-text-secondary">{t("panels.diff.notRepo")}</p>
+        <p className="text-xs text-text-tertiary">{t("panels.diff.notRepoBody")}</p>
       </div>
     );
   }
@@ -312,21 +315,21 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   const pushReady = state.lastCommit !== null && state.lastCommit.sha !== state.pushedSha;
   const prReady = state.pushedSha !== null && ghAvailable;
   const commitTooltip = !hasChanges
-    ? "Nothing to commit"
+    ? t("panels.diff.nothingToCommit")
     : commitReady
-      ? `Commit ${files.length} changed files`
-      : "Type a commit message first";
+      ? plural("panels.diff.commitCount", files.length)
+      : t("panels.diff.typeMessage");
   const pushTooltip =
     state.lastCommit === null
-      ? "Commit first"
+      ? t("panels.diff.commitFirst")
       : !pushReady
-        ? "Everything is pushed"
-        : "Push the new commit";
+        ? t("panels.diff.allPushed")
+        : t("panels.diff.pushNewCommit");
   const prTooltip = !state.pushedSha
-    ? "Push first"
+    ? t("panels.diff.pushFirst")
     : !ghAvailable
-      ? "gh CLI not found on PATH"
-      : "Open a pull request for the pushed commit";
+      ? t("panels.diff.ghMissing")
+      : t("panels.diff.openPr");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -344,13 +347,13 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
         </span>
         {hasChanges && <Diffstat added={totalAdded} removed={totalRemoved} />}
         <span className="tnum shrink-0 text-xs whitespace-nowrap text-text-tertiary">
-          {reviewedCount}/{files.length} reviewed
+          {t("panels.diff.reviewed", { reviewed: reviewedCount, total: files.length })}
         </span>
         <div className="flex-1" />
         <button
           onClick={() => void refresh(threadId)}
-          title="Re-read git status and diff"
-          aria-label="Refresh diff"
+          title={t("panels.diff.refreshTitle")}
+          aria-label={t("panels.diff.refresh")}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
           <RefreshCw size={13} className={state.loading ? "animate-spin" : ""} />
@@ -367,7 +370,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
                   : "text-text-tertiary hover:bg-hover"
               }`}
             >
-              {mode === "unified" ? "Unified" : "Split"}
+              {mode === "unified" ? t("panels.diff.unified") : t("panels.diff.split")}
             </button>
           ))}
         </div>
@@ -381,17 +384,17 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           onKeyDown={(e) => {
             if (e.key === "Enter" && commitReady) void commit(threadId);
           }}
-          placeholder="Commit message…"
-          aria-label="Commit message"
+          placeholder={t("panels.diff.commitPlaceholder")}
+          aria-label={t("panels.diff.commitMessage")}
           className="h-7 min-w-[120px] flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
         />
         {suggested && !state.commitMessage && (
           <button
             onClick={() => setCommitMessage(threadId, suggested)}
-            title={`Agent suggested: ${suggested}`}
+            title={t("panels.diff.suggested", { message: suggested })}
             className="flex h-7 shrink-0 items-center rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
           >
-            Use suggested
+            {t("panels.diff.useSuggested")}
           </button>
         )}
         <ActionButton
@@ -399,7 +402,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           disabled={!commitReady}
           tooltip={commitTooltip}
           icon={Check}
-          label="Commit"
+          label={t("panels.diff.commit")}
           busy={state.busy === "commit"}
         />
         <ActionButton
@@ -407,7 +410,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           disabled={!pushReady}
           tooltip={pushTooltip}
           icon={Upload}
-          label="Push"
+          label={t("panels.diff.push")}
           busy={state.busy === "push"}
         />
         <ActionButton
@@ -415,7 +418,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           disabled={!prReady}
           tooltip={prTooltip}
           icon={GitPullRequest}
-          label="Create PR"
+          label={t("panels.diff.createPr")}
           busy={state.busy === "pr"}
         />
       </div>
@@ -423,11 +426,8 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
       {state.lastCommit && (
         <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 py-1 text-xs text-text-tertiary">
           <span className="font-mono">{state.lastCommit.sha.slice(0, 7)}</span>
-          <span>
-            committed {state.lastCommit.filesCommitted}{" "}
-            {state.lastCommit.filesCommitted === 1 ? "file" : "files"}
-          </span>
-          {state.pushedSha === state.lastCommit.sha && <span>· pushed</span>}
+          <span>{plural("panels.diff.committed", state.lastCommit.filesCommitted)}</span>
+          {state.pushedSha === state.lastCommit.sha && <span>{t("panels.diff.pushed")}</span>}
           {state.prUrl && (
             <button
               onClick={() => void openExternalUrl(state.prUrl!)}
@@ -449,7 +449,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto p-2">
         {files.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-text-tertiary">
-            Working tree matches {diff?.base ?? "HEAD"}.
+            {t("panels.diff.clean", { base: diff?.base ?? "HEAD" })}
           </p>
         ) : (
           <div style={{ height: totalHeight, position: "relative" }}>

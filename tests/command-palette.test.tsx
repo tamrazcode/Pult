@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { CommandPalette, useGlobalHotkeys } from "../src/components/ui/CommandPalette";
-import { DEFAULT_BINDINGS, formatBinding } from "../src/lib/hotkeys";
+import { DEFAULT_BINDINGS, formatBindingParts } from "../src/lib/hotkeys";
 import { useSettingsStore } from "../src/stores/settings";
 import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
@@ -57,10 +57,10 @@ describe("CommandPalette", () => {
     );
 
     expect(screen.getByRole("button", { name: "Rebind Show browser panel" })).toHaveTextContent(
-      formatBinding("Mod+Alt+B"),
+      formatBindingParts("Mod+Alt+B").join("+"),
     );
     expect(screen.getByRole("button", { name: "Rebind Show files panel" })).toHaveTextContent(
-      formatBinding("Mod+Alt+F"),
+      formatBindingParts("Mod+Alt+F").join("+"),
     );
 
     fireEvent.keyDown(window, { key: "b", ctrlKey: true, altKey: true });

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 import type { Project, Thread, UsageReport } from "../src/lib/types";
 
@@ -243,10 +243,11 @@ describe("shell layout polish", () => {
     expect(headers).toHaveLength(1);
     const header = headers[0]!;
     expect(header).toHaveClass("h-10");
-    expect(within(header).getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+    expect(header).not.toHaveClass("border-b");
+    expect(within(header).queryByRole("button", { name: "Toggle sidebar" })).toBeNull();
     expect(within(header).getByRole("button", { name: "Toggle right panel" })).toBeInTheDocument();
-    expect(header.querySelector('[aria-label="pult"]')).toBeNull();
-    expect(header.querySelector('svg[aria-label="pult"]')).toBeNull();
+    expect(header.querySelector('[aria-label="Pult"]')).toBeNull();
+    expect(header.querySelector('svg[aria-label="Pult"]')).toBeNull();
   });
 
   it("renders RouteHeader with h-10, drag region, title, and panel toggles for non-thread routes", () => {
@@ -259,7 +260,7 @@ describe("shell layout polish", () => {
     expect(header).toHaveAttribute("data-tauri-drag-region");
     expect(within(header).getByRole("heading", { name: "Settings" })).toBeInTheDocument();
     expect(within(header).getByText("Appearance")).toBeInTheDocument();
-    expect(within(header).getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+    expect(within(header).queryByRole("button", { name: "Toggle sidebar" })).toBeNull();
     expect(within(header).getByRole("button", { name: "Toggle right panel" })).toBeInTheDocument();
   });
 
@@ -297,12 +298,12 @@ describe("shell layout polish", () => {
         within(header).getByRole("button", { name: /(?:maximize|restore)/i }),
       ).toBeInTheDocument();
       expect(within(header).getByRole("button", { name: /close/i })).toBeInTheDocument();
-      expect(within(header).getByRole("button", { name: "Toggle sidebar" })).toBeInTheDocument();
+      expect(within(header).queryByRole("button", { name: "Toggle sidebar" })).toBeNull();
       expect(
         within(header).getByRole("button", { name: "Toggle right panel" }),
       ).toBeInTheDocument();
-      expect(header.querySelector('[aria-label="pult"]')).toBeNull();
-      expect(header.querySelector('svg[aria-label="pult"]')).toBeNull();
+      expect(header.querySelector('[aria-label="Pult"]')).toBeNull();
+      expect(header.querySelector('svg[aria-label="Pult"]')).toBeNull();
 
       unmount();
     }
@@ -314,6 +315,81 @@ describe("shell layout polish", () => {
     const close = within(header).getByRole("button", { name: "Close window" });
     const controls = close.parentElement!;
     expect(controls).toHaveClass("fixed", "top-0", "right-0");
-    expect(header.className).toContain("pr-[136px]");
+    expect(header).not.toHaveClass("pr-[136px]");
+    act(() => useUiStore.setState({ rightPanelOpen: false }));
+    expect(header).toHaveClass("pr-[136px]");
+  });
+
+  it("puts the sidebar toggle before the logo and refresh last after the footer spacer", () => {
+    const { container } = render(<Sidebar width={288} />);
+    const top = container.querySelector("aside")!.firstElementChild!;
+    const toggle = within(top as HTMLElement).getByRole("button", { name: "Toggle sidebar" });
+    const logo = top.querySelector('svg[aria-label="Pult"]')!;
+    expect(top.firstElementChild).toBe(toggle);
+    expect(toggle.compareDocumentPosition(logo) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(top as HTMLElement).getByText("Pult")).toBeVisible();
+    expect(top).not.toHaveClass("border-b");
+    const footer = container.querySelector("footer")!;
+    expect(footer).not.toHaveClass("border-b", "border-t");
+    const refresh = within(footer).getByRole("button", { name: "Refresh" });
+    const row = footer.firstElementChild!;
+    expect(row.lastElementChild).toBe(refresh.parentElement);
+    expect(refresh.parentElement!.previousElementSibling).toHaveClass("flex-1");
+    fireEvent.click(toggle);
+    expect(useUiStore.getState().sidebarOpen).toBe(false);
+  });
+
+  it.each(["chat", "route"])(
+    "shows the %s header sidebar toggle only when the sidebar is closed",
+    (kind) => {
+      render(kind === "chat" ? <ChatHeader title="Title" /> : <RouteHeader title="Title" />);
+      expect(screen.queryByRole("button", { name: "Toggle sidebar" })).toBeNull();
+      act(() => useUiStore.setState({ sidebarOpen: false }));
+      const toggle = screen.getByRole("button", { name: "Toggle sidebar" });
+      expect(toggle).toBeVisible();
+      fireEvent.click(toggle);
+      expect(useUiStore.getState().sidebarOpen).toBe(true);
+      expect(screen.queryByRole("button", { name: "Toggle sidebar" })).toBeNull();
+    },
+  );
+
+  it.each(["chat", "route"])(
+    "reserves window-control space only with the right panel closed in %s",
+    (kind) => {
+      const { container } = render(
+        kind === "chat" ? <ChatHeader title="Title" /> : <RouteHeader title="Title" />,
+      );
+      const header = container.querySelector("header")!;
+      expect(header).not.toHaveClass("pr-[136px]");
+      act(() => useUiStore.setState({ rightPanelOpen: false }));
+      expect(header).toHaveClass("pr-[136px]");
+      act(() => useUiStore.setState({ rightPanelOpen: true }));
+      expect(header).not.toHaveClass("pr-[136px]");
+    },
+  );
+
+  it("uses a small chat title and a page icon for the middle project-info toggle", () => {
+    useUiStore.setState({ rightPanelOpen: false, projectWidgetOpen: false });
+    const { container } = render(<ChatHeader title="Title" />);
+    expect(screen.getByRole("heading", { name: "Title" })).toHaveClass("text-sm");
+    expect(container.querySelector("header")).not.toHaveClass("border-b");
+    const middle = screen.getByRole("button", { name: "Toggle project info" });
+    const icon = middle.querySelector("svg")!;
+    expect(icon.querySelector("rect")).toHaveAttribute("height", "18");
+    expect(icon.querySelector("path")).toHaveAttribute("d", "M8 9h8M8 13h8");
+    expect(middle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(middle);
+    expect(useUiStore.getState().projectWidgetOpen).toBe(true);
+    expect(middle).toHaveAttribute("aria-pressed", "true");
+    expect(
+      middle.compareDocumentPosition(screen.getByRole("button", { name: "Toggle right panel" })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("keeps the RightPanel header borderless", () => {
+    const { container } = render(<RightPanel width={420} />);
+    expect(container.querySelector("aside")!.firstElementChild).toHaveClass("h-10");
+    expect(container.querySelector("aside")!.firstElementChild).not.toHaveClass("border-b");
   });
 });

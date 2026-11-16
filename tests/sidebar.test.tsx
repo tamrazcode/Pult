@@ -213,6 +213,23 @@ describe("buildSidebarGroups", () => {
     expect(groups.flatMap((g) => g.threads.map((t) => t.id))).toEqual(["t1", "t3", "t4"]);
   });
 
+  it("returns a matching project and every thread in that project", () => {
+    const alpha = makeProject("p1", "Alpha");
+    const threads = [
+      makeThread("t1", "Fix login", { projectId: "p1", updatedAt: 200 }),
+      makeThread("t2", "Update docs", { projectId: "p1", updatedAt: 100 }),
+      makeThread("t3", "Elsewhere", { projectId: "p2" }),
+    ];
+    const groups = buildSidebarGroups([alpha, makeProject("p2", "Beta")], threads, {
+      query: "aLpHa",
+      filter: "all",
+      unreadIds: new Set(),
+    });
+    expect(groups).toHaveLength(1);
+    expect(groups[0].project).toEqual(alpha);
+    expect(groups[0].threads.map((thread) => thread.id)).toEqual(["t1", "t2"]);
+  });
+
   it("places 'No project' group last only when non-empty", () => {
     const projects = [makeProject("p1", "Alpha")];
     const withOrphan = [
@@ -378,7 +395,7 @@ describe("Sidebar", () => {
     const noProjectLabel = screen.getByText("No project");
     expect(noProjectLabel).toHaveClass("font-medium");
     const noProjectRow = noProjectLabel.parentElement as HTMLElement;
-    expect(noProjectRow).toHaveClass("flex", "items-center", "px-2", "py-1.5");
+    expect(noProjectRow).toHaveClass("flex", "items-center", "pl-3", "pr-2", "py-1.5");
     expect(noProjectRow.querySelector("svg.lucide-square-dashed")).not.toBeNull();
     expect(within(noProjectRow).getByText("1")).toBeInTheDocument();
 
@@ -424,6 +441,20 @@ describe("Sidebar", () => {
     await userEvent.type(searchInput, "login");
 
     expect(screen.getByText("Fix login bug")).toBeVisible();
+    expect(screen.queryByText("Refactor sidebar")).toBeNull();
+    expect(screen.queryByText("Standalone note")).toBeNull();
+  });
+
+  it("searching a project name shows all its threads and excludes other projects", async () => {
+    useThreadsStore.setState({
+      threads: [...seededThreads, makeThread("t4", "Update docs", { projectId: "p1" })],
+    });
+    render(<Sidebar width={288} />);
+    await userEvent.type(screen.getByLabelText("Search projects and threads"), "alpha");
+    expect(screen.getByText("Alpha")).toBeVisible();
+    expect(screen.getByText("Fix login bug")).toBeVisible();
+    expect(screen.getByText("Update docs")).toBeVisible();
+    expect(screen.queryByText("Beta")).toBeNull();
     expect(screen.queryByText("Refactor sidebar")).toBeNull();
     expect(screen.queryByText("Standalone note")).toBeNull();
   });
@@ -478,7 +509,8 @@ describe("Sidebar", () => {
     render(<Sidebar width={288} />);
 
     const searchInput = screen.getByPlaceholderText("Search");
-    expect(searchInput).toHaveAttribute("aria-label", "Search threads");
+    expect(searchInput).toHaveAttribute("aria-label", "Search projects and threads");
+    expect(searchInput).not.toHaveClass("border", "border-border-subtle");
 
     const footer = document.querySelector<HTMLElement>("aside footer");
     expect(footer).not.toBeNull();
@@ -649,19 +681,19 @@ describe("Sidebar branding", () => {
     const aside = container.querySelector("aside");
     expect(aside).not.toBeNull();
 
-    const logos = aside!.querySelectorAll('svg[aria-label="pult"]');
+    const logos = aside!.querySelectorAll('svg[aria-label="Pult"]');
     expect(logos).toHaveLength(1);
     const logo = logos[0]!;
     expect(logo).toHaveClass("h-6", "w-6");
     expect(logo).not.toHaveAttribute("transform");
     expect(logo.outerHTML).not.toMatch(/skewX/i);
 
-    const labels = screen.getAllByText("pult");
+    const labels = screen.getAllByText("Pult");
     expect(labels).toHaveLength(1);
     expect(labels[0]).toHaveClass("font-normal");
     expect(labels[0]!.parentElement).toHaveClass("gap-1");
 
-    const topChrome = logo.closest("div");
+    const topChrome = logo.closest("aside")!.firstElementChild;
     expect(topChrome).not.toBeNull();
     expect(topChrome).toHaveClass("h-10");
     expect(topChrome!.querySelector('button[aria-label*="settings" i]')).toBeNull();

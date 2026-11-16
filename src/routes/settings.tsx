@@ -13,50 +13,52 @@ import {
   Settings2,
 } from "lucide-react";
 import { RouteHeader } from "../components/layout/WindowChrome";
+import { useT } from "../lib/i18n";
 
 export const Route = createFileRoute("/settings")({ component: SettingsLayout });
 
 interface NavItem {
   to: string;
-  label: string;
+  labelKey: string;
   icon: typeof Bot;
 }
 
-const NAV_GROUPS: { title?: string; items: NavItem[] }[] = [
+const NAV_GROUPS: { titleKey?: string; items: NavItem[] }[] = [
   {
     items: [
-      { to: "/settings/general", label: "General", icon: Settings2 },
-      { to: "/settings/appearance", label: "Appearance", icon: Palette },
-      { to: "/settings/chat", label: "Chat", icon: MessageSquare },
-      { to: "/settings/diffs", label: "Diffs & pull requests", icon: FileDiff },
-      { to: "/settings/keybindings", label: "Keybindings", icon: Keyboard },
+      { to: "/settings/general", labelKey: "settings.nav.general", icon: Settings2 },
+      { to: "/settings/appearance", labelKey: "settings.nav.appearance", icon: Palette },
+      { to: "/settings/chat", labelKey: "settings.nav.chat", icon: MessageSquare },
+      { to: "/settings/diffs", labelKey: "settings.nav.diffs", icon: FileDiff },
+      { to: "/settings/keybindings", labelKey: "settings.nav.keybindings", icon: Keyboard },
     ],
   },
   {
-    title: "Agents",
-    items: [{ to: "/settings/providers", label: "Providers", icon: Bot }],
+    titleKey: "settings.nav.agents",
+    items: [{ to: "/settings/providers", labelKey: "settings.nav.providers", icon: Bot }],
   },
   {
-    title: "Code",
-    items: [{ to: "/settings/projects", label: "Projects", icon: FolderTree }],
+    titleKey: "settings.nav.code",
+    items: [{ to: "/settings/projects", labelKey: "settings.nav.projects", icon: FolderTree }],
   },
   {
-    title: "Advanced",
+    titleKey: "settings.nav.advanced",
     items: [
-      { to: "/settings/diagnostics", label: "Diagnostics", icon: HeartPulse },
-      { to: "/settings/about", label: "About", icon: Info },
+      { to: "/settings/diagnostics", labelKey: "settings.nav.diagnostics", icon: HeartPulse },
+      { to: "/settings/about", labelKey: "settings.nav.about", icon: Info },
     ],
   },
 ];
 
 /** Two-pane settings shell (§6.4: nav left, content right). */
 export function SettingsLayout() {
+  const t = useT();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [query, setQuery] = useState("");
   const searchRef = useRef<HTMLInputElement>(null);
-  const activeLabel = NAV_GROUPS.flatMap((group) => group.items).find(
+  const activeItem = NAV_GROUPS.flatMap((group) => group.items).find(
     (item) => item.to === pathname,
-  )?.label;
+  );
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -73,15 +75,18 @@ export function SettingsLayout() {
   const filter = query.trim().toLowerCase();
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter((item) => item.label.toLowerCase().includes(filter)),
+    items: group.items.filter((item) => t(item.labelKey).toLowerCase().includes(filter)),
   })).filter((group) => group.items.length > 0);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <RouteHeader title="Settings" subtitle={activeLabel} />
+      <RouteHeader
+        title={t("settings.title")}
+        subtitle={activeItem ? t(activeItem.labelKey) : undefined}
+      />
       <div className="flex min-h-0 flex-1">
         <nav
-          aria-label="Settings"
+          aria-label={t("settings.title")}
           className="flex w-48 shrink-0 flex-col border-r border-border-subtle bg-canvas px-2 py-4 min-[1120px]:w-60 min-[1120px]:px-3"
         >
           <div className="relative mb-3 px-0">
@@ -93,8 +98,8 @@ export function SettingsLayout() {
               ref={searchRef}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search"
-              aria-label="Search settings"
+              placeholder={t("common.search")}
+              aria-label={t("settings.search")}
               className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-7 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
             />
             <span className="pointer-events-none absolute top-1/2 right-2 -translate-y-1/2 rounded border border-border-subtle px-1 text-xs text-text-tertiary">
@@ -104,16 +109,18 @@ export function SettingsLayout() {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {groups.length === 0 && (
-              <p className="px-2 py-3 text-xs text-text-tertiary">Nothing matches “{query}”.</p>
+              <p className="px-2 py-3 text-xs text-text-tertiary">
+                {t("settings.nothingMatches", { query })}
+              </p>
             )}
             {groups.map((group, index) => (
-              <div key={group.title ?? `group-${index}`} className="mb-2">
-                {group.title && (
+              <div key={group.titleKey ?? `group-${index}`} className="mb-2">
+                {group.titleKey && (
                   <p className="px-2 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary">
-                    {group.title}
+                    {t(group.titleKey)}
                   </p>
                 )}
-                {group.items.map(({ to, label, icon: Icon }) => (
+                {group.items.map(({ to, labelKey, icon: Icon }) => (
                   <Link
                     key={to}
                     to={to}
@@ -125,7 +132,7 @@ export function SettingsLayout() {
                     }`}
                   >
                     <Icon size={15} className="text-text-tertiary" />
-                    {label}
+                    {t(labelKey)}
                   </Link>
                 ))}
               </div>
@@ -144,8 +151,12 @@ export function SettingsLayout() {
                 P
               </span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-xs text-text-primary">Local user</span>
-                <span className="block truncate text-xs text-text-tertiary">On this computer</span>
+                <span className="block truncate text-xs text-text-primary">
+                  {t("settings.footer.localUser")}
+                </span>
+                <span className="block truncate text-xs text-text-tertiary">
+                  {t("settings.footer.onThisComputer")}
+                </span>
               </span>
             </Link>
           </div>

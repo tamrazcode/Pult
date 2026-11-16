@@ -63,10 +63,25 @@ export function matchesBinding(
   );
 }
 
-/** "Mod+K" → "⌘K"/"Ctrl+K" for display in menus and the palette. */
-export function formatBinding(binding: string): string {
+/** "Mod+Shift+K" → ["⌘","⇧","K"]; single letters are uppercased. */
+export function formatBindingParts(binding: string): string[] {
   return binding
     .split("+")
-    .map((p) => (p === "Mod" ? MOD_KEY : p === "Alt" ? "Alt" : p === "Shift" ? "⇧" : p))
-    .join("");
+    .filter(Boolean)
+    .map((part) =>
+      part === "Mod"
+        ? MOD_KEY
+        : part === "Alt"
+          ? "Alt"
+          : part === "Shift"
+            ? "⇧"
+            : part.length === 1
+              ? part.toUpperCase()
+              : part,
+    );
+}
+
+/** "Mod+K" → "⌘K"/"Ctrl+K" for display in menus and the palette. */
+export function formatBinding(binding: string): string {
+  return formatBindingParts(binding).join("");
 }

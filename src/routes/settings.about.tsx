@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { appVersion } from "../lib/ipc";
+import { useT } from "../lib/i18n";
 
 export const Route = createFileRoute("/settings/about")({ component: AboutSettings });
 
 function AboutSettings() {
+  const t = useT();
   const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -15,26 +17,24 @@ function AboutSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h2 className="text-lg font-medium text-text-primary">About pult</h2>
-      <p className="mt-1 text-sm text-text-tertiary">
-        A local-first Agent Development Environment: your coding agents, one window, over the Agent
-        Client Protocol. pult runs the agents you already have — it never resells access or stores
-        your keys.
-      </p>
+      <h2 className="text-lg font-medium text-text-primary">{t("settings.about.heading")}</h2>
+      <p className="mt-1 text-sm text-text-tertiary">{t("settings.about.body")}</p>
 
       <dl className="mt-4 space-y-2 text-sm">
         <div className="flex gap-3">
-          <dt className="w-32 shrink-0 text-text-tertiary">Version</dt>
+          <dt className="w-32 shrink-0 text-text-tertiary">{t("settings.about.version")}</dt>
           <dd className="font-mono tnum text-text-primary">{version || "—"}</dd>
         </div>
         <div className="flex gap-3">
-          <dt className="w-32 shrink-0 text-text-tertiary">Protocol</dt>
-          <dd className="text-text-primary">ACP over stdio (pinned schema in protocol/)</dd>
+          <dt className="w-32 shrink-0 text-text-tertiary">{t("settings.about.protocol")}</dt>
+          <dd className="text-text-primary">
+            {t("settings.about.protocolValue", { path: "protocol/" })}
+          </dd>
         </div>
         <div className="flex gap-3">
-          <dt className="w-32 shrink-0 text-text-tertiary">Data</dt>
+          <dt className="w-32 shrink-0 text-text-tertiary">{t("settings.about.data")}</dt>
           <dd className="text-text-primary">
-            ~/.pult — sqlite transcripts, config.toml, checkpoints; nothing leaves the machine.
+            {t("settings.about.dataValue", { dataDir: "~/.pult", config: "config.toml" })}
           </dd>
         </div>
       </dl>

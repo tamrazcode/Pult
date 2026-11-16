@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { permissionsRememberedClear, permissionsRememberedList } from "../lib/ipc";
+import { LOCALE_LABELS, SUPPORTED_LOCALES, useT } from "../lib/i18n";
+import type { LocaleId } from "../lib/i18n";
 import type { RememberedPermission } from "../lib/types";
 import { useSettingsStore } from "../stores/settings";
 
@@ -44,8 +46,11 @@ function Toggle({
 }
 
 function GeneralSettings() {
+  const t = useT();
   const confirmDeleteThread = useSettingsStore((s) => s.confirmDeleteThread);
   const setConfirmDeleteThread = useSettingsStore((s) => s.setConfirmDeleteThread);
+  const language = useSettingsStore((s) => s.language);
+  const setLanguage = useSettingsStore((s) => s.setLanguage);
   const [permissions, setPermissions] = useState<RememberedPermission[]>([]);
 
   useEffect(() => {
@@ -83,23 +88,43 @@ function GeneralSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h2 className="text-lg font-medium text-text-primary">General</h2>
-      <p className="mt-1 text-sm text-text-tertiary">Everyday behaviour of the app.</p>
+      <h2 className="text-lg font-medium text-text-primary">{t("settings.general.title")}</h2>
+      <p className="mt-1 text-sm text-text-tertiary">{t("settings.general.subtitle")}</p>
       <div className="mt-4 divide-y divide-border-subtle border-y border-border-subtle">
+        <div className="flex items-start gap-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-text-primary">{t("settings.general.language")}</p>
+            <p className="mt-0.5 text-xs text-text-tertiary">
+              {t("settings.general.languageDesc")}
+            </p>
+          </div>
+          <select
+            aria-label={t("settings.general.language")}
+            value={language}
+            onChange={(event) => setLanguage(event.target.value as LocaleId)}
+            className="mt-0.5 h-7 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary focus:border-border-strong focus:outline-none"
+          >
+            {SUPPORTED_LOCALES.map((locale) => (
+              <option key={locale} value={locale}>
+                {LOCALE_LABELS[locale]}
+              </option>
+            ))}
+          </select>
+        </div>
         <Toggle
-          label="Confirm before deleting threads"
-          description="Ask before a transcript and its worktree are removed."
+          label={t("settings.general.confirmDelete")}
+          description={t("settings.general.confirmDeleteDesc")}
           checked={confirmDeleteThread}
           onChange={setConfirmDeleteThread}
         />
       </div>
 
-      <h3 className="mt-8 text-sm font-medium text-text-primary">Remembered permissions</h3>
-      <p className="mt-1 text-xs text-text-tertiary">
-        “Always allow” choices are scoped to one project and agent. Revoke them here.
-      </p>
+      <h3 className="mt-8 text-sm font-medium text-text-primary">
+        {t("settings.general.remembered")}
+      </h3>
+      <p className="mt-1 text-xs text-text-tertiary">{t("settings.general.rememberedDesc")}</p>
       {permissions.length === 0 ? (
-        <p className="mt-3 text-xs text-text-tertiary">Nothing remembered yet.</p>
+        <p className="mt-3 text-xs text-text-tertiary">{t("settings.general.nothingRemembered")}</p>
       ) : (
         <>
           <ul className="mt-3 divide-y divide-border-subtle border-y border-border-subtle">
@@ -121,7 +146,7 @@ function GeneralSettings() {
                   onClick={() => revoke(permission)}
                   className="shrink-0 rounded-(--radius-sm) border border-border-subtle px-2 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
                 >
-                  Revoke
+                  {t("common.revoke")}
                 </button>
               </li>
             ))}
@@ -135,7 +160,7 @@ function GeneralSettings() {
             }}
             className="mt-2 text-xs text-text-tertiary transition hover:text-danger"
           >
-            Clear all
+            {t("common.clearAll")}
           </button>
         </>
       )}

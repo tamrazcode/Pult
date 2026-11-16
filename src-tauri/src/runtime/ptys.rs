@@ -265,7 +265,7 @@ impl PtyRegistry {
         let state = self.get(terminal_id)?;
         let mut guard = state.lock().expect("pty lock poisoned");
         let Some(writer) = guard.writer.as_mut() else {
-            return Err(PultError::internal("terminal input closed"));
+            return Err(PultError::with_code("terminal.input_closed", "terminal input closed"));
         };
         writer
             .write_all(data)
@@ -513,7 +513,18 @@ mod tests {
                 answered_cpr = true;
             }
             if registry.info(&info.terminal_id).unwrap().exit.is_some() {
-                saw_marker = out.contains("pty-round-trip-marker");
+                // The process can exit before the output pump drains its last
+                // chunk; give the sink a bounded grace period to catch up.
+                for _ in 0..40 {
+                    if sink
+                        .combined_output(&info.terminal_id)
+                        .contains("pty-round-trip-marker")
+                    {
+                        saw_marker = true;
+                        break;
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+                }
                 break;
             }
             tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;

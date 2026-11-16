@@ -7,6 +7,7 @@ import { useGitStore } from "../../stores/git";
 import { useProjectsStore } from "../../stores/projects";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
+import { useT } from "../../lib/i18n";
 
 interface ProjectScript {
   id: string;
@@ -30,6 +31,7 @@ function readScripts(projectId: string): ProjectScript[] {
 
 /** T3-style project card floating at the right edge of the chat. */
 export function ProjectInfoWidget({ threadId }: { threadId: string }) {
+  const t = useT();
   const thread = useThreadsStore((s) => s.threads.find((candidate) => candidate.id === threadId));
   const project = useProjectsStore((s) =>
     thread?.projectId
@@ -78,7 +80,7 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
 
   return (
     <aside
-      aria-label="Project info"
+      aria-label={t("panels.widget.projectInfo")}
       className="pointer-events-auto absolute top-3 right-3 z-20 w-72 rounded-(--radius-md) border border-border-strong bg-surface-raised/95 shadow-(--shadow-composer) backdrop-blur"
     >
       <button
@@ -121,7 +123,7 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
           onClick={() => setAdding((open) => !open)}
           className="flex w-full items-center gap-2 text-left text-xs text-text-secondary transition hover:text-text-primary"
         >
-          <Plus size={12} className="shrink-0 text-text-tertiary" /> Add project script
+          <Plus size={12} className="shrink-0 text-text-tertiary" /> {t("panels.widget.addScript")}
         </button>
         {adding && (
           <div className="mt-1.5 space-y-1">
@@ -129,8 +131,8 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
               autoFocus
               value={draftName}
               onChange={(event) => setDraftName(event.target.value)}
-              placeholder="Name"
-              aria-label="Script name"
+              placeholder={t("panels.widget.name")}
+              aria-label={t("panels.widget.scriptName")}
               className="h-6 w-full rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 text-xs text-text-primary focus:border-border-strong focus:outline-none"
             />
             <div className="flex gap-1">
@@ -142,16 +144,16 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
                   if (event.key === "Escape") setAdding(false);
                 }}
                 placeholder="pnpm dev"
-                aria-label="Script command"
+                aria-label={t("panels.widget.scriptCommand")}
                 className="h-6 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 font-mono text-xs text-text-primary focus:border-border-strong focus:outline-none"
               />
               <button
                 type="button"
-                aria-label="Save script"
+                aria-label={t("panels.widget.saveScript")}
                 onClick={addScript}
                 className="flex h-6 items-center rounded-(--radius-sm) bg-accent px-1.5 text-xs text-accent-fg"
               >
-                Add
+                {t("panels.widget.add")}
               </button>
             </div>
           </div>
@@ -161,14 +163,16 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
             <button
               type="button"
               title={script.command}
-              onClick={() => setComposerPrefill(`Run: ${script.command}`)}
+              onClick={() =>
+                setComposerPrefill(t("panels.widget.run", { command: script.command }))
+              }
               className="min-w-0 flex-1 truncate rounded-(--radius-sm) px-1 py-0.5 text-left font-mono text-xs text-text-secondary transition hover:bg-hover hover:text-text-primary"
             >
               {script.name}
             </button>
             <button
               type="button"
-              aria-label={`Remove ${script.name}`}
+              aria-label={t("panels.widget.remove", { name: script.name })}
               onClick={() => saveScripts(scripts.filter((item) => item.id !== script.id))}
               className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
@@ -181,11 +185,11 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
       <div className="flex items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-xs">
         <GitBranch size={12} className="shrink-0 text-text-tertiary" />
         <span className="min-w-0 flex-1 truncate font-mono text-text-secondary">
-          {branch ?? "No repository"}
+          {branch ?? t("panels.widget.noRepo")}
         </span>
         {git?.status && (
           <span className="shrink-0 text-text-tertiary">
-            {git.status.upstream ? "Published" : "Local only"}
+            {git.status.upstream ? t("panels.widget.published") : t("panels.widget.localOnly")}
           </span>
         )}
       </div>
@@ -195,9 +199,9 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
         onClick={() => setRightPanelTab("diff")}
         className="flex w-full items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-left text-xs text-text-secondary transition hover:bg-hover"
       >
-        <span>Commit &amp; push</span>
+        <span>{t("panels.widget.commitPush")}</span>
         <span className="flex-1" />
-        <span className="text-text-tertiary">Diff</span>
+        <span className="text-text-tertiary">{t("panels.diff.title")}</span>
       </button>
 
       <button
@@ -205,7 +209,7 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
         onClick={() => setRightPanelTab("diff")}
         className="flex w-full items-center gap-2 border-t border-border-subtle px-3 py-1.5 text-left text-xs transition hover:bg-hover"
       >
-        <span className="text-text-secondary">Changes</span>
+        <span className="text-text-secondary">{t("panels.widget.changes")}</span>
         <span className="flex-1" />
         <span className="tnum text-success">+{added}</span>
         <span className="tnum text-danger">-{removed}</span>

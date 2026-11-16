@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
+import { useT } from "../../lib/i18n";
 
 /** Full-window image preview; Escape or a backdrop click closes it. */
 export function ImageLightbox({
@@ -11,6 +12,7 @@ export function ImageLightbox({
   alt?: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const closeRef = useRef<HTMLButtonElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
 
@@ -47,7 +49,7 @@ export function ImageLightbox({
     <div
       role="dialog"
       aria-modal="true"
-      aria-label="Image preview"
+      aria-label={t("chat.imagePreview")}
       data-image-preview
       data-escape-layer
       className="fixed inset-0 z-[100] grid place-items-center bg-black/85 p-6 backdrop-blur-sm"
@@ -56,7 +58,7 @@ export function ImageLightbox({
       <button
         ref={closeRef}
         type="button"
-        aria-label="Close image preview"
+        aria-label={t("chat.imagePreviewClose")}
         onClick={onClose}
         className="absolute top-4 right-4 flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white transition hover:bg-black/80"
       >

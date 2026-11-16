@@ -429,7 +429,7 @@ impl AgentRuntime {
             .map_err(|e| crate::PultError::internal(format!("warmup initialize: {e}")))?;
         if conn.is_dead() {
             conn.kill();
-            return Err(crate::PultError::internal("warmup agent exited"));
+            return Err(crate::PultError::with_code("provider.warmup_failed", "warmup agent exited"));
         }
         let warm = WarmConn {
             conn: Arc::clone(&conn),
@@ -606,7 +606,7 @@ impl AgentRuntime {
     pub fn set_instances(&self, specs: Vec<crate::config::InstanceSpec>) -> Result<(), crate::PultError> {
         for spec in &specs {
             if spec.id.trim().is_empty() {
-                return Err(crate::PultError::internal("instance id must not be empty"));
+                return Err(crate::PultError::with_code("provider.invalid_id", "instance id must not be empty"));
             }
             if spec.driver != "acp" && spec.driver != "mock" {
                 return Err(crate::PultError::internal(format!(
@@ -1431,7 +1431,7 @@ impl AgentRuntime {
         match tx {
             Some(tx) => {
                 tx.send((request_id.to_string(), payload))
-                    .map_err(|_| crate::PultError::internal("run already finished"))?;
+                    .map_err(|_| crate::PultError::with_code("run.finished", "run already finished"))?;
                 Ok(())
             }
             None => Err(crate::PultError::internal(format!("run {run_id} is not active"))),
@@ -2766,7 +2766,7 @@ impl AgentRuntime {
         method_id: &str,
     ) -> Result<PreflightReport, crate::PultError> {
         if method_id.trim().is_empty() {
-            return Err(crate::PultError::internal("auth method id is empty"));
+            return Err(crate::PultError::with_code("provider.auth_method_missing", "auth method id is empty"));
         }
         let (spec, cached_methods) = {
             let inner = self.inner.lock().expect("runtime lock poisoned");

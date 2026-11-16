@@ -1,25 +1,26 @@
 import type { ThemeName } from "../stores/settings";
+import type { TranslationKey } from "./i18n";
 
 /** Valid themes, in picker order (§6.6). */
-export const THEMES: { id: ThemeName; label: string }[] = [
-  { id: "dark", label: "Dark" },
-  { id: "light", label: "Light" },
-  { id: "graphite", label: "Graphite" },
-  { id: "liquid", label: "Liquid Glass" },
+export const THEMES: { id: ThemeName; labelKey: TranslationKey }[] = [
+  { id: "dark", labelKey: "settings.appearance.theme.dark" },
+  { id: "light", labelKey: "settings.appearance.theme.light" },
+  { id: "graphite", labelKey: "settings.appearance.theme.graphite" },
+  { id: "liquid", labelKey: "settings.appearance.theme.liquid" },
 ];
 
 /** Accent presets (hue values for `hsl(h s% l%)`) plus the "stock" reset. */
-export const ACCENT_STOPS: { label: string; hue: number | null }[] = [
-  { label: "Stock blue", hue: null },
-  { label: "Cyan", hue: 190 },
-  { label: "Green", hue: 150 },
-  { label: "Lime", hue: 90 },
-  { label: "Yellow", hue: 45 },
-  { label: "Orange", hue: 25 },
-  { label: "Red", hue: 355 },
-  { label: "Pink", hue: 320 },
-  { label: "Purple", hue: 270 },
-  { label: "Indigo", hue: 235 },
+export const ACCENT_STOPS: { labelKey: TranslationKey; hue: number | null }[] = [
+  { labelKey: "settings.appearance.accent.stock", hue: null },
+  { labelKey: "settings.appearance.accent.cyan", hue: 190 },
+  { labelKey: "settings.appearance.accent.green", hue: 150 },
+  { labelKey: "settings.appearance.accent.lime", hue: 90 },
+  { labelKey: "settings.appearance.accent.yellow", hue: 45 },
+  { labelKey: "settings.appearance.accent.orange", hue: 25 },
+  { labelKey: "settings.appearance.accent.red", hue: 355 },
+  { labelKey: "settings.appearance.accent.pink", hue: 320 },
+  { labelKey: "settings.appearance.accent.purple", hue: 270 },
+  { labelKey: "settings.appearance.accent.indigo", hue: 235 },
 ];
 
 /** Relative luminance (WCAG 2.x) of an sRGB hex color, 0..1. */

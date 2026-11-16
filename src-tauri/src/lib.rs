@@ -1,6 +1,7 @@
 //! pult core — local-first Agent Development Environment over ACP.
 //! M1: ACP protocol layer, drivers, runtime orchestration, sqlite store, IPC.
 
+pub mod browser;
 pub mod config;
 pub mod drivers;
 pub mod events;
@@ -139,6 +140,7 @@ pub fn run() {
                 Arc::new(app.handle().clone()) as Arc<dyn runtime::EventSink>,
             ));
             app.manage(runtime);
+            app.manage(browser::BrowserState::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -188,6 +190,11 @@ pub fn run() {
             ipc::workspace_tree,
             ipc::workspace_read_text,
             ipc::workspace_read_html,
+            browser::browser_navigate,
+            browser::browser_set_bounds,
+            browser::browser_history,
+            browser::browser_state,
+            browser::browser_close,
             ipc::browser_validate_target,
             ipc::browser_check_frame_headers,
             ipc::open_external_url,

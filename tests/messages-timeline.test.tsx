@@ -31,6 +31,7 @@ import { Composer } from "../src/components/chat/Composer";
 import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
 import { ImageLightbox } from "../src/components/ui/ImageLightbox";
 import { useRunsStore } from "../src/stores/runs";
+import type { ChatItem } from "../src/stores/runs";
 import { useThreadsStore } from "../src/stores/threads";
 import { useUiStore } from "../src/stores/ui";
 
@@ -369,7 +370,7 @@ describe("MessagesTimeline", () => {
     );
   });
 
-  it("renders thought and tool rows as flat inline lines without border-border-subtle or bg-surface", () => {
+  it("keeps expanded thought and tool rows flat inside one collapsed summary", () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0)] },
       viewsByRun: {
@@ -398,6 +399,12 @@ describe("MessagesTimeline", () => {
 
     render(<MessagesTimeline threadId="th" />);
 
+    const summary = screen.getByRole("button", { name: "read 1 file" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: /Thought for/i })).toBeNull();
+    expect(screen.queryByText("Read main.ts")).toBeNull();
+    fireEvent.click(summary);
+    expect(summary).toHaveAttribute("aria-expanded", "true");
     const thoughtContainer = screen.getByRole("button", { name: /Thought for/i }).parentElement!;
     expect(thoughtContainer).not.toHaveClass("border-border-subtle");
     expect(thoughtContainer).not.toHaveClass("bg-surface");
@@ -405,6 +412,312 @@ describe("MessagesTimeline", () => {
     const toolContainer = screen.getByText("Read main.ts").closest("button")!.parentElement!;
     expect(toolContainer).not.toHaveClass("border-border-subtle");
     expect(toolContainer).not.toHaveClass("bg-surface");
+  });
+
+  it.each(["tools", "thoughts", "traces"])(
+    "collapses two consecutive %s into exactly one summary button",
+    (kind) => {
+      const items: ChatItem[] =
+        kind === "tools"
+          ? ["First tool", "Second tool"].map((title, index) => ({
+              type: "tool",
+              toolCallId: `t${index}`,
+              title,
+              kind: "read",
+              status: "completed",
+              locations: [],
+            }))
+          : kind === "thoughts"
+            ? ["First thought", "Second thought"].map((text) => ({
+                type: "thought",
+                text,
+                streaming: false,
+                startedAt: 1_000,
+                endedAt: 3_000,
+              }))
+            : [
+                { type: "trace", optionId: "first" },
+                { type: "trace", optionId: "second" },
+              ];
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "finished", 0)] },
+        viewsByRun: { r1: { items, streaming: false } },
+      });
+      const { container } = render(<MessagesTimeline threadId="th" />);
+      expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
+      const summary = container.querySelector("button[aria-expanded]")!;
+      expect(summary).toHaveAttribute("aria-expanded", "false");
+      fireEvent.click(summary);
+      expect(summary).toHaveAttribute("aria-expanded", "true");
+      if (kind === "tools") {
+        expect(screen.getByText("First tool")).toBeVisible();
+        expect(screen.getByText("Second tool")).toBeVisible();
+      } else if (kind === "thoughts") {
+        expect(screen.getAllByRole("button", { name: "Thought for 2s" })).toHaveLength(2);
+      } else {
+        expect(screen.getByText("Auto-allowed by permission mode (first)")).toBeVisible();
+        expect(screen.getByText("Auto-allowed by permission mode (second)")).toBeVisible();
+      }
+    },
+  );
+
+  it("summarizes completed mixed actions by count and expands every action chronologically", () => {
+    const items: ChatItem[] = [
+      {
+        type: "tool",
+        toolCallId: "read",
+        title: "Read source",
+        kind: "read",
+        status: "completed",
+        locations: [],
+      },
+      {
+        type: "thought",
+        text: "Consider the result",
+        streaming: false,
+        startedAt: 1_000,
+        endedAt: 3_000,
+      },
+      { type: "trace", optionId: "allow_once" },
+      {
+        type: "tool",
+        toolCallId: "edit",
+        title: "Edit source",
+        kind: "edit",
+        status: "completed",
+        locations: [],
+      },
+      {
+        type: "tool",
+        toolCallId: "exec",
+        title: "Run tests",
+        kind: "execute",
+        status: "completed",
+        locations: [],
+      },
+    ];
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: { r1: { items, streaming: false } },
+    });
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    const summary = screen.getByRole("button", {
+      name: "Changed 1 file, ran 1 command and read 1 file",
+    });
+    expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
+    expect(screen.queryByText("Read source")).toBeNull();
+    fireEvent.click(summary);
+    const chronological = [
+      screen.getByText("Read source"),
+      screen.getByRole("button", { name: "Thought for 2s" }),
+      screen.getByText("Auto-allowed by permission mode (allow_once)"),
+      screen.getByText("Edit source"),
+      screen.getByText("Run tests"),
+    ];
+    chronological.forEach((element, index) => {
+      expect(element).toBeVisible();
+      if (index > 0)
+        expect(
+          chronological[index - 1].compareDocumentPosition(element) &
+            Node.DOCUMENT_POSITION_FOLLOWING,
+        ).toBeTruthy();
+    });
+    fireEvent.click(chronological[1]);
+    expect(screen.getByText("Consider the result")).toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.queryByText("Read source")).toBeNull();
+    expect(screen.queryByText("Consider the result")).toBeNull();
+  });
+
+  it("shows the newest action title while active and replaces it with counts on completion", () => {
+    const first: ChatItem = {
+      type: "tool",
+      toolCallId: "read",
+      title: "Read source",
+      kind: "read",
+      status: "completed",
+      locations: [],
+    };
+    const latest: ChatItem = {
+      type: "tool",
+      toolCallId: "exec",
+      title: "Run newest checks",
+      kind: "execute",
+      status: "in_progress",
+      locations: [],
+    };
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "running", 0)] },
+      viewsByRun: { r1: { items: [first, latest], streaming: true } },
+    });
+    const { container } = render(<MessagesTimeline threadId="th" />);
+    expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Run newest checks" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByText("Read source")).toBeNull();
+    const newest: ChatItem = { ...latest, toolCallId: "exec2", title: "Build latest revision" };
+    act(() =>
+      useRunsStore.setState({
+        viewsByRun: {
+          r1: { items: [first, { ...latest, status: "completed" }, newest], streaming: true },
+        },
+      }),
+    );
+    expect(screen.getByRole("button", { name: "Build latest revision" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+    expect(screen.queryByText("Run newest checks")).toBeNull();
+    act(() =>
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "finished", 0)] },
+        viewsByRun: {
+          r1: {
+            items: [first, { ...latest, status: "completed" }, { ...newest, status: "completed" }],
+            streaming: false,
+          },
+        },
+      }),
+    );
+    expect(screen.getByRole("button", { name: "ran 2 commands and read 1 file" })).toBeVisible();
+    expect(screen.queryByText("Build latest revision")).toBeNull();
+  });
+
+  it("keeps action groups on either side of an assistant message separate", () => {
+    const tool = (id: string): ChatItem => ({
+      type: "tool",
+      toolCallId: id,
+      title: id,
+      kind: "read",
+      status: "completed",
+      locations: [],
+    });
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            tool("a"),
+            tool("b"),
+            { type: "assistant", text: "Intermediate result", streaming: false },
+            tool("c"),
+            tool("d"),
+          ],
+          streaming: false,
+        },
+      },
+    });
+    render(<MessagesTimeline threadId="th" />);
+    const summaries = screen.getAllByRole("button", { name: "read 2 files" });
+    expect(summaries).toHaveLength(2);
+    const message = screen.getByText("Intermediate result");
+    expect(
+      summaries[0].compareDocumentPosition(message) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      message.compareDocumentPosition(summaries[1]) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("omits completed sub-second thoughts entirely, including from group counts", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "thought",
+              text: "Instant thought",
+              streaming: false,
+              startedAt: 1_000,
+              endedAt: 1_999,
+            },
+            {
+              type: "tool",
+              toolCallId: "read",
+              title: "Read source",
+              kind: "read",
+              status: "completed",
+              locations: [],
+            },
+            {
+              type: "thought",
+              text: "Zero thought",
+              streaming: false,
+              startedAt: 2_000,
+              endedAt: 2_000,
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+    render(<MessagesTimeline threadId="th" />);
+    expect(screen.queryByRole("button", { name: /Thought/ })).toBeNull();
+    expect(screen.queryByText("Instant thought")).toBeNull();
+    expect(screen.queryByText("Zero thought")).toBeNull();
+    expect(screen.queryByRole("button", { name: "read 1 file" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Read source/ })).toBeVisible();
+  });
+
+  it("shows Thinking with a changing character spinner and a live duration across one minute", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(60_000);
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "running", 0)] },
+        viewsByRun: {
+          r1: {
+            items: [
+              {
+                type: "thought",
+                text: "Still reasoning",
+                streaming: true,
+                startedAt: 1_000,
+                endedAt: 1_000,
+              },
+            ],
+            streaming: true,
+          },
+        },
+      });
+      render(<MessagesTimeline threadId="th" />);
+      const thought = screen.getByRole("button", { name: "Thinking · 59s" });
+      const spinner = thought.querySelector("span[aria-hidden]")!;
+      expect(spinner.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u);
+      const initial = spinner.textContent;
+      act(() => vi.advanceTimersByTime(90));
+      expect(spinner.textContent).not.toBe(initial);
+      act(() => vi.advanceTimersByTime(5_910));
+      expect(screen.getByRole("button", { name: "Thinking · 1m 5s" })).toBeVisible();
+      expect(screen.queryByText("Still reasoning")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("formats a completed thought lasting at least a minute as minutes and seconds", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "thought",
+              text: "Long reasoning",
+              streaming: false,
+              startedAt: 1_000,
+              endedAt: 66_000,
+            },
+          ],
+          streaming: false,
+        },
+      },
+    });
+    render(<MessagesTimeline threadId="th" />);
+    expect(screen.getByRole("button", { name: "Thought for 1m 5s" })).toBeVisible();
   });
 
   it("groups two consecutive search tool calls into one expandable summary line", () => {

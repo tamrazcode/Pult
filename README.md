@@ -2,8 +2,8 @@
 
 A local-first **Agent Development Environment** over ACP: one desktop app that hosts your
 coding agents (Claude Code, Gemini CLI, Codex, dsh — anything speaking the Agent Client
-Protocol) in one place. Bring your own subscription; pult is not an agent and holds no API
-keys.
+Protocol) in one place. Bring your own subscription; Pult is not an agent and holds no API
+keys. MIT licensed.
 
 ![chat — dark](docs/screenshots/chat-dark.png)
 
@@ -19,6 +19,13 @@ keys.
   (via `gh`), isolated worktrees per thread, hidden checkpoint refs per run.
 - **Terminals** — real ConPTY per thread in xterm.js; agent-opened terminals mirror into the
   panel.
+- **Built-in browser** — a native child webview, not an iframe: any site opens regardless of
+  `X-Frame-Options`/CSP, and local HTML/JS/CSS run with relative imports from a token-scoped
+  loopback server.
+- **Timeline that scales** — consecutive tools and thoughts collapse into a T3-style summary;
+  the newest action stays visible, expanding shows the full chronological list.
+- **Seven languages** — English (default), Russian, German, Spanish, Japanese, Chinese and
+  French, switchable in Settings ▸ General and applied without a restart.
 - **Sessions persist** — transcripts in sqlite (`~/.pult/pult.db`), resume via `session/load`,
   JSONL-exportable; agents can crash and pult tells you with a recovery path, not a blank
   screen.

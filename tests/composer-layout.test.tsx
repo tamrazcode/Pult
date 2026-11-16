@@ -100,7 +100,7 @@ describe("Composer and ChatColumn layout invariants", () => {
     expect(outer).not.toHaveClass("sm:px-6");
   });
 
-  it("pins spacing rhythm: sidebar header px-4, nav px-2, thread links pl-9, and composer px-6", () => {
+  it("pins spacing rhythm: sidebar header px-3, nav px-2, thread links pl-9, and composer px-6", () => {
     useProjectsStore.setState({
       projects: [
         {
@@ -147,7 +147,8 @@ describe("Composer and ChatColumn layout invariants", () => {
       "aside > div[data-tauri-drag-region]",
     );
     expect(header).not.toBeNull();
-    expect(header).toHaveClass("px-4");
+    expect(header).toHaveClass("px-3");
+    expect(header).not.toHaveClass("px-4");
 
     const nav = screen.getByRole("navigation", { name: "Threads" });
     expect(nav).toHaveClass("px-2");

@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { FolderOpen } from "lucide-react";
-import { ipcErrorMessage, pickFolder } from "../../lib/ipc";
+import { pickFolder } from "../../lib/ipc";
 import { PROJECT_COLORS, projectColorFor, useProjectsStore } from "../../stores/projects";
 import { Button } from "../ui/button";
+import { WorkspaceStrategyRadio } from "./WorkspaceStrategyRadio";
+import { localizeIpcError, useT } from "../../lib/i18n";
 
 function basename(path: string): string {
   const parts = path.split(/[\\/]/).filter(Boolean);
@@ -12,6 +14,7 @@ function basename(path: string): string {
 
 /** Create a folder-backed project via the native picker. */
 export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const t = useT();
   const router = useRouter();
   const [rootPath, setRootPath] = useState("");
   const [name, setName] = useState("");
@@ -51,14 +54,14 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
     setPicking(true);
     setError(null);
     try {
-      const picked = await pickFolder("Choose project folder");
+      const picked = await pickFolder(t("settings.projects.chooseFolderTitle"));
       if (!picked) return;
       const nextName = basename(picked);
       setRootPath(picked);
       setName(nextName);
       setColor(projectColorFor(nextName));
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
     } finally {
       setPicking(false);
     }
@@ -75,7 +78,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
       onClose();
       await router.navigate({ to: "/chat" });
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
       setBusy(false);
     }
   };
@@ -90,22 +93,20 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="New project"
+        aria-label={t("settings.projects.new")}
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
         }}
         className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-5 shadow-2xl"
       >
-        <h2 className="text-lg font-semibold text-text-primary">New project</h2>
-        <p className="mt-1 text-sm text-text-tertiary">
-          Threads in this project run inside the chosen folder.
-        </p>
+        <h2 className="text-lg font-semibold text-text-primary">{t("settings.projects.new")}</h2>
+        <p className="mt-1 text-sm text-text-tertiary">{t("settings.projects.createHint")}</p>
 
         <div className="mt-4 space-y-4">
           <div>
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Folder
+              {t("common.folder")}
             </span>
             <div className="mt-1.5 flex items-center gap-2">
               <Button
@@ -116,32 +117,36 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
                 disabled={busy || picking}
               >
                 <FolderOpen size={14} />
-                Choose folder
+                {t("settings.projects.chooseFolder")}
               </Button>
               <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
-                {rootPath || "No folder selected"}
+                {rootPath || t("settings.projects.noFolder")}
               </span>
             </div>
           </div>
 
           <label className="block">
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Name
+              {t("common.name")}
             </span>
             <input
               ref={nameRef}
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Project name"
+              placeholder={t("settings.projects.namePlaceholder")}
               className="mt-1.5 h-9 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-3 text-sm text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
             />
           </label>
 
           <div>
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Color
+              {t("common.color")}
             </span>
-            <div role="group" aria-label="Project color" className="mt-1.5 flex flex-wrap gap-2">
+            <div
+              role="group"
+              aria-label={t("settings.projects.colorLabel")}
+              className="mt-1.5 flex flex-wrap gap-2"
+            >
               {PROJECT_COLORS.map((swatch) => (
                 <button
                   key={swatch}
@@ -160,28 +165,22 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
 
           <div className="space-y-1.5">
             <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-              Workspace
+              {t("common.workspace")}
             </span>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-              <input
-                type="radio"
-                name="worktree-strategy"
-                checked={strategy === "root"}
-                onChange={() => setStrategy("root")}
-                className="accent-(--accent)"
-              />
-              Direct folder
-            </label>
-            <label className="flex cursor-pointer items-center gap-2 text-sm text-text-secondary">
-              <input
-                type="radio"
-                name="worktree-strategy"
-                checked={strategy === "worktree"}
-                onChange={() => setStrategy("worktree")}
-                className="accent-(--accent)"
-              />
-              Git worktree
-            </label>
+            <WorkspaceStrategyRadio
+              name="worktree-strategy"
+              label={t("settings.projects.strategyRoot")}
+              description={t("settings.projects.strategyRootDesc")}
+              checked={strategy === "root"}
+              onChange={() => setStrategy("root")}
+            />
+            <WorkspaceStrategyRadio
+              name="worktree-strategy"
+              label={t("settings.projects.strategyWorktree")}
+              description={t("settings.projects.strategyWorktreeDesc")}
+              checked={strategy === "worktree"}
+              onChange={() => setStrategy("worktree")}
+            />
           </div>
 
           {error && (
@@ -193,7 +192,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
 
         <div className="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" type="button" onClick={onClose} disabled={busy}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button
             variant="primary"
@@ -201,7 +200,7 @@ export function CreateProjectDialog({ open, onClose }: { open: boolean; onClose:
             type="submit"
             disabled={busy || !rootPath || !name.trim()}
           >
-            Create
+            {t("common.create")}
           </Button>
         </div>
       </form>

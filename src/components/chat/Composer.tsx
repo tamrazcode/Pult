@@ -23,7 +23,6 @@ import {
   configValueValid,
 } from "./ComposerControls";
 import {
-  ipcErrorMessage,
   runsCancel,
   runsDispatch,
   runsQueueRemove,
@@ -34,6 +33,7 @@ import {
   workspaceFiles,
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
+import { localizeIpcError, useT } from "../../lib/i18n";
 import { useGitStore } from "../../stores/git";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
@@ -48,11 +48,6 @@ import type {
 } from "../../lib/types";
 
 const MAX_HEIGHT = 10 * 28; // 10 rows at the 28px effective line step
-
-/** Pult-local slash commands (never sent to the agent). */
-const BUILT_IN_COMMANDS: CommandInfo[] = [
-  { name: "commit", description: "Commit this thread's changes — /commit <message>" },
-];
 
 /** What a picked slash command inserts: the leading "/" is part of the command. */
 export function formatSlashInsertion(command: CommandInfo): string {
@@ -177,6 +172,7 @@ function withFileAttachments(text: string, files: FileChip[]): string {
 
 /** One overflow menu for every secondary control; one permission control inside. */
 function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -208,10 +204,10 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        aria-label="Composer options"
+        aria-label={t("composer.optionsMenu")}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Composer options"
+        title={t("composer.optionsMenu")}
         onClick={() => setOpen((current) => !current)}
         className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
       >
@@ -221,19 +217,23 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
         <div
           ref={dialogRef}
           role="dialog"
-          aria-label="Composer options"
+          aria-label={t("composer.optionsMenu")}
           data-escape-layer
           className="absolute right-0 bottom-full z-50 mb-2 w-72 space-y-3 rounded-(--radius-md) border border-border-strong bg-surface-raised p-3 shadow-(--shadow-composer)"
         >
           {modes.length > 0 && (
             <section>
               <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                Session mode
+                {t("composer.sessionMode")}
               </p>
               <AgentModePicker threadId={threadId} />
             </section>
           )}
-          <ConfigOptionPickers threadId={threadId} heading="Options" excludeModelAndReasoning />
+          <ConfigOptionPickers
+            threadId={threadId}
+            heading={t("composer.options")}
+            excludeModelAndReasoning
+          />
         </div>
       )}
     </div>
@@ -241,6 +241,7 @@ function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
 }
 
 export function Composer({ threadId }: { threadId?: string }) {
+  const t = useT();
   const [value, setValue] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -314,9 +315,12 @@ export function Composer({ threadId }: { threadId?: string }) {
   const slashMatches = useMemo<CommandInfo[]>(() => {
     if (slashQuery === null) return [];
     const q = slashQuery.toLowerCase();
-    const all = [...BUILT_IN_COMMANDS, ...(commands ?? [])];
+    const all: CommandInfo[] = [
+      { name: "commit", description: t("composer.commitCommand") },
+      ...(commands ?? []),
+    ];
     return all.filter((c) => c.name.toLowerCase().startsWith(q));
-  }, [slashQuery, commands]);
+  }, [slashQuery, commands, t]);
   const slashOpen = slashMatches.length > 0 && threadId !== undefined;
 
   useEffect(() => {
@@ -364,9 +368,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       config: Record<string, ConfigOptionValue> | null,
     ) => {
       if (!selectedInstanceId) {
-        throw new Error(
-          "No agent selected — pick a provider in the composer or connect one in Settings ▸ Providers",
-        );
+        throw new Error(t("composer.noAgent"));
       }
       useUiStore.getState().rememberInstance(targetThreadId, selectedInstanceId);
       // The picks for this send are persisted by the backend and applied to
@@ -389,7 +391,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       }
       // A queued outcome is confirmed by the "queue:update" event.
     },
-    [selectedInstanceId],
+    [selectedInstanceId, t],
   );
 
   const resetDraft = useCallback(() => {
@@ -430,7 +432,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     const text = value.trim();
     if ((!text && chips.length === 0 && fileChips.length === 0) || busy || awaitingDecision) return;
     if (chips.length > 0 && !imageCapable) {
-      setError("This agent does not accept images — remove them or switch providers.");
+      setError(t("composer.noImages"));
       return;
     }
     if (!isTauri()) {
@@ -442,11 +444,11 @@ export function Composer({ threadId }: { threadId?: string }) {
     if (text.startsWith("/commit")) {
       const message = text.slice("/commit".length).trim();
       if (!threadId) {
-        setError("/commit works inside a thread");
+        setError(t("composer.commitInThread"));
         return;
       }
       if (!message) {
-        setError("Usage: /commit <message>");
+        setError(t("composer.commitUsage"));
         return;
       }
       setBusy(true);
@@ -455,7 +457,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         const git = useGitStore.getState();
         git.setCommitMessage(threadId, message);
         const ok = await git.commit(threadId);
-        if (!ok) setError("Commit failed — details in the diff panel");
+        if (!ok) setError(t("composer.commitFailed"));
         setBusy(false);
       })();
       resetDraft();
@@ -465,7 +467,8 @@ export function Composer({ threadId }: { threadId?: string }) {
     setError(null);
     const images: ImageInput[] = chips.map(({ data, mimeType }) => ({ data, mimeType }));
     const promptText = withFileAttachments(text, fileChips);
-    const pendingText = text || `Attached: ${fileChips.map((file) => file.name).join(", ")}`;
+    const pendingText =
+      text || t("composer.attached", { files: fileChips.map((file) => file.name).join(", ") });
     void (async () => {
       try {
         if (!threadId) {
@@ -513,7 +516,7 @@ export function Composer({ threadId }: { threadId?: string }) {
             useRunsStore.getState().clearPendingUser(thread.id);
             useUiStore
               .getState()
-              .setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
+              .setGlobalError({ kind: "protocol", message: localizeIpcError(err) });
           } finally {
             if (pendingMode) useRunsStore.getState().setDesiredMode("", "");
             if (pendingConfig) useRunsStore.getState().clearDesiredConfig("");
@@ -538,7 +541,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         resetDraft();
       } catch (err) {
         console.error("send failed", err);
-        setError(ipcErrorMessage(err));
+        setError(localizeIpcError(err));
       } finally {
         setBusy(false);
       }
@@ -556,6 +559,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     selectedInstance,
     selectedInstanceId,
     imageCapable,
+    t,
   ]);
 
   const saveQueueEdit = useCallback(() => {
@@ -564,7 +568,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     if (!text) return;
     void runsQueueUpdate(threadId, editingQueueId, text)
       .then(() => setEditingQueueId(null))
-      .catch((err) => setError(ipcErrorMessage(err)));
+      .catch((err) => setError(localizeIpcError(err)));
   }, [threadId, editingQueueId, editQueueText]);
 
   const reorderQueue = useCallback(
@@ -575,7 +579,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       const to = ids.indexOf(targetId);
       if (from < 0 || to < 0) return;
       ids.splice(to, 0, ...ids.splice(from, 1));
-      void runsQueueReorder(threadId, ids).catch((err) => setError(ipcErrorMessage(err)));
+      void runsQueueReorder(threadId, ids).catch((err) => setError(localizeIpcError(err)));
       setDraggingQueueId(null);
     },
     [threadId, queue],
@@ -666,16 +670,16 @@ export function Composer({ threadId }: { threadId?: string }) {
 
       const room = MAX_ATTACHMENTS - chips.length - fileChips.length;
       if (room <= 0) {
-        setError(`Up to ${MAX_ATTACHMENTS} attachments at once.`);
+        setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
         return;
       }
-      if (list.length > room) setError(`Up to ${MAX_ATTACHMENTS} attachments at once.`);
+      if (list.length > room) setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
       const accepted = list.slice(0, room);
       const images = accepted.filter((file) => file.type.startsWith("image/"));
       const docs = accepted.filter((file) => !file.type.startsWith("image/"));
 
       if (images.length > 0 && !imageCapable) {
-        setError("This agent does not accept images — attach text files instead.");
+        setError(t("composer.noImagesAttach"));
       }
       const importedImages = imageCapable
         ? (await Promise.all(images.map(fileToChip))).filter(
@@ -686,7 +690,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         (chip): chip is FileChip => chip !== null,
       );
       if (docs.length > 0 && importedDocs.length === 0) {
-        setError("Only text files up to 5 MB can be attached.");
+        setError(t("composer.onlyTextFiles"));
       }
       if (importedImages.length > 0) {
         setChips((prev) => [...prev, ...importedImages]);
@@ -695,7 +699,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         setFileChips((prev) => [...prev, ...importedDocs]);
       }
     },
-    [chips.length, fileChips.length, imageCapable],
+    [chips.length, fileChips.length, imageCapable, t],
   );
 
   const handlePaste = useCallback(
@@ -778,9 +782,11 @@ export function Composer({ threadId }: { threadId?: string }) {
       {pendingApproval && (
         <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-(--radius-md) border border-warning bg-warning/10 px-3 py-1.5">
           <span className="min-w-0 flex-1 text-xs text-warning">
-            <span className="block truncate">Decision needed: {pendingApproval.title}</span>
+            <span className="block truncate">
+              {t("chat.decisionNeeded", { title: pendingApproval.title })}
+            </span>
             <span className="block truncate text-text-tertiary">
-              {selectedInstance?.displayName ?? selectedInstanceId ?? "Agent"}
+              {selectedInstance?.displayName ?? selectedInstanceId ?? t("chat.agent")}
               {threadWorkspace ? ` · ${threadWorkspace}` : ""}
             </span>
           </span>
@@ -849,8 +855,8 @@ export function Composer({ threadId }: { threadId?: string }) {
             >
               <button
                 type="button"
-                aria-label="Reorder queued message"
-                title="Drag to reorder"
+                aria-label={t("composer.queue.reorderAria")}
+                title={t("composer.queue.dragTitle")}
                 className="flex h-5 w-4 cursor-grab items-center justify-center text-text-tertiary"
               >
                 <GripVertical size={13} />
@@ -870,7 +876,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                       setEditingQueueId(null);
                     }
                   }}
-                  aria-label="Queued message text"
+                  aria-label={t("composer.queue.textAria")}
                   className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 py-0.5 text-sm text-text-primary focus:border-border-strong focus:outline-none"
                 />
               ) : (
@@ -880,7 +886,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <>
                   <button
                     type="button"
-                    aria-label="Save"
+                    aria-label={t("composer.queue.save")}
                     onClick={saveQueueEdit}
                     className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-success transition hover:bg-hover"
                   >
@@ -888,7 +894,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   </button>
                   <button
                     type="button"
-                    aria-label="Cancel"
+                    aria-label={t("composer.queue.cancel")}
                     onClick={() => setEditingQueueId(null)}
                     className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
@@ -899,31 +905,31 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <>
                   <button
                     type="button"
-                    aria-label="Steer queued message"
-                    title="Send now, interrupting the current run"
+                    aria-label={t("composer.queue.steerAria")}
+                    title={t("composer.queue.steerTitle")}
                     onClick={() =>
                       runsQueueSteer(threadId, item.id).catch((err) =>
-                        setError(ipcErrorMessage(err)),
+                        setError(localizeIpcError(err)),
                       )
                     }
                     className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
-                    <CornerUpRight size={11} /> Steer
+                    <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
                   </button>
                   <button
                     type="button"
-                    aria-label="Edit queued message"
+                    aria-label={t("composer.queue.editAria")}
                     onClick={() => {
                       setEditingQueueId(item.id);
                       setEditQueueText(item.text);
                     }}
                     className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
-                    <Pencil size={11} /> Edit
+                    <Pencil size={11} /> {t("composer.queue.edit")}
                   </button>
                   <button
                     type="button"
-                    aria-label="Remove queued message"
+                    aria-label={t("composer.queue.removeAria")}
                     onClick={() =>
                       runsQueueRemove(threadId, item.id).catch((err) =>
                         console.error("runs_queue_remove failed", err),
@@ -937,7 +943,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               )}
             </div>
           ))}
-          <p className="px-1 text-xs text-text-tertiary">Keep typing to queue another message</p>
+          <p className="px-1 text-xs text-text-tertiary">{t("composer.queue.keepTyping")}</p>
         </div>
       )}
       <div className="relative mx-auto w-full max-w-3xl">
@@ -963,9 +969,11 @@ export function Composer({ threadId }: { threadId?: string }) {
             <div
               className="absolute bottom-full left-0 mb-2 max-h-56 w-full overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
               role="listbox"
-              aria-label="Workspace files"
+              aria-label={t("composer.workspaceFiles")}
             >
-              <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">Files</p>
+              <p className="px-3 py-1 text-xs tracking-wider text-text-tertiary uppercase">
+                {t("composer.mention.files")}
+              </p>
               {mentionFiles.map((path, i) => (
                 <button
                   key={path}
@@ -986,7 +994,7 @@ export function Composer({ threadId }: { threadId?: string }) {
             <div
               className="absolute bottom-full left-0 mb-2 w-full overflow-hidden rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
               role="listbox"
-              aria-label="Agent commands"
+              aria-label={t("composer.agentCommands")}
             >
               {slashMatches.map((command, i) => (
                 <button
@@ -1023,13 +1031,15 @@ export function Composer({ threadId }: { threadId?: string }) {
                 >
                   <img
                     src={chip.preview}
-                    alt="Attached"
-                    onClick={() => useUiStore.getState().openImagePreview(chip.preview, "Attached")}
+                    alt={t("chat.attached")}
+                    onClick={() =>
+                      useUiStore.getState().openImagePreview(chip.preview, t("chat.attached"))
+                    }
                     className="h-full w-full cursor-zoom-in object-cover"
                   />
                   <button
                     onClick={() => setChips((prev) => prev.filter((_, j) => j !== i))}
-                    aria-label="Remove image"
+                    aria-label={t("composer.removeImage")}
                     className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
                   >
                     <X size={10} />
@@ -1048,10 +1058,12 @@ export function Composer({ threadId }: { threadId?: string }) {
                 >
                   <FileText size={12} className="shrink-0 text-text-tertiary" />
                   <span className="truncate">{file.name}</span>
-                  {file.truncated && <span className="shrink-0 text-warning">truncated</span>}
+                  {file.truncated && (
+                    <span className="shrink-0 text-warning">{t("composer.truncated")}</span>
+                  )}
                   <button
                     type="button"
-                    aria-label={`Remove ${file.name}`}
+                    aria-label={t("composer.removeAttachment", { name: file.name })}
                     onClick={() => setFileChips((prev) => prev.filter((_, j) => j !== i))}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
@@ -1076,16 +1088,14 @@ export function Composer({ threadId }: { threadId?: string }) {
             rows={1}
             spellCheck={false}
             placeholder={
-              awaitingDecision
-                ? "Decision needed — respond to the approval above"
-                : "Ask anything. @ files, / commands"
+              awaitingDecision ? t("composer.decisionPlaceholder") : t("composer.placeholder")
             }
             className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 pb-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
           />
           <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-2.5">
             <label
-              title="Attach files"
-              aria-label="Attach files"
+              title={t("composer.attach")}
+              aria-label={t("composer.attach")}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               <Paperclip size={15} />
@@ -1108,8 +1118,8 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <button
                   type="button"
                   onClick={handleSend}
-                  aria-label="Queue message"
-                  title="Queue message"
+                  aria-label={t("composer.queue")}
+                  title={t("composer.queue")}
                   disabled={awaitingDecision || busy}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
@@ -1119,8 +1129,8 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <button
                   type="button"
                   onClick={handleStop}
-                  aria-label={cancelling ? "Force stop" : "Stop run"}
-                  title={cancelling ? "Force stop" : "Stop run"}
+                  aria-label={cancelling ? t("composer.forceStop") : t("composer.stop")}
+                  title={cancelling ? t("composer.forceStop") : t("composer.stop")}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
                 >
                   <Square size={11} />
@@ -1130,8 +1140,8 @@ export function Composer({ threadId }: { threadId?: string }) {
               <button
                 type="button"
                 onClick={handleSend}
-                aria-label="Send message"
-                title="Send message"
+                aria-label={t("composer.send")}
+                title={t("composer.send")}
                 disabled={
                   (!value.trim() && chips.length === 0 && fileChips.length === 0) ||
                   awaitingDecision ||

@@ -1,64 +1,68 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ExternalLink, RotateCw } from "lucide-react";
 import {
-  browserCheckFrameHeaders,
-  browserValidateTarget,
-  ipcErrorMessage,
+  browserHistory,
+  browserNavigate,
+  browserSetBounds,
+  browserState,
+  onBrowserNavigated,
   openExternalUrl,
-  workspaceReadHtml,
 } from "../../lib/ipc";
+import { isTauri } from "../../lib/tauri";
+import { localizeIpcError, useT } from "../../lib/i18n";
+import { useRunsStore } from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 
-interface BrowserEntry {
-  input: string;
-  kind: "url" | "file";
-  target: string;
-}
+// Remembers the human-readable address across surface switches (the native
+// webview outlives this component).
+let lastInput = "";
 
-/** T3-style preview surface: URL bar plus a sandboxed iframe. */
+/**
+ * T3-style preview surface backed by a native child Webview. A real browser
+ * context means no X-Frame-Options/CSP blocks; local files are served from a
+ * token-scoped loopback server so ES modules and relative assets just work.
+ */
 export function BrowserPanel({ threadId }: { threadId: string | null }) {
-  const [history, setHistory] = useState<BrowserEntry[]>([]);
-  const [index, setIndex] = useState(-1);
+  const t = useT();
   const [input, setInput] = useState("");
-  const [html, setHtml] = useState<string | null>(null);
-  const [embed, setEmbed] = useState<{ embeddable: boolean; reason?: string | null } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const [reloadKey, setReloadKey] = useState(0);
+  const [current, setCurrent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const browserTarget = useUiStore((s) => s.browserTarget);
+  const paletteOpen = useUiStore((s) => s.paletteOpen);
+  const imagePreview = useUiStore((s) => s.imagePreview);
+  const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
+  const rightPanelTab = useUiStore((s) => s.rightPanelTab);
+  const elicitation = useRunsStore((s) => s.activeElicitation);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(isTauri());
 
-  const current = index >= 0 ? history[index] : null;
-
-  const jumpTo = (next: number) => {
-    setHtml(null);
-    setEmbed(null);
-    setError(null);
-    setIndex(next);
-  };
+  // The native webview is a separate HWND: it paints over HTML/CSS, so it must
+  // be hidden whenever a modal, the palette, a menu or another surface owns
+  // the screen.
+  const occluded =
+    !isTauri() ||
+    !rightPanelOpen ||
+    rightPanelTab !== "browser" ||
+    paletteOpen ||
+    Boolean(imagePreview) ||
+    Boolean(elicitation);
 
   const navigate = async (raw: string) => {
+    const target = raw.trim();
+    if (!target) return;
+    if (!isTauri()) {
+      setError(t("panels.browser.desktopOnly"));
+      return;
+    }
     setError(null);
-    setEmbed(null);
-    setHtml(null);
     try {
-      if (/^(javascript|data|vbscript|file):/i.test(raw)) {
-        throw new Error("Only http(s) URLs or workspace HTML files can be previewed.");
-      }
-      const validated = await browserValidateTarget(raw);
-      const isUrl = /^https?:\/\//i.test(raw);
-      if (!isUrl && !/\.html?$/i.test(validated.target)) {
-        throw new Error("Enter an http(s) URL or a workspace .html file.");
-      }
-      const entry: BrowserEntry = {
-        input: raw,
-        kind: isUrl ? "url" : "file",
-        target: validated.target,
-      };
-      setHistory((prev) => [...prev.slice(0, index + 1), entry]);
-      setIndex((prev) => prev + 1);
-      setInput(raw);
+      const url = await browserNavigate(target, threadId);
+      lastInput = target;
+      setInput(target);
+      setCurrent(url);
+      setReady(true);
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
     }
   };
 
@@ -66,59 +70,76 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
     const target = useUiStore.getState().browserTarget;
     if (!target) return;
     useUiStore.getState().setBrowserTarget(null);
-    setInput(target);
     void navigate(target);
     // The queued target is consumed once per click.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [browserTarget]);
 
   useEffect(() => {
-    const entry = history[index];
-    if (!entry) return;
-    let cancelled = false;
-    setHtml(null);
-    setEmbed(null);
-    setError(null);
-    setChecking(true);
-    if (entry.kind === "file") {
-      if (!threadId) {
-        setError("Open a thread to preview workspace HTML.");
-        setChecking(false);
-        return;
-      }
-      workspaceReadHtml(threadId, entry.target)
-        .then((source) => {
-          if (cancelled) return;
-          setHtml(source);
-          setEmbed({ embeddable: true });
-        })
-        .catch((err) => {
-          if (!cancelled) setError(ipcErrorMessage(err));
-        })
-        .finally(() => {
-          if (!cancelled) setChecking(false);
-        });
-    } else {
-      browserCheckFrameHeaders(entry.target)
-        .then((check) => {
-          if (!cancelled) setEmbed(check);
-        })
-        .catch(() => {
-          if (!cancelled) setEmbed({ embeddable: true });
-        })
-        .finally(() => {
-          if (!cancelled) setChecking(false);
-        });
-    }
+    if (!isTauri()) return;
+    let alive = true;
+    void onBrowserNavigated(({ url, event }) => {
+      if (!alive || event !== "finished") return;
+      // Token-scoped loopback URLs are an implementation detail; keep the
+      // user's own path in the address bar.
+      if (/^http:\/\/127\.0\.0\.1:\d+\//.test(url)) return;
+      setInput(url);
+      setCurrent(url);
+    }).then((off) => {
+      if (!alive) off();
+    });
     return () => {
-      cancelled = true;
+      alive = false;
     };
-  }, [history, index, threadId, reloadKey]);
+  }, []);
+
+  // Keep the child webview glued to the host div and hide it under overlays.
+  useEffect(() => {
+    if (!isTauri()) return;
+    const element = hostRef.current;
+    if (!element) return;
+    let frame = 0;
+    const apply = () => {
+      frame = 0;
+      const rect = element.getBoundingClientRect();
+      void browserSetBounds({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        visible: !occluded && current !== null,
+      }).catch(() => {});
+    };
+    const schedule = () => {
+      if (frame === 0) frame = requestAnimationFrame(apply);
+    };
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
+    observer?.observe(element);
+    window.addEventListener("resize", schedule);
+    schedule();
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", schedule);
+      if (frame) cancelAnimationFrame(frame);
+      void browserSetBounds({ x: 0, y: 0, width: 1, height: 1, visible: false }).catch(() => {});
+    };
+  }, [occluded, current]);
+
+  // The webview survives panel switches; restore its page and address.
+  useEffect(() => {
+    if (!isTauri()) return;
+    void browserState()
+      .then((url) => {
+        if (!url) return;
+        setCurrent(url);
+        setInput(/^http:\/\/127\.0\.0\.1:\d+\//.test(url) ? lastInput || url : url);
+      })
+      .catch(() => {});
+  }, []);
 
   const openExternal = () => {
-    if (!current) return;
-    const url = /^https?:\/\//i.test(current.target) ? current.target : current.target;
-    void openExternalUrl(url).catch((err) => setError(ipcErrorMessage(err)));
+    if (!current || !/^https?:\/\//i.test(current)) return;
+    void openExternalUrl(current).catch((err) => setError(localizeIpcError(err)));
   };
 
   return (
@@ -127,35 +148,32 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
         className="flex items-center gap-1 border-b border-border-subtle px-2 py-1.5"
         onSubmit={(event) => {
           event.preventDefault();
-          if (input.trim()) void navigate(input.trim());
+          void navigate(input);
         }}
       >
         <button
           type="button"
-          aria-label="Back"
-          title="Back"
-          disabled={index <= 0}
-          onClick={() => jumpTo(Math.max(0, index - 1))}
+          aria-label={t("panels.browser.back")}
+          title={t("panels.browser.back")}
+          onClick={() => void browserHistory("back").catch(() => {})}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
           <ArrowLeft size={13} />
         </button>
         <button
           type="button"
-          aria-label="Forward"
-          title="Forward"
-          disabled={index >= history.length - 1}
-          onClick={() => jumpTo(Math.min(history.length - 1, index + 1))}
+          aria-label={t("panels.browser.forward")}
+          title={t("panels.browser.forward")}
+          onClick={() => void browserHistory("forward").catch(() => {})}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
           <ArrowRight size={13} />
         </button>
         <button
           type="button"
-          aria-label="Reload"
-          title="Reload"
-          disabled={!current}
-          onClick={() => setReloadKey((value) => value + 1)}
+          aria-label={t("panels.browser.reload")}
+          title={t("panels.browser.reload")}
+          onClick={() => void browserHistory("reload").catch(() => {})}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
           <RotateCw size={13} />
@@ -163,15 +181,15 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="http://localhost:5173 or path/page.html"
-          aria-label="Browser URL"
+          placeholder={t("panels.browser.placeholder")}
+          aria-label={t("panels.browser.url")}
           className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
         />
         <button
           type="button"
-          aria-label="Open externally"
-          title="Open in system browser"
-          disabled={!current}
+          aria-label={t("panels.browser.openExternally")}
+          title={t("panels.browser.openExternal")}
+          disabled={!current || !/^https?:\/\//i.test(current)}
           onClick={openExternal}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-40"
         >
@@ -179,58 +197,25 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
         </button>
       </form>
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        {error && (
-          <p
-            role="alert"
-            className="m-3 rounded-(--radius-md) border border-danger/40 px-3 py-2 text-xs text-danger"
-          >
-            {error}
-          </p>
-        )}
+      {error && (
+        <p
+          role="alert"
+          className="m-3 rounded-(--radius-md) border border-danger/40 px-3 py-2 text-xs text-danger"
+        >
+          {error}
+        </p>
+      )}
+
+      <div className="relative min-h-0 flex-1">
+        {/* The native webview is positioned over this box; the placeholder
+            shows through only while nothing is open. */}
+        <div ref={hostRef} className="absolute inset-0" />
         {!current && !error && (
-          <div className="grid h-full place-items-center p-6">
+          <div className="pointer-events-none absolute inset-0 grid place-items-center p-6">
             <p className="max-w-xs text-center text-xs text-text-tertiary">
-              Open a local dev server or a workspace HTML file. Sites that block framing open in
-              your system browser.
+              {ready ? t("panels.browser.hint") : t("panels.browser.desktopOnly")}
             </p>
           </div>
-        )}
-        {current && checking && !html && (
-          <p className="p-3 text-xs text-text-tertiary">Checking preview…</p>
-        )}
-        {current && embed && !embed.embeddable && (
-          <div className="m-3 rounded-(--radius-md) border border-border-strong bg-surface p-3">
-            <p className="text-sm text-text-primary">This site blocks embedding</p>
-            <p className="mt-1 text-xs text-text-tertiary">
-              {embed.reason ?? "X-Frame-Options or CSP refused the iframe."}
-            </p>
-            <button
-              type="button"
-              onClick={openExternal}
-              className="mt-2 flex h-7 items-center rounded-(--radius-sm) bg-accent px-2 text-xs text-accent-fg"
-            >
-              Open in system browser
-            </button>
-          </div>
-        )}
-        {current && embed?.embeddable && html !== null && (
-          <iframe
-            key={`${index}-${reloadKey}`}
-            title="Browser preview"
-            sandbox="allow-scripts"
-            srcDoc={html}
-            className="h-full w-full border-0 bg-white"
-          />
-        )}
-        {current && embed?.embeddable && html === null && (
-          <iframe
-            key={`${index}-${reloadKey}`}
-            title="Browser preview"
-            sandbox="allow-scripts allow-forms"
-            src={current.target}
-            className="h-full w-full border-0 bg-white"
-          />
         )}
       </div>
     </div>

@@ -1,39 +1,20 @@
 import { useEffect, useState } from "react";
-import { useRouter } from "@tanstack/react-router";
-import {
-  CheckCheck,
-  GitBranch,
-  MoreHorizontal,
-  Moon,
-  Pencil,
-  Pin,
-  PinOff,
-  Trash2,
-  X,
-} from "lucide-react";
-import { runsCancel } from "../../lib/ipc";
+import { GitBranch, Pencil, Pin, PinOff } from "lucide-react";
 import { isTauri } from "../../lib/tauri";
 import { useProjectsStore } from "../../stores/projects";
-import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
-import { useSettingsStore } from "../../stores/settings";
-import { PanelToggleButtons, WindowControls } from "../layout/WindowChrome";
+import { useUiStore } from "../../stores/ui";
+import { PanelToggleButtons, SidebarToggleButton, WindowControls } from "../layout/WindowChrome";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
+import { useT } from "../../lib/i18n";
 
 /**
- * Thread identity only (§6.1): title + worktree badge, plus the thread's own
- * lifecycle actions (rename, pin, snooze, settle, delete). The controls that
- * parameterize the next message — agent instance, session mode, permission —
- * live in the composer's control bar (ComposerControls).
+ * Thread identity only (§6.1): title + worktree badge, plus pin/rename. The
+ * controls that parameterize the next message live in the composer.
  */
-export function ChatHeader({
-  title = "New thread",
-  threadId,
-}: {
-  title?: string;
-  threadId?: string;
-}) {
-  const router = useRouter();
+export function ChatHeader({ title, threadId }: { title?: string; threadId?: string }) {
+  const t = useT();
+  const fallbackTitle = title ?? t("sidebar.newThread");
   const thread = useThreadsStore((s) =>
     threadId ? s.threads.find((t) => t.id === threadId) : undefined,
   );
@@ -42,45 +23,26 @@ export function ChatHeader({
   const project = useProjectsStore((s) =>
     projectId ? s.projects.find((candidate) => candidate.id === projectId) : undefined,
   );
+  const sidebarOpen = useUiStore((s) => s.sidebarOpen);
+  const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [draft, setDraft] = useState(fallbackTitle);
 
-  const heading = thread?.title ?? title;
+  const heading = thread?.title ?? fallbackTitle;
   const worktreeName = thread?.worktreeName;
   const projectMonogramStyle = project ? projectMonogram(project.color) : null;
 
-  // Esc closes this header's own layer without reaching the composer's
-  // run-cancel handler.
   useEffect(() => {
-    if (!menuOpen && !confirmDelete && !editing) return;
+    if (!editing) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
-      setMenuOpen(false);
-      setConfirmDelete(false);
-      if (editing) {
-        setDraft(heading);
-        setEditing(false);
-      }
+      setDraft(heading);
+      setEditing(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [menuOpen, confirmDelete, editing, heading]);
-
-  // Outside click closes this header's own layers (menu, delete confirm).
-  useEffect(() => {
-    if (!menuOpen && !confirmDelete) return;
-    const onPointer = (event: MouseEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("[data-thread-menu]")) return;
-      setMenuOpen(false);
-      setConfirmDelete(false);
-    };
-    window.addEventListener("mousedown", onPointer);
-    return () => window.removeEventListener("mousedown", onPointer);
-  }, [menuOpen, confirmDelete]);
+  }, [editing, heading]);
 
   const commitRename = () => {
     setEditing(false);
@@ -96,36 +58,18 @@ export function ChatHeader({
       .catch((err) => console.error("threads_rename failed", err));
   };
 
-  const act = (fn: () => void) => {
-    setMenuOpen(false);
-    fn();
-  };
-
-  const removeThread = () => {
-    if (!threadId) return;
-    const active = activeRunForThread(useRunsStore.getState().runsByThread[threadId]);
-    if (active?.status === "running") {
-      void runsCancel(active.id).catch(() => undefined);
-    }
-    void useThreadsStore
-      .getState()
-      .deleteThread(threadId)
-      .then(() => {
-        useRunsStore.getState().dropThreadState(threadId);
-        void router.navigate({ to: "/chat" });
-      })
-      .catch((err) => console.error("threads_delete failed", err));
-  };
-
   return (
     <header
       data-tauri-drag-region
-      className={`relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border-subtle pl-4 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
+      className={`group/header relative flex h-10 shrink-0 select-none items-center gap-2 pl-4 ${
+        isTauri() && !rightPanelOpen ? "pr-[136px]" : "pr-3"
+      }`}
     >
+      {!sidebarOpen && <SidebarToggleButton />}
       {editing ? (
         <input
           autoFocus
-          aria-label="Thread title"
+          aria-label={t("sidebar.threadTitle")}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onBlur={commitRename}
@@ -137,7 +81,7 @@ export function ChatHeader({
               setEditing(false);
             }
           }}
-          className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-strong bg-surface px-2 py-0.5 text-lg text-text-primary focus:outline-none"
+          className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-strong bg-surface px-2 py-0.5 text-sm font-medium text-text-primary focus:outline-none"
         />
       ) : (
         <>
@@ -161,16 +105,16 @@ export function ChatHeader({
               </span>
             </span>
           )}
-          <h1 className="min-w-0 truncate text-lg font-medium text-text-primary">{heading}</h1>
+          <h1 className="min-w-0 truncate text-sm font-medium text-text-primary">{heading}</h1>
           {threadId && (
             <button
-              aria-label="Rename thread"
-              title="Rename thread"
+              aria-label={t("sidebar.renameThread")}
+              title={t("sidebar.renameThread")}
               onClick={() => {
                 setDraft(heading);
                 setEditing(true);
               }}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary focus-visible:opacity-100 group-hover/header:opacity-100 group-focus-within/header:opacity-100"
             >
               <Pencil size={12} />
             </button>
@@ -179,122 +123,31 @@ export function ChatHeader({
       )}
       {worktreeName && (
         <span
-          title={`Isolated git worktree: ${worktreeName}`}
+          title={t("sidebar.worktreeBadge", { name: worktreeName })}
           className="flex shrink-0 items-center gap-1 rounded-(--radius-sm) bg-active px-2 py-0.5 font-mono text-xs text-text-tertiary"
         >
           <GitBranch size={11} />
-          worktree
+          {t("sidebar.worktree")}
         </span>
       )}
       <div data-tauri-drag-region className="min-w-2 flex-1" />
       {threadId && (
-        <div data-thread-menu className="relative flex shrink-0 items-center gap-1">
-          <button
-            aria-label={thread?.pinned ? "Unpin thread" : "Pin thread"}
-            title={thread?.pinned ? "Unpin" : "Pin"}
-            onClick={() =>
-              void useThreadsStore
-                .getState()
-                .setThreadPinned(threadId, !(thread?.pinned ?? false))
-                .catch((err) => console.error("threads_set_pinned failed", err))
-            }
-            className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            {thread?.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-          </button>
-          <button
-            aria-label="Thread actions"
-            title="Thread actions"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((open) => !open)}
-            className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) px-1.5 text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            <MoreHorizontal size={15} />
-          </button>
-          {menuOpen && (
-            <div
-              role="menu"
-              data-escape-layer
-              className="absolute top-9 right-0 z-30 w-40 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
-            >
-              <button
-                role="menuitem"
-                onClick={() =>
-                  act(
-                    () =>
-                      void useThreadsStore
-                        .getState()
-                        .setThreadStatus(threadId, "snoozed")
-                        .catch((err) => console.error("threads_set_status failed", err)),
-                  )
-                }
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
-              >
-                <Moon size={13} /> Snooze
-              </button>
-              <button
-                role="menuitem"
-                onClick={() =>
-                  act(
-                    () =>
-                      void useThreadsStore
-                        .getState()
-                        .setThreadStatus(threadId, "settled")
-                        .catch((err) => console.error("threads_set_status failed", err)),
-                  )
-                }
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover"
-              >
-                <CheckCheck size={13} /> Mark settled
-              </button>
-              <button
-                role="menuitem"
-                onClick={() =>
-                  act(() => {
-                    if (useSettingsStore.getState().confirmDeleteThread) setConfirmDelete(true);
-                    else removeThread();
-                  })
-                }
-                className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm text-danger transition hover:bg-hover"
-              >
-                <Trash2 size={13} /> Delete thread
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          aria-label={thread?.pinned ? t("sidebar.unpin") : t("sidebar.pin")}
+          title={thread?.pinned ? t("sidebar.unpinShort") : t("sidebar.pinShort")}
+          onClick={() =>
+            void useThreadsStore
+              .getState()
+              .setThreadPinned(threadId, !(thread?.pinned ?? false))
+              .catch((err) => console.error("threads_set_pinned failed", err))
+          }
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+        >
+          {thread?.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+        </button>
       )}
       <PanelToggleButtons />
       <WindowControls />
-      {confirmDelete && (
-        <div
-          role="dialog"
-          aria-label="Confirm thread deletion"
-          data-escape-layer
-          data-thread-menu
-          className="absolute top-9 right-36 z-40 w-72 rounded-(--radius-md) border border-danger/40 bg-surface-raised p-3 shadow-(--shadow-composer)"
-        >
-          <p className="text-sm text-text-primary">Delete this thread?</p>
-          <p className="mt-1 text-xs text-text-tertiary">
-            {worktreeName
-              ? "Its git worktree is removed; the branch and commits stay reachable."
-              : "Its transcript is removed. This cannot be undone."}
-          </p>
-          <div className="mt-2 flex justify-end gap-2">
-            <button
-              onClick={() => setConfirmDelete(false)}
-              className="flex h-7 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
-            >
-              <X size={11} className="mr-1" /> Cancel
-            </button>
-            <button
-              onClick={removeThread}
-              className="flex h-7 items-center rounded-(--radius-sm) bg-danger px-2 text-xs font-medium text-white transition hover:brightness-110"
-            >
-              <Trash2 size={11} className="mr-1" /> Delete
-            </button>
-          </div>
-        </div>
-      )}
     </header>
   );
 }

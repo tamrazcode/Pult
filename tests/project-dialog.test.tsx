@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import type { Project } from "../src/lib/types";
 
 const { navigate, pickFolder, projectsCreate, projectsUpdate, projectsDelete, projectsList } =
@@ -31,6 +32,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 import { CreateProjectDialog } from "../src/components/projects/CreateProjectDialog";
 import { ProjectSettingsDialog } from "../src/components/projects/ProjectSettingsDialog";
+import { WorkspaceStrategyRadio } from "../src/components/projects/WorkspaceStrategyRadio";
 import { PROJECT_COLORS, useProjectsStore } from "../src/stores/projects";
 
 const SEEDED_PROJECT: Project = {
@@ -42,6 +44,53 @@ const SEEDED_PROJECT: Project = {
   pinned: false,
   createdAt: 1000,
 };
+
+describe("WorkspaceStrategyRadio", () => {
+  it("uses hidden peer radio inputs, visible checked dots, and supports click and keyboard selection", async () => {
+    function Strategies() {
+      const [strategy, setStrategy] = useState("root");
+      return (
+        <>
+          {["root", "worktree"].map((value) => (
+            <WorkspaceStrategyRadio
+              key={value}
+              name="strategy"
+              label={value}
+              checked={strategy === value}
+              onChange={() => setStrategy(value)}
+            />
+          ))}
+        </>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Strategies />);
+    const root = screen.getByRole("radio", { name: "root" });
+    const worktree = screen.getByRole("radio", { name: "worktree" });
+    const dot = (radio: HTMLElement) => radio.nextElementSibling!.firstElementChild!;
+    for (const radio of [root, worktree]) {
+      expect(radio.tagName).toBe("INPUT");
+      expect(radio).toHaveClass("peer", "sr-only");
+      expect(dot(radio)).toHaveClass("rounded-full", "bg-accent");
+    }
+    expect(root).toBeChecked();
+    expect(dot(root)).toHaveClass("opacity-100");
+    expect(dot(worktree)).toHaveClass("opacity-0");
+    await user.click(screen.getByText("worktree"));
+    expect(worktree).toBeChecked();
+    expect(root).not.toBeChecked();
+    expect(dot(worktree)).toHaveClass("opacity-100");
+    expect(dot(root)).toHaveClass("opacity-0");
+    expect(worktree).toHaveFocus();
+    await user.keyboard("{ArrowLeft}");
+    expect(root).toBeChecked();
+    expect(root).toHaveFocus();
+    expect(dot(root)).toHaveClass("opacity-100");
+    await user.keyboard("{ArrowRight}");
+    expect(worktree).toBeChecked();
+    expect(worktree).toHaveFocus();
+  });
+});
 
 describe("CreateProjectDialog", () => {
   beforeEach(() => {

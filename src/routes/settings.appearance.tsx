@@ -2,11 +2,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Check } from "lucide-react";
 import { useSettingsStore } from "../stores/settings";
 import { ACCENT_STOPS, THEMES } from "../lib/theme";
+import { useT } from "../lib/i18n";
 
 export const Route = createFileRoute("/settings/appearance")({ component: AppearanceSettings });
 
 /** Theme cards + accent hue picker (§6.6). Every choice applies live. */
 function AppearanceSettings() {
+  const t = useT();
   const theme = useSettingsStore((s) => s.theme);
   const accentHue = useSettingsStore((s) => s.accentHue);
   const setTheme = useSettingsStore((s) => s.setTheme);
@@ -16,20 +18,18 @@ function AppearanceSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h2 className="text-lg font-medium text-text-primary">Appearance</h2>
-      <p className="mt-1 text-sm text-text-tertiary">
-        Themes swap the token palette; the accent recolors buttons, mentions, and monograms.
-      </p>
+      <h2 className="text-lg font-medium text-text-primary">{t("settings.appearance.title")}</h2>
+      <p className="mt-1 text-sm text-text-tertiary">{t("settings.appearance.subtitle")}</p>
 
       <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        Theme
+        {t("settings.appearance.theme")}
       </h2>
       <div
         className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"
         role="radiogroup"
-        aria-label="Theme"
+        aria-label={t("settings.appearance.theme")}
       >
-        {THEMES.map(({ id, label }) => (
+        {THEMES.map(({ id, labelKey }) => (
           <button
             key={id}
             role="radio"
@@ -86,7 +86,7 @@ function AppearanceSettings() {
               </span>
             </span>
             <span className="mt-2 flex items-center gap-1.5 text-sm text-text-primary">
-              {label}
+              {t(labelKey)}
               {theme === id && <Check size={13} className="text-accent" />}
             </span>
           </button>
@@ -94,15 +94,19 @@ function AppearanceSettings() {
       </div>
 
       <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        Accent
+        {t("settings.appearance.accentHeading")}
       </h2>
-      <div className="mt-2 flex flex-wrap gap-2" role="radiogroup" aria-label="Accent color">
-        {ACCENT_STOPS.map(({ label, hue }) => (
+      <div
+        className="mt-2 flex flex-wrap gap-2"
+        role="radiogroup"
+        aria-label={t("settings.appearance.accentColor")}
+      >
+        {ACCENT_STOPS.map(({ labelKey, hue }) => (
           <button
-            key={label}
+            key={t(labelKey)}
             role="radio"
             aria-checked={accentHue === hue}
-            title={label}
+            title={t(labelKey)}
             onClick={() => setAccentHue(hue)}
             className={`flex h-8 w-8 items-center justify-center rounded-full border-2 transition ${
               accentHue === hue
@@ -119,21 +123,18 @@ function AppearanceSettings() {
             {accentHue === hue && (
               <Check size={13} style={{ color: "var(--accent-fg)" }} aria-hidden />
             )}
-            {accentHue !== hue && <span className="sr-only">{label}</span>}
+            {accentHue !== hue && <span className="sr-only">{t(labelKey)}</span>}
           </button>
         ))}
       </div>
-      <p className="mt-2 text-xs text-text-tertiary">
-        "Stock blue" keeps the theme's built-in accent; every other pick recolors the UI in place
-        and survives restarts.
-      </p>
+      <p className="mt-2 text-xs text-text-tertiary">{t("settings.appearance.stockBlueHint")}</p>
 
       <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        Glass
+        {t("settings.appearance.glassHeading")}
       </h2>
       <label className="mt-2 block">
         <span className="flex items-center justify-between text-sm text-text-primary">
-          <span>Composer opacity</span>
+          <span>{t("settings.appearance.composerOpacity")}</span>
           <span className="tnum text-text-tertiary">{glassOpacity}%</span>
         </span>
         <input
@@ -143,13 +144,11 @@ function AppearanceSettings() {
           step={1}
           value={glassOpacity}
           onChange={(event) => setGlassOpacity(Number(event.target.value))}
-          aria-label="Glass opacity"
+          aria-label={t("settings.appearance.glass")}
           className="mt-2 w-full accent-(--accent)"
         />
       </label>
-      <p className="mt-2 text-xs text-text-tertiary">
-        Lower values make the composer more transparent while keeping the backdrop blur.
-      </p>
+      <p className="mt-2 text-xs text-text-tertiary">{t("settings.appearance.glassHint")}</p>
     </div>
   );
 }

@@ -1,12 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import { useThreadsStore } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
 import { useUiStore } from "../../stores/ui";
-import { buildCommands, type Command } from "../../lib/commands";
+import {
+  buildCommands,
+  COMMAND_SECTION_KEYS,
+  type Command,
+  type CommandSection,
+} from "../../lib/commands";
 import { bindingFor, formatBinding, matchesBinding } from "../../lib/hotkeys";
 import { useSettingsStore } from "../../stores/settings";
+import { useT } from "../../lib/i18n";
 
 interface Props {
   open: boolean;
@@ -19,6 +25,7 @@ interface Props {
  * ↑↓ move, Enter runs, Esc closes, type-to-filter.
  */
 export function CommandPalette({ open, onClose }: Props) {
+  const t = useT();
   const router = useRouter();
   const threads = useThreadsStore((s) => s.threads);
   const keybindings = useSettingsStore((s) => s.keybindings);
@@ -32,23 +39,24 @@ export function CommandPalette({ open, onClose }: Props) {
   const navigate = useMemo(() => (path: string) => void router.navigate({ to: path }), [router]);
 
   const commands = useMemo(() => buildCommands({ navigate }, threads), [navigate, threads]);
+  const titleOf = useCallback(
+    (command: Command) =>
+      command.title?.trim() ? command.title : command.titleKey ? t(command.titleKey) : command.id,
+    [t],
+  );
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const result = q
       ? commands.filter((c) =>
-          `${c.title} ${c.keywords ?? ""} ${c.section}`.toLowerCase().includes(q),
+          `${titleOf(c)} ${c.keywords ?? ""} ${t(COMMAND_SECTION_KEYS[c.section])}`
+            .toLowerCase()
+            .includes(q),
         )
       : commands;
-    const order: Command["section"][] = [
-      "Actions",
-      "Navigate",
-      "Threads",
-      "Appearance",
-      "Settings",
-    ];
+    const order = Object.keys(COMMAND_SECTION_KEYS) as CommandSection[];
     return [...result].sort((a, b) => order.indexOf(a.section) - order.indexOf(b.section));
-  }, [commands, query]);
+  }, [commands, query, t, titleOf]);
 
   useEffect(() => {
     if (open) {
@@ -130,7 +138,7 @@ export function CommandPalette({ open, onClose }: Props) {
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={t("common.commands.title")}
         className="absolute top-[15%] left-1/2 w-[560px] max-w-[90vw] -translate-x-1/2 overflow-hidden rounded-(--radius-lg) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
       >
         <div className="flex items-center gap-2 border-b border-border-subtle px-3.5 py-2.5">
@@ -139,8 +147,8 @@ export function CommandPalette({ open, onClose }: Props) {
             ref={inputRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search commands, threads, settings…"
-            aria-label="Search commands"
+            placeholder={t("common.commands.searchPlaceholder")}
+            aria-label={t("common.commands.search")}
             className="w-full bg-transparent text-base text-text-primary outline-none placeholder:text-text-tertiary"
           />
           <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-xs text-text-tertiary">
@@ -150,7 +158,7 @@ export function CommandPalette({ open, onClose }: Props) {
         <div ref={listRef} className="max-h-80 overflow-y-auto py-1" role="listbox">
           {filtered.length === 0 && (
             <p className="px-3.5 py-6 text-center text-sm text-text-tertiary">
-              Nothing matches “{query}”.
+              {t("settings.nothingMatches", { query })}
             </p>
           )}
           {filtered.map((cmd, idx) => {
@@ -160,7 +168,7 @@ export function CommandPalette({ open, onClose }: Props) {
                   key={`sec-${cmd.section}`}
                   className="px-3.5 pt-2 pb-1 text-xs font-semibold tracking-wider text-text-tertiary uppercase"
                 >
-                  {cmd.section}
+                  {t(COMMAND_SECTION_KEYS[cmd.section])}
                 </p>
               ) : null;
             lastSection = cmd.section;
@@ -177,7 +185,7 @@ export function CommandPalette({ open, onClose }: Props) {
                     idx === cursor ? "bg-hover text-text-primary" : "text-text-secondary"
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate">{cmd.title}</span>
+                  <span className="min-w-0 flex-1 truncate">{titleOf(cmd)}</span>
                   {bindingFor(cmd.id, keybindings) && (
                     <kbd className="rounded border border-border-subtle px-1.5 py-0.5 font-mono text-xs text-text-tertiary">
                       {formatBinding(bindingFor(cmd.id, keybindings)!)}

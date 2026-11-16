@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import { RouteHeader } from "../components/layout/WindowChrome";
-import { ipcErrorMessage, providersInstancesList, usageReport } from "../lib/ipc";
+import { providersInstancesList, usageReport } from "../lib/ipc";
+import { localizeIpcError, useT } from "../lib/i18n";
 import {
   computeUsageKpis,
   formatContextFill,
@@ -15,10 +16,10 @@ export const Route = createFileRoute("/usage")({ component: UsagePage });
 
 type Tab = "runs" | "threads" | "providers";
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: "runs", label: "Runs" },
-  { id: "threads", label: "Threads" },
-  { id: "providers", label: "Providers" },
+const TABS: Array<{ id: Tab; labelKey: string }> = [
+  { id: "runs", labelKey: "panels.usage.runs" },
+  { id: "threads", labelKey: "panels.usage.threads" },
+  { id: "providers", labelKey: "panels.usage.providers" },
 ];
 
 function Kpi({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -32,6 +33,7 @@ function Kpi({ label, value, hint }: { label: string; value: string; hint?: stri
 }
 
 export function UsagePage() {
+  const t = useT();
   const router = useRouter();
   const [report, setReport] = useState<UsageReport | null>(null);
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -48,7 +50,7 @@ export function UsagePage() {
       setReport(next);
       setInstances(list);
     } catch (err) {
-      setError(ipcErrorMessage(err));
+      setError(localizeIpcError(err));
     } finally {
       setLoading(false);
     }
@@ -108,23 +110,20 @@ export function UsagePage() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <RouteHeader title="Usage" />
+      <RouteHeader title={t("panels.usage.title")} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto w-full max-w-5xl px-8 py-8">
           <div className="flex items-center gap-3">
             <div className="min-w-0 flex-1">
-              <p className="text-xs text-text-tertiary">
-                Context fill is the agent's last snapshot at run end, not a token total. Cost is the
-                latest value the agent reported; values are never summed here.
-              </p>
+              <p className="text-xs text-text-tertiary">{t("panels.usage.intro")}</p>
             </div>
             <select
-              aria-label="Filter by provider"
+              aria-label={t("panels.usage.filterProvider")}
               value={instanceId}
               onChange={(e) => setInstanceId(e.target.value)}
               className="h-8 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-secondary"
             >
-              <option value="">All providers</option>
+              <option value="">{t("panels.usage.allProviders")}</option>
               {instances.map((instance) => (
                 <option key={instance.id} value={instance.id}>
                   {instance.displayName}
@@ -136,7 +135,8 @@ export function UsagePage() {
               disabled={loading}
               className="flex h-8 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 text-xs text-text-secondary transition hover:bg-hover disabled:opacity-40"
             >
-              <RefreshCw size={12} className={loading ? "animate-spin" : ""} /> Refresh
+              <RefreshCw size={12} className={loading ? "animate-spin" : ""} />{" "}
+              {t("panels.usage.refresh")}
             </button>
           </div>
 
@@ -147,7 +147,7 @@ export function UsagePage() {
             >
               {error}
               <button onClick={() => void load()} className="ml-2 underline">
-                Retry
+                {t("panels.usage.retry")}
               </button>
             </div>
           )}
@@ -155,12 +155,15 @@ export function UsagePage() {
           {!error && report && runs.length === 0 && (
             <div className="mt-10 flex flex-col items-center gap-1 rounded-(--radius-lg) border border-dashed border-border-subtle px-8 py-14 text-center">
               <p className="text-sm text-text-secondary">
-                {instanceId ? "No usage for this provider" : "No usage data yet"}
+                {instanceId ? t("panels.usage.noProviderUsage") : t("panels.usage.noUsage")}
               </p>
               <p className="max-w-md text-xs text-text-tertiary">
-                Agents report usage through ACP `usage_update`. Runs that never sent one leave no
-                row
-                {report.totalRuns > 0 ? ` (${report.totalRuns} runs so far)` : ""}.
+                {t("panels.usage.emptyBody", {
+                  suffix:
+                    report.totalRuns > 0
+                      ? t("panels.usage.emptyBodyRuns", { count: report.totalRuns })
+                      : "",
+                })}
               </p>
             </div>
           )}
@@ -168,23 +171,26 @@ export function UsagePage() {
           {!error && report && runs.length > 0 && (
             <>
               <div className="mt-5 grid grid-cols-2 gap-2 lg:grid-cols-4">
-                <Kpi label="Runs with usage" value={`${kpis.runsWithUsage} / ${kpis.totalRuns}`} />
                 <Kpi
-                  label="Median context (run end)"
+                  label={t("panels.usage.kpiRunsWithUsage")}
+                  value={`${kpis.runsWithUsage} / ${kpis.totalRuns}`}
+                />
+                <Kpi
+                  label={t("panels.usage.kpiMedianContext")}
                   value={formatTokenCount(kpis.medianContextUsed)}
                 />
                 <Kpi
-                  label="Peak context (run end)"
+                  label={t("panels.usage.kpiPeakContext")}
                   value={formatContextFill(kpis.peakContextUsed, kpis.peakContextSize).text}
                 />
                 <Kpi
-                  label="Latest reported cost"
+                  label={t("panels.usage.kpiLatestCost")}
                   value={formatUsageCost(kpis.latestCost)}
-                  hint="not summed"
+                  hint={t("panels.usage.notSummed")}
                 />
               </div>
 
-              <div className="mt-5 flex gap-1" role="tablist" aria-label="Usage slices">
+              <div className="mt-5 flex gap-1" role="tablist" aria-label={t("panels.usage.slices")}>
                 {TABS.map((item) => (
                   <button
                     key={item.id}
@@ -197,7 +203,7 @@ export function UsagePage() {
                         : "text-text-tertiary hover:bg-hover hover:text-text-secondary"
                     }`}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                   </button>
                 ))}
               </div>
@@ -207,10 +213,10 @@ export function UsagePage() {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
-                        <th className="px-3 py-2">Thread</th>
-                        <th className="px-3 py-2">Provider</th>
-                        <th className="px-3 py-2">Context</th>
-                        <th className="px-3 py-2">Cost</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnThread")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnProvider")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnContext")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnCost")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -255,10 +261,10 @@ export function UsagePage() {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
-                        <th className="px-3 py-2">Thread</th>
-                        <th className="px-3 py-2">Runs</th>
-                        <th className="px-3 py-2">Latest context</th>
-                        <th className="px-3 py-2">Peak</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnThread")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnRuns")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnLatestContext")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnPeak")}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -301,10 +307,10 @@ export function UsagePage() {
                   <table className="w-full text-left text-sm">
                     <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
                       <tr>
-                        <th className="px-3 py-2">Provider</th>
-                        <th className="px-3 py-2">Runs</th>
-                        <th className="px-3 py-2">Median context</th>
-                        <th className="px-3 py-2">Latest cost</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnProvider")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnRuns")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnMedianContext")}</th>
+                        <th className="px-3 py-2">{t("panels.usage.columnLatestCost")}</th>
                       </tr>
                     </thead>
                     <tbody>

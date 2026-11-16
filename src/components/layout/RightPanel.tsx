@@ -14,12 +14,13 @@ const TerminalPanel = lazy(() =>
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
 import type { RightPanelTab } from "../../stores/ui";
+import { useT } from "../../lib/i18n";
 
-const TABS: { id: RightPanelTab; label: string; icon: typeof FileDiff }[] = [
-  { id: "browser", label: "Browser", icon: Globe2 },
-  { id: "terminal", label: "Terminal", icon: Terminal },
-  { id: "files", label: "Files", icon: FolderTree },
-  { id: "diff", label: "Diff", icon: FileDiff },
+const TABS: { id: RightPanelTab; labelKey: string; icon: typeof FileDiff }[] = [
+  { id: "browser", labelKey: "panels.browser", icon: Globe2 },
+  { id: "terminal", labelKey: "panels.terminal", icon: Terminal },
+  { id: "files", labelKey: "panels.files", icon: FolderTree },
+  { id: "diff", labelKey: "panels.diff", icon: FileDiff },
 ];
 
 const SHORTCUTS: Record<RightPanelTab, string> = {
@@ -32,13 +33,30 @@ const SHORTCUTS: Record<RightPanelTab, string> = {
 };
 
 const DISABLED_SURFACES = [
-  { label: "Pull request", shortcut: "P", reason: "PR surface coming soon" },
-  { label: "Linked pull requests", shortcut: "L", reason: "Requires linked PR data" },
-  { label: "Device", shortcut: "M", reason: "Device bridge is not connected" },
-  { label: "Side chat", shortcut: "S", reason: "Side chat is not supported yet" },
+  {
+    labelKey: "panels.pullRequests",
+    shortcut: "P",
+    reasonKey: "panels.surface.pullRequestReason",
+  },
+  {
+    labelKey: "panels.surface.linkedPr",
+    shortcut: "L",
+    reasonKey: "panels.surface.linkedPrReason",
+  },
+  {
+    labelKey: "panels.surface.device",
+    shortcut: "M",
+    reasonKey: "panels.surface.deviceReason",
+  },
+  {
+    labelKey: "panels.surface.sideChat",
+    shortcut: "S",
+    reasonKey: "panels.surface.sideChatReason",
+  },
 ] as const;
 
 export function RightPanel({ width }: { width: number }) {
+  const t = useT();
   const tab = useUiStore((s) => s.rightPanelTab);
   const setTab = useUiStore((s) => s.setRightPanelTab);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
@@ -53,14 +71,12 @@ export function RightPanel({ width }: { width: number }) {
       style={{ width }}
       className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
-      <div
-        className={`flex h-10 shrink-0 items-center border-b border-border-subtle pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}
-      >
+      <div className={`flex h-10 shrink-0 items-center pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}>
         {tab !== "none" && (
           <button
             type="button"
-            aria-label="Back to surfaces"
-            title="Back to surfaces"
+            aria-label={t("panels.backToSurfaces")}
+            title={t("panels.backToSurfaces")}
             onClick={() => setTab("none")}
             className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
           >
@@ -70,11 +86,15 @@ export function RightPanel({ width }: { width: number }) {
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        <Suspense fallback={<p className="p-3 text-xs text-text-tertiary">Loading surface…</p>}>
+        <Suspense
+          fallback={<p className="p-3 text-xs text-text-tertiary">{t("panels.loading")}</p>}
+        >
           {tab === "none" ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-1 p-6">
-              <p className="mb-3 text-sm font-medium text-text-primary">Open a surface</p>
-              {TABS.map(({ id, label, icon: Icon }) => (
+              <p className="mb-3 text-sm font-medium text-text-primary">
+                {t("panels.openSurface")}
+              </p>
+              {TABS.map(({ id, labelKey, icon: Icon }) => (
                 <button
                   key={id}
                   type="button"
@@ -82,7 +102,7 @@ export function RightPanel({ width }: { width: number }) {
                   className="flex w-64 items-center gap-2 rounded-(--radius-sm) px-3 py-1.5 text-left text-sm text-text-secondary transition hover:bg-hover hover:text-text-primary"
                 >
                   <Icon size={14} />
-                  <span className="flex-1">{label}</span>
+                  <span className="flex-1">{t(labelKey)}</span>
                   <kbd className="rounded border border-border-subtle px-1 font-mono text-xs text-text-tertiary">
                     {SHORTCUTS[id]}
                   </kbd>
@@ -90,13 +110,13 @@ export function RightPanel({ width }: { width: number }) {
               ))}
               {DISABLED_SURFACES.map((surface) => (
                 <button
-                  key={surface.label}
+                  key={surface.labelKey}
                   type="button"
                   disabled
-                  title={surface.reason}
+                  title={t(surface.reasonKey)}
                   className="flex w-64 items-center gap-2 rounded-(--radius-sm) px-3 py-1.5 text-left text-sm text-text-tertiary opacity-60"
                 >
-                  <span className="flex-1">{surface.label}</span>
+                  <span className="flex-1">{t(surface.labelKey)}</span>
                   <kbd className="rounded border border-border-subtle px-1 font-mono text-xs">
                     {surface.shortcut}
                   </kbd>

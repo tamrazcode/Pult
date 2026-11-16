@@ -20,8 +20,8 @@ import {
 } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
+import { localizeIpcError, plural, translate, useT } from "../../lib/i18n";
 import {
-  ipcErrorMessage,
   providersUpdateCheck,
   providersUpdateInstall,
   runsCancel,
@@ -40,23 +40,24 @@ import { Tooltip } from "../ui/Tooltip";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import { ProjectSettingsDialog } from "../projects/ProjectSettingsDialog";
+import { SidebarToggleButton } from "./WindowChrome";
 
-const FILTERS: Array<{ id: SidebarFilter; label: string }> = [
-  { id: "all", label: "All threads" },
-  { id: "unread", label: "Unread" },
-  { id: "pinned", label: "Pinned" },
-  { id: "working", label: "Working" },
-  { id: "archived", label: "Archived" },
+const FILTERS: Array<{ id: SidebarFilter; labelKey: string }> = [
+  { id: "all", labelKey: "sidebar.filter.all" },
+  { id: "unread", labelKey: "sidebar.filter.unread" },
+  { id: "pinned", labelKey: "sidebar.filter.pinned" },
+  { id: "working", labelKey: "sidebar.filter.working" },
+  { id: "archived", labelKey: "sidebar.filter.archived" },
 ];
 
 function relativeTime(ts: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
-  if (seconds < 60) return "now";
+  if (seconds < 60) return translate("sidebar.time.now");
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return translate("sidebar.time.minutes", { count: minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return translate("sidebar.time.hours", { count: hours });
+  return translate("sidebar.time.days", { count: Math.floor(hours / 24) });
 }
 
 function ThreadRow({
@@ -78,6 +79,7 @@ function ThreadRow({
   onRename: (title: string | null) => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
+  const t = useT();
   const working = thread.status === "working" || thread.status === "waiting";
   const renameDone = useRef(false);
   useEffect(() => {
@@ -99,7 +101,7 @@ function ThreadRow({
         <input
           autoFocus
           defaultValue={thread.title}
-          aria-label="Thread title"
+          aria-label={t("sidebar.threadTitle")}
           data-escape-layer
           onKeyDown={(event) => {
             if (event.key === "Enter") {
@@ -127,18 +129,18 @@ function ThreadRow({
           {unread ? (
             <span
               data-unread="true"
-              aria-label="Unread"
+              aria-label={t("sidebar.unreadThread")}
               className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
             />
           ) : working ? (
             <span
-              aria-label={thread.status}
+              aria-label={t(`sidebar.status.${thread.status}`)}
               className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                 thread.status === "working" ? "bg-accent" : "bg-warning"
               }`}
             />
           ) : null}
-          <span className="truncate">{thread.title || "Untitled"}</span>
+          <span className="truncate">{thread.title || t("sidebar.untitled")}</span>
           <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
             {relativeTime(thread.updatedAt)}
           </span>
@@ -146,7 +148,7 @@ function ThreadRow({
       )}
       <button
         type="button"
-        aria-label={thread.pinned ? "Unstar thread" : "Star thread"}
+        aria-label={thread.pinned ? t("sidebar.unstarThread") : t("sidebar.starThread")}
         onClick={onStar}
         className={`mr-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover focus-visible:opacity-100 ${
           thread.pinned ? "text-warning" : "text-text-tertiary opacity-0 group-hover:opacity-100"
@@ -175,6 +177,7 @@ function ProjectRow({
   onStar: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
+  const t = useT();
   const initials = projectInitials(project.name);
   const monogram = projectMonogram(project.color);
   return (
@@ -205,7 +208,7 @@ function ProjectRow({
       </button>
       <button
         type="button"
-        aria-label={project.pinned ? "Unstar project" : "Star project"}
+        aria-label={project.pinned ? t("sidebar.unstarProject") : t("sidebar.starProject")}
         onClick={onStar}
         className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-hover focus-visible:opacity-100 ${
           project.pinned ? "text-warning" : "text-text-tertiary opacity-0 group-hover:opacity-100"
@@ -217,8 +220,8 @@ function ProjectRow({
       <span className="tnum text-xs text-text-tertiary">{threadCount}</span>
       <button
         type="button"
-        aria-label="New thread in project"
-        title="New thread in project"
+        aria-label={t("sidebar.newThreadInProject")}
+        title={t("sidebar.newThreadInProject")}
         onClick={onNewThread}
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary opacity-0 transition hover:bg-hover hover:text-text-secondary focus-visible:opacity-100 group-hover:opacity-100"
       >
@@ -227,7 +230,7 @@ function ProjectRow({
       <button
         type="button"
         onClick={onToggle}
-        aria-label={collapsed ? "Expand project" : "Collapse project"}
+        aria-label={collapsed ? t("sidebar.expandProject") : t("sidebar.collapseProject")}
         aria-expanded={!collapsed}
         data-project-chevron="right"
         className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
@@ -241,13 +244,23 @@ function ProjectRow({
 /** One line naming the provider and version transition being installed. */
 export function formatUpdateProgress(update: ProviderUpdate): string {
   if (update.current && update.latest) {
-    return `Updating ${update.displayName} ${update.current} -> ${update.latest}`;
+    return translate("sidebar.updateProgress.from", {
+      name: update.displayName,
+      current: update.current,
+      latest: update.latest,
+    });
   }
-  if (update.latest) return `Updating ${update.displayName} to ${update.latest}`;
-  return `Updating ${update.displayName}…`;
+  if (update.latest) {
+    return translate("sidebar.updateProgress.to", {
+      name: update.displayName,
+      latest: update.latest,
+    });
+  }
+  return translate("sidebar.updateProgress.generic", { name: update.displayName });
 }
 
 export function Sidebar({ width }: { width: number }) {
+  const t = useT();
   const projects = useProjectsStore((s) => s.projects);
   const threads = useThreadsStore((s) => s.threads);
   const unreadIds = useThreadsStore((s) => s.unreadIds);
@@ -283,12 +296,12 @@ export function Sidebar({ width }: { width: number }) {
   const updateLabel = installing
     ? activeUpdate
       ? formatUpdateProgress(activeUpdate)
-      : "Updating providers…"
+      : t("sidebar.updating")
     : failedUpdates.length > 0
       ? updateErrorText
       : updates.length > 0
-        ? `Update ${updates.length} provider${updates.length === 1 ? "" : "s"}`
-        : "Check provider updates";
+        ? plural("sidebar.updateProviders", updates.length)
+        : t("sidebar.checkUpdates");
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -398,7 +411,7 @@ export function Sidebar({ width }: { width: number }) {
             return next;
           });
         } catch (err) {
-          const message = ipcErrorMessage(err);
+          const message = localizeIpcError(err);
           failed.push({ update, message });
           setUpdateErrors((prev) => ({ ...prev, [update.instanceId]: message }));
         }
@@ -433,31 +446,31 @@ export function Sidebar({ width }: { width: number }) {
   const projectMenuItems = (project: Project): Array<ContextMenuItem | "separator"> => [
     {
       id: "new-thread",
-      label: "New thread",
+      label: t("sidebar.newThread"),
       icon: <SquarePen size={12} />,
       onSelect: () => newThread(project),
     },
     {
       id: "copy-path",
-      label: "Copy path",
+      label: t("sidebar.copyPath"),
       onSelect: () => copyPath(project.rootPath),
     },
     {
       id: "pin",
-      label: project.pinned ? "Unpin" : "Pin",
+      label: project.pinned ? t("sidebar.unpinShort") : t("sidebar.pinShort"),
       onSelect: () => void useProjectsStore.getState().togglePin(project.id),
     },
     {
       id: "settings",
-      label: "Project settings",
+      label: t("sidebar.projectSettings"),
       onSelect: () => setSettingsProjectId(project.id),
     },
     "separator",
     {
       id: "delete",
-      label: "Delete",
+      label: t("sidebar.delete"),
       danger: true,
-      confirmLabel: "Confirm delete",
+      confirmLabel: t("sidebar.confirmDelete"),
       onSelect: () =>
         void useProjectsStore
           .getState()
@@ -472,45 +485,45 @@ export function Sidebar({ width }: { width: number }) {
     return [
       {
         id: "pin",
-        label: thread.pinned ? "Unpin" : "Pin",
+        label: thread.pinned ? t("sidebar.unpinShort") : t("sidebar.pinShort"),
         onSelect: () => void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned),
       },
       {
         id: "settle",
-        label: "Settle",
+        label: t("sidebar.settle"),
         onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "settled"),
       },
       {
         id: "snooze",
-        label: "Snooze",
+        label: t("sidebar.snooze"),
         onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "snoozed"),
       },
-      { id: "rename", label: "Rename", onSelect: () => setRenamingId(thread.id) },
+      { id: "rename", label: t("sidebar.rename"), onSelect: () => setRenamingId(thread.id) },
       {
         id: "unread",
-        label: unread ? "Mark read" : "Mark unread",
+        label: unread ? t("sidebar.markRead") : t("sidebar.markUnread"),
         onSelect: () => useThreadsStore.getState().markUnread(thread.id, !unread),
       },
       {
         id: "copy-path",
-        label: "Copy path",
+        label: t("sidebar.copyPath"),
         onSelect: () => copyPath(thread.workspace ?? project?.rootPath ?? ""),
       },
       {
         id: "settings",
-        label: "Project settings",
+        label: t("sidebar.projectSettings"),
         disabled: thread.projectId === null,
         onSelect: () => setSettingsProjectId(thread.projectId),
       },
       {
         id: "archive",
-        label: "Archive",
+        label: t("sidebar.archive"),
         onSelect: () => void useThreadsStore.getState().setThreadStatus(thread.id, "archived"),
       },
       "separator",
       {
         id: "delete",
-        label: "Delete",
+        label: t("sidebar.delete"),
         danger: true,
         onSelect: () => void requestDelete(thread),
       },
@@ -522,19 +535,17 @@ export function Sidebar({ width }: { width: number }) {
       style={{ width }}
       className="glass-panel flex shrink-0 flex-col border-r border-border-subtle bg-panel"
     >
-      <div
-        data-tauri-drag-region
-        className="flex h-10 shrink-0 items-center gap-2 border-b border-border-subtle px-4"
-      >
+      <div data-tauri-drag-region className="flex h-10 shrink-0 items-center gap-3 px-3">
+        <SidebarToggleButton />
         <span data-tauri-drag-region className="flex min-w-0 flex-1 items-center gap-1">
           <PultLogo className="h-6 w-6 shrink-0 text-text-primary" />
           <span className="truncate text-sm font-normal tracking-tight text-text-primary">
-            pult
+            Pult
           </span>
         </span>
         <button
           type="button"
-          aria-label="Back"
+          aria-label={t("sidebar.back")}
           onClick={() => router.history.back()}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
@@ -542,7 +553,7 @@ export function Sidebar({ width }: { width: number }) {
         </button>
         <button
           type="button"
-          aria-label="Forward"
+          aria-label={t("sidebar.forward")}
           onClick={() => router.history.forward()}
           className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
@@ -559,15 +570,15 @@ export function Sidebar({ width }: { width: number }) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-            aria-label="Search threads"
+            placeholder={t("sidebar.searchPlaceholder")}
+            aria-label={t("sidebar.search")}
             type="search"
-            className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-8 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+            className="h-8 w-full bg-transparent pr-8 pl-7 text-xs text-text-primary placeholder:text-text-tertiary focus:outline-none"
           />
           <button
             type="button"
-            aria-label="Filter threads"
-            title="Filter threads"
+            aria-label={t("sidebar.filter")}
+            title={t("sidebar.filter")}
             aria-haspopup="menu"
             aria-expanded={filterOpen}
             onClick={() => setFilterOpen((open) => !open)}
@@ -581,7 +592,7 @@ export function Sidebar({ width }: { width: number }) {
         {filterOpen && (
           <div
             role="menu"
-            aria-label="Filters"
+            aria-label={t("sidebar.filters")}
             className="absolute top-full left-0 z-30 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-xl"
           >
             {FILTERS.map((option) => (
@@ -600,15 +611,15 @@ export function Sidebar({ width }: { width: number }) {
                     : "text-text-secondary hover:bg-hover"
                 }`}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             ))}
           </div>
         )}
         <button
           type="button"
-          aria-label="New project"
-          title="New project"
+          aria-label={t("sidebar.newProject")}
+          title={t("sidebar.newProject")}
           onClick={() => setCreateOpen(true)}
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
@@ -616,8 +627,8 @@ export function Sidebar({ width }: { width: number }) {
         </button>
         <button
           type="button"
-          aria-label="New thread"
-          title="New thread"
+          aria-label={t("sidebar.newThread")}
+          title={t("sidebar.newThread")}
           onClick={() => newThread(null)}
           className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
         >
@@ -625,7 +636,7 @@ export function Sidebar({ width }: { width: number }) {
         </button>
       </div>
 
-      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4" aria-label="Threads">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4" aria-label={t("sidebar.threads")}>
         {groups.map((group) => {
           const key = group.project?.id ?? "__none__";
           const isCollapsed = group.project ? collapsedProjects.includes(group.project.id) : false;
@@ -645,11 +656,13 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                 />
               ) : (
-                <div className="flex items-center gap-2 rounded-(--radius-sm) px-2 py-1.5">
+                <div className="flex items-center gap-2 rounded-(--radius-sm) py-1.5 pr-2 pl-3">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-tertiary">
                     <SquareDashed size={14} />
                   </span>
-                  <span className="text-sm font-medium text-text-primary">No project</span>
+                  <span className="text-sm font-medium text-text-primary">
+                    {t("sidebar.noProject")}
+                  </span>
                   <span className="flex-1" />
                   <span className="tnum text-xs text-text-tertiary">{group.threads.length}</span>
                 </div>
@@ -684,42 +697,43 @@ export function Sidebar({ width }: { width: number }) {
         })}
       </nav>
 
-      <footer className="border-t border-border-subtle p-3">
+      <footer className="p-3">
         <div className="flex items-center gap-1">
-          <Tooltip label="Settings">
+          <Tooltip label={t("sidebar.settings")}>
             <button
               type="button"
-              aria-label="Settings"
+              aria-label={t("sidebar.settings")}
               onClick={() => void router.navigate({ to: "/settings/appearance" })}
               className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               <Settings size={16} />
             </button>
           </Tooltip>
-          <Tooltip label="Pull requests">
+          <Tooltip label={t("sidebar.pullRequests")}>
             <button
               type="button"
-              aria-label="Pull requests"
+              aria-label={t("sidebar.pullRequests")}
               onClick={() => void router.navigate({ to: "/pull-requests" })}
               className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               <GitPullRequest size={16} />
             </button>
           </Tooltip>
-          <Tooltip label="Usage">
+          <Tooltip label={t("sidebar.usage")}>
             <button
               type="button"
-              aria-label="Usage"
+              aria-label={t("sidebar.usage")}
               onClick={() => void router.navigate({ to: "/usage" })}
               className="flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               <BarChart3 size={16} />
             </button>
           </Tooltip>
+          <span className="flex-1" />
           <Tooltip label={updateLabel}>
             <button
               type="button"
-              aria-label="Refresh"
+              aria-label={t("sidebar.refresh")}
               title={updateLabel}
               onClick={updates.length > 0 ? installUpdates : refresh}
               className="relative flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
@@ -782,17 +796,20 @@ export function Sidebar({ width }: { width: number }) {
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="Delete thread"
+            aria-label={t("sidebar.deleteThread")}
             onClick={(event) => event.stopPropagation()}
             className="w-full max-w-md rounded-(--radius-lg) border border-border-strong bg-surface-raised p-4 shadow-2xl"
           >
             <h2 className="text-sm font-medium text-text-primary">
-              Delete “{deleteTarget.thread.title}”?
+              {t("sidebar.confirmDeleteTitle", { title: deleteTarget.thread.title })}
             </h2>
             <p className="mt-2 text-xs text-text-secondary">
               {deleteTarget.status.dirty
-                ? `Its worktree has ${deleteTarget.status.modified} modified and ${deleteTarget.status.untracked} untracked file(s). The branch is kept either way.`
-                : "This removes the transcript. The branch and checkpoints are kept."}
+                ? t("sidebar.confirmDeleteWorktree", {
+                    modified: deleteTarget.status.modified,
+                    untracked: deleteTarget.status.untracked,
+                  })
+                : t("sidebar.confirmDeletePlain")}
               {deleteTarget.thread.workspace && (
                 <span className="mt-1 block truncate font-mono text-text-tertiary">
                   {deleteTarget.thread.workspace}
@@ -820,7 +837,7 @@ export function Sidebar({ width }: { width: number }) {
                     }}
                     className="h-8 rounded-(--radius-sm) border border-border-strong bg-surface px-3 text-xs text-text-primary transition hover:bg-hover"
                   >
-                    Delete thread &amp; keep worktree files
+                    {t("sidebar.deleteKeepWorktree")}
                   </button>
                   <button
                     type="button"
@@ -831,8 +848,9 @@ export function Sidebar({ width }: { width: number }) {
                     }}
                     className="h-8 rounded-(--radius-sm) bg-danger px-3 text-xs font-medium text-white transition hover:brightness-110"
                   >
-                    Delete thread &amp; discard{" "}
-                    {deleteTarget.status.untracked + deleteTarget.status.modified} file(s)
+                    {t("sidebar.deleteDiscardFiles", {
+                      count: deleteTarget.status.untracked + deleteTarget.status.modified,
+                    })}
                   </button>
                 </>
               ) : (
@@ -845,7 +863,7 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                   className="h-8 rounded-(--radius-sm) bg-danger px-3 text-xs font-medium text-white transition hover:brightness-110"
                 >
-                  Delete thread
+                  {t("sidebar.deleteConfirm")}
                 </button>
               )}
               <button
@@ -853,7 +871,7 @@ export function Sidebar({ width }: { width: number }) {
                 onClick={() => setDeleteTarget(null)}
                 className="h-8 rounded-(--radius-sm) px-3 text-xs text-text-tertiary transition hover:text-text-secondary"
               >
-                Cancel
+                {t("sidebar.cancel")}
               </button>
             </div>
           </div>

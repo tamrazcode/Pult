@@ -18,6 +18,7 @@ import { useSettingsStore } from "../../stores/settings";
 import { useThreadsStore } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
 import { useUiStore } from "../../stores/ui";
+import { localizeIpcError, translate, useT } from "../../lib/i18n";
 
 const IMAGE_EXT = /\.(png|jpe?g|webp|gif)$/i;
 
@@ -27,6 +28,7 @@ function relativeToFull(root: string, path: string): string {
 
 /** T3-style Files surface: workspace tree + preview, editor choice, context menu. */
 export function FilesPanel({ threadId }: { threadId?: string | null }) {
+  const t = useT();
   const [entries, setEntries] = useState<WorkspaceEntry[]>([]);
   const [query, setQuery] = useState("");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -63,7 +65,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
       setTruncated(tree.truncated);
       setError(null);
     } catch (err) {
-      if (request === treeRequest.current) setError(String(err));
+      if (request === treeRequest.current) setError(localizeIpcError(err));
     } finally {
       if (request === treeRequest.current) setLoadingTree(false);
     }
@@ -79,7 +81,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
   useEffect(() => {
     if (!threadId || !selected) return;
     if (!root) {
-      setError("Workspace folder not resolved for this thread");
+      setError(translate("panels.files.noWorkspace"));
       return;
     }
     let cancelled = false;
@@ -92,7 +94,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
           if (!cancelled) setImage(url);
         })
         .catch((err) => {
-          if (!cancelled) setError(String(err));
+          if (!cancelled) setError(localizeIpcError(err));
         });
       return () => {
         cancelled = true;
@@ -103,7 +105,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
         if (!cancelled) setPreview(text);
       })
       .catch((err) => {
-        if (!cancelled) setError(String(err));
+        if (!cancelled) setError(localizeIpcError(err));
       });
     return () => {
       cancelled = true;
@@ -136,31 +138,32 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     return [
       {
         id: "open-editor",
-        label: `Open in ${getEditorMeta(preferredEditor).label}`,
+        label: t("panels.files.openIn", { editor: getEditorMeta(preferredEditor).label }),
         onSelect: () =>
-          void openInEditor(full, preferredEditor).catch((err) => setError(String(err))),
+          void openInEditor(full, preferredEditor).catch((err) => setError(localizeIpcError(err))),
       },
       {
         id: "reveal",
-        label: "Reveal in File Explorer",
-        onSelect: () => void openInEditor(full, "explorer").catch((err) => setError(String(err))),
+        label: t("panels.files.reveal"),
+        onSelect: () =>
+          void openInEditor(full, "explorer").catch((err) => setError(localizeIpcError(err))),
       },
       "separator",
       {
         id: "copy-rel",
-        label: "Copy relative path",
+        label: t("panels.files.copyRelativePath"),
         onSelect: () => void navigator.clipboard.writeText(entry.path).catch(() => undefined),
       },
       {
         id: "copy-full",
-        label: "Copy full path",
+        label: t("panels.files.copyFullPath"),
         onSelect: () => void navigator.clipboard.writeText(full).catch(() => undefined),
       },
     ];
   };
 
   if (!threadId) {
-    return <p className="p-4 text-sm text-text-tertiary">Open a thread to browse its workspace.</p>;
+    return <p className="p-4 text-sm text-text-tertiary">{t("panels.files.noThread")}</p>;
   }
 
   const breadcrumb = selected ? selected.split("/") : [];
@@ -171,12 +174,12 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-border-subtle px-2 py-1.5">
         <div className="min-w-0 flex-1 truncate text-xs text-text-tertiary" title={selected ?? ""}>
-          {breadcrumb.length > 0 ? breadcrumb.join(" › ") : "Files"}
+          {breadcrumb.length > 0 ? breadcrumb.join(" › ") : t("panels.files.title")}
         </div>
         <button
           type="button"
-          aria-label="Refresh files"
-          title="Refresh files"
+          aria-label={t("panels.files.refresh")}
+          title={t("panels.files.refresh")}
           disabled={loadingTree}
           onClick={() => void loadTree()}
           className="flex h-7 w-7 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover disabled:opacity-60"
@@ -187,7 +190,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
           onOpen={(editor) => {
             if (!selected || !root) return;
             void openInEditor(relativeToFull(root, selected), editor).catch((err) =>
-              setError(String(err)),
+              setError(localizeIpcError(err)),
             );
           }}
         />
@@ -198,8 +201,8 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search files…"
-            aria-label="Search files"
+            placeholder={t("panels.files.searchPlaceholder")}
+            aria-label={t("panels.files.search")}
             className="m-1.5 h-7 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
           <div className="min-h-0 flex-1 overflow-y-auto pb-2">
@@ -264,17 +267,13 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
               data-truncated-notice
               className="border-t border-border-subtle px-2 py-1 text-xs text-text-tertiary"
             >
-              Showing first 2,000 entries (depth 6)
+              {t("panels.files.truncated")}
             </p>
           )}
         </div>
 
         <div className="min-w-0 flex-1 overflow-auto p-2">
-          {!selected && (
-            <p className="p-2 text-xs text-text-tertiary">
-              Pick a file to preview it, or click a file link in the chat.
-            </p>
-          )}
+          {!selected && <p className="p-2 text-xs text-text-tertiary">{t("panels.files.pick")}</p>}
           {selected && image && (
             <img
               src={image}
@@ -293,7 +292,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
             </div>
           )}
           {selected && !image && preview === null && !error && (
-            <p className="p-2 text-xs text-text-tertiary">Loading preview…</p>
+            <p className="p-2 text-xs text-text-tertiary">{t("panels.files.loadingPreview")}</p>
           )}
         </div>
       </div>

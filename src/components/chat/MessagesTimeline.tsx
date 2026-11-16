@@ -23,7 +23,8 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { ipcErrorMessage, readImageDataUrl, runsDispatch } from "../../lib/ipc";
+import { readImageDataUrl, runsDispatch } from "../../lib/ipc";
+import { localizeIpcError, plural, translate, useT } from "../../lib/i18n";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
@@ -69,12 +70,12 @@ function toolDot(status: string): string {
   return TOOL_DOT_CLASSES[status] ?? "bg-text-tertiary";
 }
 
-const STOP_REASON_LABELS: Record<string, string> = {
-  end_turn: "Completed",
-  cancelled: "Cancelled",
-  refusal: "Refused",
-  max_tokens: "Token limit",
-  max_turn_requests: "Turn limit",
+const STOP_REASON_KEYS: Record<string, string> = {
+  end_turn: "chat.stop.endTurn",
+  cancelled: "chat.stop.cancelled",
+  refusal: "chat.stop.refused",
+  max_tokens: "chat.stop.maxTokens",
+  max_turn_requests: "chat.stop.maxTurnRequests",
 };
 
 const NOTICE_LEVEL_CLASSES: Record<string, string> = {
@@ -86,6 +87,7 @@ const NOTICE_LEVEL_CLASSES: Record<string, string> = {
 const TRANSCRIPT_WINDOW = 300;
 
 export function MessagesTimeline({ threadId }: { threadId?: string }) {
+  const t = useT();
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const views = useRunsStore((s) => s.viewsByRun);
   const activeRun = activeRunForThread(runs);
@@ -159,7 +161,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (entry.item.type === "user") {
       historyTicks.push({
         key: entry.key,
-        label: entry.item.text.trim().slice(0, 80) || "Image prompt",
+        label: entry.item.text.trim().slice(0, 80) || t("chat.imagePrompt"),
         globalIndex,
       });
     }
@@ -208,7 +210,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}
               className="mx-auto rounded-(--radius-sm) border border-border-subtle px-3 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              Earlier messages ({hiddenCount} hidden)
+              {t("chat.earlierMessagesHidden", { count: hiddenCount })}
             </button>
           )}
           {windowedEntries.length > 0 && <TimelineRows entries={windowedEntries} />}
@@ -226,7 +228,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           {entries.length === 0 && view.streaming && (
             <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
-              Working…
+              {t("chat.workingEllipsis")}
             </div>
           )}
 
@@ -238,7 +240,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
           {crashed && (
             <CrashBanner
-              detail={view.error ?? "The run failed without a reported reason"}
+              detail={view.error ?? t("chat.failureNoReason")}
               retryText={retryText}
               onRetry={
                 threadId && retryText ? () => void retryLastMessage(threadId, retryText) : undefined
@@ -259,7 +261,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       {showScrollToEnd && (
         <button
           type="button"
-          aria-label="Scroll to end"
+          aria-label={t("chat.scrollToEnd")}
           onClick={() => {
             isAtBottomRef.current = true;
             setShowScrollToEnd(false);
@@ -268,7 +270,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           }}
           className="absolute bottom-28 left-1/2 z-30 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-surface-raised/95 px-3 text-xs text-text-secondary shadow-(--shadow-composer) transition hover:bg-surface-raised hover:text-text-primary"
         >
-          <ChevronDown size={13} /> Scroll to end
+          <ChevronDown size={13} /> {t("chat.scrollToEnd")}
         </button>
       )}
       <HistoryTicks ticks={historyTicks} activeKey={activeHistoryKey} onJump={jumpToTick} />
@@ -302,26 +304,112 @@ const ChatItemRow = memo(
 
 type TimelineEntry = ReturnType<typeof threadTimelineItems>[number];
 
-/** Consecutive search calls collapse into one T3-style summary line. */
+/** T3-style brake/ASCII spinner shown while the agent is working. */
+export function ThinkingAscii() {
+  const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    if (
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      return;
+    }
+    const timer = window.setInterval(() => setFrame((value) => (value + 1) % frames.length), 90);
+    return () => window.clearInterval(timer);
+  }, [frames.length]);
+  return (
+    <span aria-hidden className="inline-block w-3 shrink-0 text-accent">
+      {frames[frame]}
+    </span>
+  );
+}
+
+function isZeroSecondThought(item: ChatItem): boolean {
+  return (
+    item.type === "thought" &&
+    !item.streaming &&
+    (item.text.trim().length === 0 ||
+      Math.floor(Math.max(0, item.endedAt - item.startedAt) / 1000) === 0)
+  );
+}
+
+function isActionItem(item: ChatItem): boolean {
+  return item.type === "tool" || item.type === "thought" || item.type === "trace";
+}
+
+function summarizeActionGroup(items: ChatItem[]): string {
+  let files = 0;
+  let commands = 0;
+  let reads = 0;
+  let searches = 0;
+  let other = 0;
+  let thoughts = 0;
+  for (const item of items) {
+    if (item.type === "thought") {
+      thoughts += 1;
+      continue;
+    }
+    if (item.type !== "tool") continue;
+    switch (item.kind) {
+      case "edit":
+      case "write":
+      case "move":
+      case "delete":
+        files += 1;
+        break;
+      case "execute":
+        commands += 1;
+        break;
+      case "read":
+        reads += 1;
+        break;
+      case "search":
+        searches += 1;
+        break;
+      default:
+        other += 1;
+    }
+  }
+  const parts: string[] = [];
+  if (files > 0) parts.push(plural("chat.tool.changedFiles", files));
+  if (commands > 0) parts.push(plural("chat.tool.ranCommands", commands));
+  if (reads > 0) parts.push(plural("chat.tool.readFiles", reads));
+  if (searches > 0) parts.push(plural("chat.tool.searchedTimes", searches));
+  if (other > 0) parts.push(plural("chat.tool.otherActions", other));
+  if (parts.length === 0) {
+    return thoughts > 0
+      ? plural("chat.tool.thoughtTimes", thoughts)
+      : translate("chat.tool.actions");
+  }
+  if (parts.length === 1) return parts[0];
+  return `${parts.slice(0, -1).join(", ")} ${translate("chat.list.and")} ${parts[parts.length - 1]}`;
+}
+
+/** Consecutive tools/thoughts/traces collapse into one T3-style summary row. */
 function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
   const rows: ReactNode[] = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
-    if (entry.item.type === "tool" && entry.item.kind === "search") {
-      const group: ToolChatItem[] = [];
+    if (isZeroSecondThought(entry.item)) continue;
+    if (isActionItem(entry.item)) {
+      const group: TimelineEntry[] = [];
       let next = index;
-      while (
-        next < entries.length &&
-        entries[next].item.type === "tool" &&
-        (entries[next].item as ToolChatItem).kind === "search"
-      ) {
-        group.push(entries[next].item as ToolChatItem);
+      while (next < entries.length) {
+        const candidate = entries[next];
+        if (isZeroSecondThought(candidate.item)) {
+          next += 1;
+          continue;
+        }
+        if (!isActionItem(candidate.item)) break;
+        group.push(candidate);
         next += 1;
       }
+      // A single action keeps its rich row; two or more collapse.
       if (group.length > 1) {
         rows.push(
           <div key={entry.key} data-history-key={entry.key}>
-            <ToolGroupRow items={group} />
+            <ActionGroupRow entries={group} />
           </div>,
         );
         index = next - 1;
@@ -341,8 +429,25 @@ function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
   return <>{rows}</>;
 }
 
-function ToolGroupRow({ items }: { items: ToolChatItem[] }) {
+function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
+  const items = entries.map((entry) => entry.item);
+  const last = items[items.length - 1];
+  const active = items.some(
+    (item) =>
+      (item.type === "tool" && (item.status === "pending" || item.status === "in_progress")) ||
+      (item.type === "thought" && item.streaming),
+  );
+  const Icon =
+    last.type === "tool" ? toolIcon(last.kind) : last.type === "thought" ? Brain : ShieldCheck;
+  const label = active
+    ? last.type === "thought"
+      ? t("chat.thinking")
+      : last.type === "tool"
+        ? last.title
+        : t("chat.tool.working")
+    : summarizeActionGroup(items);
   return (
     <div>
       <button
@@ -351,8 +456,19 @@ function ToolGroupRow({ items }: { items: ToolChatItem[] }) {
         aria-expanded={open}
         className="flex w-full items-center gap-2 py-0.5 text-left"
       >
-        <Search size={13} className="shrink-0 text-text-secondary" />
-        <span className="text-sm text-text-secondary">Searched code {items.length} times</span>
+        {active && last.type === "thought" ? (
+          <ThinkingAscii />
+        ) : (
+          <Icon size={13} className="shrink-0 text-text-secondary" />
+        )}
+        <span
+          className={`min-w-0 flex-1 truncate text-sm ${
+            active ? "text-text-tertiary" : "text-text-secondary"
+          }`}
+        >
+          {label}
+        </span>
+        {active && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
         <ChevronRight
           size={12}
           className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
@@ -360,9 +476,15 @@ function ToolGroupRow({ items }: { items: ToolChatItem[] }) {
       </button>
       {open && (
         <div className="space-y-0.5 py-1 pl-5">
-          {items.map((item) => (
-            <ToolRow key={item.toolCallId} item={item} />
-          ))}
+          {entries.map((entry) =>
+            entry.item.type === "tool" ? (
+              <ToolRow key={entry.key} item={entry.item} />
+            ) : entry.item.type === "thought" ? (
+              <ThoughtGroup key={entry.key} item={entry.item} streaming={false} />
+            ) : entry.item.type === "trace" ? (
+              <TraceRow key={entry.key} optionId={entry.item.optionId} />
+            ) : null,
+          )}
         </div>
       )}
     </div>
@@ -371,26 +493,30 @@ function ToolGroupRow({ items }: { items: ToolChatItem[] }) {
 
 /** Live elapsed-time line under a streaming run ("Working for 4s"). */
 function WorkingTimer({ startedAt }: { startedAt: number }) {
+  const t = useT();
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
   const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
-  return <div className="py-1 text-sm text-text-tertiary">Working for {seconds}s</div>;
+  return (
+    <div className="py-1 text-sm text-text-tertiary">
+      {t("chat.workingFor", { duration: `${seconds}s` })}
+    </div>
+  );
 }
 
 function EmptyState() {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center">
       <div className="flex flex-col items-center gap-2 text-center">
         <div className="flex h-12 w-12 items-center justify-center rounded-(--radius-lg) border border-border-subtle bg-surface">
           <MessageSquare size={20} className="text-text-tertiary" />
         </div>
-        <p className="text-lg text-text-secondary">Nothing here yet</p>
-        <p className="max-w-[42ch] text-sm text-text-tertiary">
-          Start a thread below. Agents stream their work here: thoughts, tool calls, diffs.
-        </p>
+        <p className="text-lg text-text-secondary">{t("chat.empty.title")}</p>
+        <p className="max-w-[42ch] text-sm text-text-tertiary">{t("chat.empty.body")}</p>
       </div>
     </div>
   );
@@ -421,6 +547,7 @@ function MessageActions({
   align: "left" | "right";
 }) {
   const [copied, setCopied] = useState(false);
+  const t = useT();
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
   const time = showTimestamps ? formatTime(ts) : null;
   const copy = () => {
@@ -437,7 +564,7 @@ function MessageActions({
     const thread = threads.threads.find((candidate) => candidate.id === threads.activeThreadId);
     if (!thread) return;
     void threads
-      .createThread(thread.projectId ?? null, `Branch: ${text.slice(0, 48)}`, {
+      .createThread(thread.projectId ?? null, t("chat.branchTitle", { text: text.slice(0, 48) }), {
         workspace: thread.workspace,
         worktree: false,
       })
@@ -448,7 +575,7 @@ function MessageActions({
         useUiStore.getState().setPendingThread(next.id);
       })
       .catch((err) =>
-        useUiStore.getState().setGlobalError({ kind: "storage", message: ipcErrorMessage(err) }),
+        useUiStore.getState().setGlobalError({ kind: "storage", message: localizeIpcError(err) }),
       );
   };
   return (
@@ -459,8 +586,8 @@ function MessageActions({
     >
       <button
         type="button"
-        aria-label="Copy message"
-        title="Copy"
+        aria-label={t("chat.copyMessage")}
+        title={t("chat.copy")}
         onClick={copy}
         className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
       >
@@ -468,8 +595,8 @@ function MessageActions({
       </button>
       <button
         type="button"
-        aria-label="Branch from message"
-        title="Branch from message"
+        aria-label={t("chat.branchFromMessage")}
+        title={t("chat.branchFromMessage")}
         onClick={branch}
         className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
       >
@@ -489,6 +616,7 @@ function UserRow({
   images: { data: string; mimeType: string }[];
   ts?: number;
 }) {
+  const t = useT();
   return (
     <div className="group flex justify-end">
       <div className="flex max-w-[75%] flex-col items-end gap-2">
@@ -498,17 +626,17 @@ function UserRow({
               <button
                 key={i}
                 type="button"
-                aria-label="Open image"
+                aria-label={t("chat.openImage")}
                 onClick={() =>
                   useUiStore
                     .getState()
-                    .openImagePreview(`data:${img.mimeType};base64,${img.data}`, "Attached")
+                    .openImagePreview(`data:${img.mimeType};base64,${img.data}`, t("chat.attached"))
                 }
                 className="cursor-zoom-in"
               >
                 <img
                   src={`data:${img.mimeType};base64,${img.data}`}
-                  alt="Attached"
+                  alt={t("chat.attached")}
                   className="max-h-40 rounded-(--radius-md) border border-border-subtle"
                 />
               </button>
@@ -549,14 +677,21 @@ function TextRow({
 }
 
 function formatDuration(startedAt: number, endedAt: number): string {
-  const seconds = Math.max(0, Math.round((endedAt - startedAt) / 1000));
+  const seconds = Math.max(0, Math.floor((endedAt - startedAt) / 1000));
   if (seconds < 60) return `${seconds}s`;
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
 function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: boolean }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
-  const duration = formatDuration(item.startedAt, item.endedAt);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!streaming) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [streaming]);
+  const duration = formatDuration(item.startedAt, streaming ? now : item.endedAt);
   return (
     <div>
       <button
@@ -564,11 +699,17 @@ function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: b
         aria-expanded={open}
         className="flex w-full items-center gap-2 py-0.5 text-left"
       >
-        <Brain size={13} className="shrink-0 text-text-tertiary" />
+        {streaming ? (
+          <ThinkingAscii />
+        ) : (
+          <Brain size={13} className="shrink-0 text-text-tertiary" />
+        )}
         <span
           className={`text-sm ${streaming ? "text-text-tertiary italic" : "text-text-tertiary"}`}
         >
-          {streaming ? "Thinking" : "Thought for " + duration}
+          {streaming
+            ? t("chat.thinkingWithDuration", { duration })
+            : t("chat.thoughtFor", { duration })}
         </span>
         {streaming && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />}
         <div className="flex-1" />
@@ -588,23 +729,27 @@ function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: b
 
 /** Policy trace row: the mode auto-resolved a permission (never silent). */
 function TraceRow({ optionId }: { optionId: string }) {
+  const t = useT();
   return (
     <div className="flex items-center gap-2 py-0.5 text-xs text-text-tertiary">
       <ShieldCheck size={11} className="shrink-0" />
-      <span>Auto-allowed by permission mode ({optionId})</span>
+      <span>{t("chat.trace.autoAllowed", { optionId })}</span>
     </div>
   );
 }
 
-const COMPACTION_LABELS: Record<string, string> = {
-  in_progress: "Compacting context…",
-  completed: "Context compacted",
-  failed: "Compaction failed",
-  cancelled: "Compaction cancelled",
+const COMPACTION_LABEL_KEYS: Record<string, string> = {
+  in_progress: "chat.compaction.inProgress",
+  completed: "chat.compaction.completed",
+  failed: "chat.compaction.failed",
+  cancelled: "chat.compaction.cancelled",
 };
 
 function CompactionDivider({ item }: { item: CompactionChatItem }) {
-  const label = COMPACTION_LABELS[item.status ?? "in_progress"] ?? "Context compacted";
+  const t = useT();
+  const label = t(
+    COMPACTION_LABEL_KEYS[item.status ?? "in_progress"] ?? "chat.compaction.completed",
+  );
   const failed = item.status === "failed" || item.status === "cancelled";
   return (
     <div className="flex items-center gap-3 py-1">
@@ -632,6 +777,7 @@ function NoticeRow({ level, message }: { level: string; message: string }) {
 }
 
 function ToolRow({ item }: { item: ToolChatItem }) {
+  const t = useT();
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState(false);
   const Icon = toolIcon(item.kind);
@@ -666,15 +812,15 @@ function ToolRow({ item }: { item: ToolChatItem }) {
       )}
       {open && hasDetail && (
         <div className="space-y-1.5 py-1 pl-5">
-          <ToolReadable label="Input" value={item.rawInput} />
-          <ToolReadable label="Output" value={detail} />
+          <ToolReadable label={t("chat.tool.input")} value={item.rawInput} />
+          <ToolReadable label={t("chat.tool.output")} value={detail} />
           <button
             type="button"
             onClick={() => setRaw((value) => !value)}
             aria-expanded={raw}
             className="text-xs text-text-tertiary transition hover:text-text-secondary"
           >
-            Raw
+            {t("chat.tool.raw")}
           </button>
           {raw && (
             <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
@@ -733,6 +879,7 @@ function findImageCandidate(value: unknown, depth = 0): ImageCandidate | null {
 }
 
 function ToolImage({ candidate }: { candidate: ImageCandidate }) {
+  const t = useT();
   const tooLarge = (value: string) => value.length > 2_500_000;
   const [src, setSrc] = useState<string | null>(
     candidate.dataUrl && !tooLarge(candidate.dataUrl) ? candidate.dataUrl : null,
@@ -756,21 +903,21 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
     };
   }, [candidate.path, src]);
   if (candidate.dataUrl && tooLarge(candidate.dataUrl)) {
-    return <span className="text-xs text-text-tertiary">Image too large to preview</span>;
+    return <span className="text-xs text-text-tertiary">{t("chat.imageTooLarge")}</span>;
   }
   if (failed) return null;
-  if (!src) return <span className="text-xs text-text-tertiary">Loading image…</span>;
+  if (!src) return <span className="text-xs text-text-tertiary">{t("chat.loadingImage")}</span>;
   return (
     <button
       type="button"
-      aria-label="Open image"
-      title="Agent-generated image"
-      onClick={() => useUiStore.getState().openImagePreview(src, "Agent-generated")}
+      aria-label={t("chat.openImage")}
+      title={t("chat.agentGeneratedImage")}
+      onClick={() => useUiStore.getState().openImagePreview(src, t("chat.agentGenerated"))}
       className="cursor-zoom-in"
     >
       <img
         src={src}
-        alt="Agent-generated"
+        alt={t("chat.agentGenerated")}
         className="max-h-64 rounded-(--radius-md) border border-border-subtle"
       />
     </button>
@@ -812,10 +959,11 @@ function PlanStatusIcon({ status }: { status: PlanEntry["status"] }) {
 }
 
 function PlanCard({ entries }: { entries: PlanEntry[] }) {
+  const t = useT();
   return (
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface">
       <div className="border-b border-border-subtle px-3 py-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        Plan
+        {t("chat.plan")}
       </div>
       <ul className="space-y-1.5 px-3 py-2">
         {entries.map((entry, i) => (
@@ -846,6 +994,7 @@ function keyHint(kind: string): string | null {
 }
 
 function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRequest }) {
+  const t = useT();
   const [sent, setSent] = useState(false);
   // Show WHO asks and WHERE: an approval is about this agent in this project.
   const instanceId = useRunsStore((s) => {
@@ -874,12 +1023,12 @@ function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRe
   return (
     <div className="overflow-hidden rounded-(--radius-md) border border-warning">
       <div className="bg-warning/10 px-3 py-1.5 text-xs font-semibold tracking-wider text-warning uppercase">
-        Approval needed
+        {t("chat.approvalNeeded")}
       </div>
       <div className="space-y-2.5 px-3 py-2.5">
         <p className="text-sm text-text-primary">{approval.title}</p>
         <p className="text-xs text-text-tertiary">
-          {providerName ?? instanceId ?? "Agent"}
+          {providerName ?? instanceId ?? t("chat.agent")}
           {workspace ? ` · ${workspace}` : ""}
         </p>
         <div className="flex flex-wrap gap-2">
@@ -899,19 +1048,17 @@ function ApprovalCard({ runId, approval }: { runId: string; approval: ApprovalRe
             >
               {option.name}
               {option.kind === "allow_always" && (
-                <span className="ml-1 text-xs opacity-70">· this agent &amp; project</span>
+                <span className="ml-1 text-xs opacity-70">· {t("chat.allowAlwaysScope")}</span>
               )}
               <span className="ml-1 text-xs opacity-60">{keyHint(option.kind)}</span>
             </Button>
           ))}
           <Button size="sm" variant="ghost" onClick={() => respond(null)} disabled={sent}>
-            Cancel
+            {t("composer.approval.cancel")}
           </Button>
         </div>
         {approval.options.some((option) => option.kind === "allow_always") && (
-          <p className="text-xs text-text-tertiary">
-            “Always” remembers this agent &amp; project only — revoke it in Settings ▸ General.
-          </p>
+          <p className="text-xs text-text-tertiary">{t("chat.approvalAlwaysScope")}</p>
         )}
       </div>
     </div>
@@ -928,6 +1075,7 @@ function CrashBanner({
   onRetry?: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const t = useT();
   const copyDiagnostics = () => {
     const text = `pult run failed\n${new Date().toISOString()}\n${detail}`;
     navigator.clipboard
@@ -942,7 +1090,7 @@ function CrashBanner({
     <div className="overflow-hidden rounded-(--radius-md) border border-danger">
       <div className="flex items-center gap-2 bg-danger/10 px-3 py-1.5 text-xs font-semibold tracking-wider text-danger uppercase">
         <TriangleAlert size={12} />
-        Run crashed
+        {t("chat.runCrashed")}
       </div>
       <div className="space-y-2 px-3 py-2.5">
         <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs whitespace-pre-wrap text-text-secondary">
@@ -952,12 +1100,12 @@ function CrashBanner({
           {onRetry && retryText && (
             <Button size="sm" variant="secondary" onClick={onRetry}>
               <RotateCcw size={12} />
-              Retry last message
+              {t("chat.retryLastMessage")}
             </Button>
           )}
           <Button size="sm" variant="secondary" onClick={copyDiagnostics}>
             {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? "Copied" : "Copy diagnostics"}
+            {copied ? t("chat.copied") : t("chat.error.copyDiagnostics")}
           </Button>
         </div>
       </div>
@@ -970,17 +1118,17 @@ function retryLastMessage(threadId: string, text: string): void {
   const instanceId = useUiStore.getState().selectedInstanceId;
   if (!instanceId) return;
   runsDispatch(threadId, text, instanceId, []).catch((err) =>
-    useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
+    useUiStore.getState().setGlobalError({ kind: "protocol", message: localizeIpcError(err) }),
   );
 }
 
 function FinishDivider({ stopReason }: { stopReason: string }) {
+  const t = useT();
+  const key = STOP_REASON_KEYS[stopReason];
   return (
     <div className="flex items-center gap-3 py-1">
       <div className="h-px flex-1 bg-border-subtle" />
-      <span className="text-xs text-text-tertiary">
-        {STOP_REASON_LABELS[stopReason] ?? stopReason}
-      </span>
+      <span className="text-xs text-text-tertiary">{key ? t(key) : stopReason}</span>
       <div className="h-px flex-1 bg-border-subtle" />
     </div>
   );

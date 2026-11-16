@@ -2,6 +2,7 @@
 name = "pult-core"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 description = "pult — local-first Agent Development Environment over ACP (Rust core)"
 
 [lib]
@@ -18,7 +19,7 @@ codegen-units = 1
 
 [dependencies]
 similar = "2"
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["unstable"] }
 tauri-plugin-notification = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"

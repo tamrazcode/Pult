@@ -22,16 +22,27 @@ import type {
   SessionMode,
 } from "../../lib/types";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
-import {
-  PERMISSION_MODE_DESCRIPTIONS,
-  PERMISSION_MODE_LABELS,
-  useSettingsStore,
-} from "../../stores/settings";
+import { useSettingsStore } from "../../stores/settings";
 import type { PermissionMode } from "../../stores/settings";
+import { useT } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
 import { ProviderLogo } from "./ProviderLogo";
 
 const MODES: PermissionMode[] = ["supervised", "auto_edit", "auto", "full_access"];
+
+const PERMISSION_MODE_LABEL_KEYS: Record<PermissionMode, string> = {
+  supervised: "composer.permission.supervised",
+  auto_edit: "composer.permission.autoEdit",
+  auto: "composer.permission.auto",
+  full_access: "composer.permission.fullAccess",
+};
+
+const PERMISSION_MODE_DESCRIPTION_KEYS: Record<PermissionMode, string> = {
+  supervised: "composer.permission.supervised.desc",
+  auto_edit: "composer.permission.autoEdit.desc",
+  auto: "composer.permission.auto.desc",
+  full_access: "composer.permission.fullAccess.desc",
+};
 
 /**
  * The picker shows the remembered pick for the next run; a live run's own
@@ -325,6 +336,7 @@ function BooleanOptionPill({
  * the T3 shape: logo, model name, muted reasoning, chevron.
  */
 export function ProviderModelPicker({ threadId }: { threadId?: string }) {
+  const t = useT();
   const {
     instances,
     instance: selected,
@@ -377,12 +389,13 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const modelLabel = modelOption
     ? (flattenSelectOptions(modelOption.options).find((item) => item.value === modelValue)?.name ??
       modelValue ??
-      "Model")
-    : (selected?.displayName ?? "Model");
+      t("composer.model"))
+    : (selected?.displayName ?? t("composer.model"));
   const reasoningLabel = reasoningOptions[0]
     ? reasoningLabelFor(
         reasoningOptions[0],
         pickerConfigValue(reasoningOptions[0], activeRun, liveOptions, desired),
+        t,
       )
     : null;
 
@@ -403,7 +416,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   };
 
   const providers = instances.filter((inst) => inst.enabled || inst.id === selected?.id);
-  const ariaLabel = `${selected?.displayName ?? "No agent"} · ${modelLabel}${reasoningLabel ? ` · ${reasoningLabel}` : ""}`;
+  const ariaLabel = `${selected?.displayName ?? t("composer.noAgentShort")} · ${modelLabel}${reasoningLabel ? ` · ${reasoningLabel}` : ""}`;
   const favoriteModels = useSettingsStore((s) => s.favoriteModels);
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel);
   const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
@@ -416,7 +429,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     <div ref={rootRef} className="relative min-w-0">
       <button
         type="button"
-        title="Provider, model, and reasoning"
+        title={t("composer.providerModelReasoning")}
         aria-label={ariaLabel}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -439,7 +452,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
           <div
             data-composer-submenu
             role="dialog"
-            aria-label="Provider, model, and reasoning"
+            aria-label={t("composer.providerModelReasoning")}
             onKeyDown={(event) => {
               if (!modelOption || !(event.ctrlKey || event.metaKey)) return;
               const index = Number(event.key) - 1;
@@ -451,11 +464,11 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             className="absolute right-0 bottom-full z-50 mb-2 w-80 overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised shadow-(--shadow-composer)"
           >
             <div className="border-b border-border-subtle px-2 py-1.5">
-              <p className="sr-only">Provider</p>
+              <p className="sr-only">{t("composer.provider")}</p>
               <div className="flex items-center gap-1">
                 {providers.length === 0 ? (
                   <p className="px-1 py-1 text-xs text-text-tertiary">
-                    No agent instances detected
+                    {t("composer.noInstances")}
                   </p>
                 ) : (
                   providers.map((inst) => (
@@ -479,8 +492,8 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                 <span className="flex-1" />
                 <button
                   type="button"
-                  aria-label="Add provider"
-                  title="Add provider"
+                  aria-label={t("composer.addProvider")}
+                  title={t("composer.addProvider")}
                   onClick={() => {
                     setOpen(false);
                     void router.navigate({ to: "/settings/providers" });
@@ -494,7 +507,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
 
             {modelOption && modelItems.length > 0 && (
               <div className="relative border-b border-border-subtle px-2 py-1.5">
-                <p className="sr-only">Model</p>
+                <p className="sr-only">{t("composer.model")}</p>
                 <Search
                   size={12}
                   className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-text-tertiary"
@@ -502,8 +515,8 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                 <input
                   value={modelQuery}
                   onChange={(event) => setModelQuery(event.target.value)}
-                  placeholder="Search models…"
-                  aria-label="Search models"
+                  placeholder={t("composer.searchModels")}
+                  aria-label={t("composer.searchModelsLabel")}
                   className="h-7 w-full rounded-(--radius-sm) border border-border-subtle bg-surface pr-2 pl-6 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
                 />
               </div>
@@ -512,7 +525,9 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             <div className="py-1">
               {modelOption ? (
                 visibleModels.length === 0 ? (
-                  <p className="px-3 py-2 text-xs text-text-tertiary">No models match</p>
+                  <p className="px-3 py-2 text-xs text-text-tertiary">
+                    {t("composer.noModelsMatch")}
+                  </p>
                 ) : (
                   visibleModels.map((item, index) => {
                     const active = item.value === modelValue;
@@ -538,8 +553,14 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                         )}
                         <button
                           type="button"
-                          aria-label={favorite ? "Unfavorite model" : "Favorite model"}
-                          title={favorite ? `Unfavorite ${item.name}` : `Favorite ${item.name}`}
+                          aria-label={
+                            favorite ? t("composer.unfavoriteModel") : t("composer.favoriteModel")
+                          }
+                          title={
+                            favorite
+                              ? t("composer.unfavoriteModelTitle", { name: item.name })
+                              : t("composer.favoriteModelTitle", { name: item.name })
+                          }
                           onClick={() => selected && toggleFavoriteModel(selected.id, item.value)}
                           className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-active ${
                             favorite ? "text-warning" : "text-text-tertiary"
@@ -553,21 +574,21 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                 )
               ) : (
                 <p className="px-3 py-2 text-xs text-text-tertiary">
-                  Default model (provider-managed)
+                  {t("composer.defaultModelManaged")}
                 </p>
               )}
             </div>
 
             {reasoningOptions.length > 0 && (
               <section className="border-t border-border-subtle px-3 py-2">
-                <p className="sr-only">Reasoning</p>
+                <p className="sr-only">{t("composer.reasoning")}</p>
                 {reasoningOptions.map((option) => {
                   const value = pickerConfigValue(option, activeRun, liveOptions, desired);
                   const values =
                     option.type === "boolean"
                       ? [
-                          { value: false as ConfigOptionValue, name: "Off" },
-                          { value: true as ConfigOptionValue, name: "On" },
+                          { value: false as ConfigOptionValue, name: t("composer.off") },
+                          { value: true as ConfigOptionValue, name: t("composer.on") },
                         ]
                       : flattenSelectOptions(option.options).map((item) => ({
                           value: item.value as ConfigOptionValue,
@@ -576,7 +597,9 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                   return (
                     <div key={option.id} className="pb-1">
                       <div className="flex items-center justify-between pb-2">
-                        <span className="text-xs text-text-tertiary">Select effort</span>
+                        <span className="text-xs text-text-tertiary">
+                          {t("composer.selectEffort")}
+                        </span>
                       </div>
                       <div
                         role="radiogroup"
@@ -623,7 +646,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
               }}
               className="flex w-full items-center gap-2 border-t border-border-subtle px-3 py-2 text-left text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              Manage providers…
+              {t("composer.manageProviders")}
             </button>
           </div>
         </>
@@ -632,14 +655,19 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   );
 }
 
-function reasoningLabelFor(option: SessionConfigOption, value: ConfigOptionValue): string {
-  if (option.type === "boolean") return value ? "On" : "Off";
+function reasoningLabelFor(
+  option: SessionConfigOption,
+  value: ConfigOptionValue,
+  t: (key: string) => string,
+): string {
+  if (option.type === "boolean") return value ? t("composer.on") : t("composer.off");
   return (
     flattenSelectOptions(option.options).find((item) => item.value === value)?.name ?? String(value)
   );
 }
 
 export function AgentModePicker({ threadId }: { threadId?: string }) {
+  const t = useT();
   const instances = useUiStore((s) => s.instances);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const [open, setOpen] = useState(false);
@@ -685,12 +713,14 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
   return (
     <div className="relative">
       <button
-        title="Session mode — how this agent approaches the work"
+        title={t("composer.sessionModeTitle")}
         onClick={() => setOpen((o) => !o)}
         className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
       >
         <Layers size={12} className="shrink-0 text-text-tertiary" />
-        <span className="max-w-[120px] truncate">{current?.name ?? current?.id ?? "mode"}</span>
+        <span className="max-w-[120px] truncate">
+          {current?.name ?? current?.id ?? t("composer.modeFallback")}
+        </span>
         <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
       </button>
       {open && (
@@ -700,7 +730,9 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
             data-composer-submenu
             className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
           >
-            <p className="px-3 py-1.5 text-xs text-text-tertiary">Agent session modes</p>
+            <p className="px-3 py-1.5 text-xs text-text-tertiary">
+              {t("composer.agentSessionModes")}
+            </p>
             {modes.map((mode) => (
               <button
                 key={mode.id}
@@ -729,6 +761,7 @@ export function AgentModePicker({ threadId }: { threadId?: string }) {
 }
 
 export function ModePill({ threadId }: { threadId?: string }) {
+  const t = useT();
   const permissionMode = useSettingsStore((s) => s.permissionMode);
   const setPermissionMode = useSettingsStore((s) => s.setPermissionMode);
   const [open, setOpen] = useState(false);
@@ -755,13 +788,15 @@ export function ModePill({ threadId }: { threadId?: string }) {
   return (
     <div className="relative">
       <button
-        title="Permission mode — how freely this agent may act"
-        aria-label="Permission mode"
+        title={t("composer.permissionModeTitle")}
+        aria-label={t("composer.permission")}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
+        className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
       >
         <ShieldCheck size={12} className="shrink-0 text-text-tertiary" />
-        <span className="max-w-[140px] truncate">{PERMISSION_MODE_LABELS[permissionMode]}</span>
+        <span className="max-w-[140px] truncate">
+          {t(PERMISSION_MODE_LABEL_KEYS[permissionMode])}
+        </span>
         <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
       </button>
       {open && (
@@ -771,7 +806,9 @@ export function ModePill({ threadId }: { threadId?: string }) {
             data-composer-submenu
             className="absolute bottom-full right-0 z-50 mb-1 w-56 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
           >
-            <p className="px-3 py-1.5 text-xs text-text-tertiary">How freely agents may act here</p>
+            <p className="px-3 py-1.5 text-xs text-text-tertiary">
+              {t("composer.permissionMenuTitle")}
+            </p>
             {MODES.map((mode) => (
               <button
                 key={mode}
@@ -780,13 +817,13 @@ export function ModePill({ threadId }: { threadId?: string }) {
               >
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-2 text-sm text-text-secondary">
-                    {PERMISSION_MODE_LABELS[mode]}
+                    {t(PERMISSION_MODE_LABEL_KEYS[mode])}
                     {mode === permissionMode && (
                       <Check size={12} className="shrink-0 text-accent" />
                     )}
                   </span>
                   <span className="mt-0.5 block text-xs leading-snug text-text-tertiary">
-                    {PERMISSION_MODE_DESCRIPTIONS[mode]}
+                    {t(PERMISSION_MODE_DESCRIPTION_KEYS[mode])}
                   </span>
                 </span>
               </button>

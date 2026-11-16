@@ -180,7 +180,7 @@ pub fn projects_create(
 ) -> Result<ProjectRecord, PultError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(PultError::internal("project name must not be empty"));
+        return Err(PultError::with_code("project.empty_name", "project name must not be empty"));
     }
     let path = std::path::PathBuf::from(root_path.trim());
     if !path.is_absolute() || !path.is_dir() {
@@ -228,7 +228,7 @@ pub fn projects_update(
 ) -> Result<ProjectRecord, PultError> {
     if let Some(name) = name.as_deref() {
         if name.trim().is_empty() {
-            return Err(PultError::internal("project name must not be empty"));
+            return Err(PultError::with_code("project.empty_name", "project name must not be empty"));
         }
     }
     if let Some(strategy) = worktree_strategy.as_deref() {
@@ -587,7 +587,7 @@ pub fn runs_queue_update(
 ) -> Result<(), PultError> {
     let text = text.trim().to_string();
     if text.is_empty() {
-        return Err(PultError::internal("queue message cannot be empty"));
+        return Err(PultError::with_code("queue.empty_message", "queue message cannot be empty"));
     }
     runtime.store().update_queue_item_text(&queue_id, &text)?;
     runtime.emit_queue_updated(&thread_id);
@@ -1005,10 +1005,10 @@ use _UnusedImport as _;
 pub fn validate_external_url(url: &str) -> Result<(), PultError> {
     let trimmed = url.trim();
     if trimmed.is_empty() {
-        return Err(PultError::internal("empty URL"));
+        return Err(PultError::with_code("url.empty", "empty URL"));
     }
     if trimmed.len() > 2048 {
-        return Err(PultError::internal("URL is too long"));
+        return Err(PultError::with_code("url.too_long", "URL is too long"));
     }
     if trimmed.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'') {
         return Err(PultError::internal(
@@ -1027,7 +1027,7 @@ pub fn validate_external_url(url: &str) -> Result<(), PultError> {
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or("");
     if host.is_empty() || host.starts_with(':') {
-        return Err(PultError::internal("URL has no host"));
+        return Err(PultError::with_code("url.no_host", "URL has no host"));
     }
     Ok(())
 }
@@ -1070,10 +1070,10 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
 pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultError> {
     let raw = path.trim();
     if raw.is_empty() {
-        return Err(PultError::internal("empty editor path"));
+        return Err(PultError::with_code("editor.empty_path", "empty editor path"));
     }
     if raw.starts_with("\\\\") || raw.starts_with("//") {
-        return Err(PultError::internal("UNC paths are not allowed"));
+        return Err(PultError::with_code("editor.unc_blocked", "UNC paths are not allowed"));
     }
     let target = std::path::Path::new(raw)
         .canonicalize()
@@ -1314,24 +1314,24 @@ pub async fn workspace_read_text(
             .map_err(|e| PultError::internal(format!("workspace: {e}")))?;
         if path.starts_with("\\\\") || path.starts_with("//") || std::path::Path::new(&path).is_absolute()
         {
-            return Err(PultError::internal("path escapes workspace"));
+            return Err(PultError::with_code("workspace.path_escapes", "path escapes workspace"));
         }
         let target = base.join(&path);
         let target = target
             .canonicalize()
             .map_err(|e| PultError::internal(format!("file not found: {e}")))?;
         if !target.starts_with(&base) || !target.is_file() {
-            return Err(PultError::internal("path escapes workspace"));
+            return Err(PultError::with_code("workspace.path_escapes", "path escapes workspace"));
         }
         let meta = std::fs::metadata(&target)
             .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
         if meta.len() > 512 * 1024 {
-            return Err(PultError::internal("file is too large to preview (max 512 KB)"));
+            return Err(PultError::with_code("file.too_large", "file is too large to preview (max 512 KB)"));
         }
         let bytes = std::fs::read(&target)
             .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
         if bytes.contains(&0) {
-            return Err(PultError::internal("binary file cannot be previewed as text"));
+            return Err(PultError::with_code("file.binary", "binary file cannot be previewed as text"));
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     })
@@ -1485,15 +1485,15 @@ pub async fn providers_update_install(
     let instance = instances
         .iter()
         .find(|instance| instance.id == instance_id)
-        .ok_or_else(|| PultError::internal("unknown instance"))?
+        .ok_or_else(|| PultError::with_code("provider.unknown", "unknown instance"))?
         .clone();
     tokio::task::spawn_blocking(move || {
         let kind = update_kind(&instance)
-            .ok_or_else(|| PultError::internal("this provider is managed externally"))?;
+            .ok_or_else(|| PultError::with_code("provider.managed_externally", "this provider is managed externally"))?;
         let args: &[&str] = match kind {
             "codex" => &["update"],
             "opencode" => &["upgrade"],
-            _ => return Err(PultError::internal("this provider is managed externally")),
+            _ => return Err(PultError::with_code("provider.managed_externally", "this provider is managed externally")),
         };
         let output = run_cli(kind, args).map_err(PultError::internal)?;
         if !output.status.success() {
@@ -1519,7 +1519,7 @@ pub struct BrowserTarget {
 fn validate_browser_target(target: &str) -> Result<BrowserTarget, PultError> {
     let trimmed = target.trim();
     if trimmed.is_empty() {
-        return Err(PultError::internal("empty browser target"));
+        return Err(PultError::with_code("url.empty", "empty browser target"));
     }
     let lower = trimmed.to_ascii_lowercase();
     if lower.starts_with("http://") || lower.starts_with("https://") {
@@ -1657,7 +1657,7 @@ pub async fn read_image_data_url(
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         // Never touch UNC paths: canonicalize would open an SMB connection.
         if path.starts_with("\\\\") || path.starts_with("//") {
-            return Err(PultError::internal("network image paths are not allowed"));
+            return Err(PultError::with_code("image.unc_blocked", "network image paths are not allowed"));
         }
         let canonical = std::path::PathBuf::from(&path)
             .canonicalize()
@@ -1674,7 +1674,7 @@ pub async fn read_image_data_url(
         let meta = std::fs::metadata(&canonical)
             .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
         if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
-            return Err(PultError::internal("image must be a file up to 8 MB"));
+            return Err(PultError::with_code("image.too_large", "image must be a file up to 8 MB"));
         }
         let mime = match canonical
             .extension()
@@ -1686,7 +1686,7 @@ pub async fn read_image_data_url(
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("gif") => "image/gif",
             Some("webp") => "image/webp",
-            _ => return Err(PultError::internal("unsupported image type")),
+            _ => return Err(PultError::with_code("image.unsupported_type", "unsupported image type")),
         };
         let bytes = std::fs::read(&canonical)
             .map_err(|e| PultError::internal(format!("image read failed: {e}")))?;

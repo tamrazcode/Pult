@@ -43,7 +43,7 @@ export function buildSidebarGroups(
   opts: { query: string; filter: SidebarFilter; unreadIds: Set<string> },
 ): SidebarGroup[] {
   const query = opts.query.trim().toLowerCase();
-  const matches = (thread: Thread): boolean => {
+  const passesFilter = (thread: Thread): boolean => {
     if (opts.filter === "archived") {
       if (thread.status !== "archived") return false;
     } else if (thread.status === "archived") {
@@ -54,20 +54,37 @@ export function buildSidebarGroups(
     if (opts.filter === "working" && thread.status !== "working" && thread.status !== "waiting") {
       return false;
     }
-    return query === "" || thread.title.toLowerCase().includes(query);
+    return true;
   };
 
-  const visible = threads.filter(matches);
   const orderedProjects = [...projects].sort(
     (a, b) => Number(b.pinned) - Number(a.pinned) || a.name.localeCompare(b.name),
   );
-  const groups: SidebarGroup[] = orderedProjects.map((project) => ({
-    project,
-    threads: sortGroupThreads(visible.filter((thread) => thread.projectId === project.id)),
-  }));
+  const groups: SidebarGroup[] = orderedProjects.map((project) => {
+    // A matching project name reveals all of its threads that pass the filter;
+    // a matching thread title reveals just that thread.
+    const projectMatched = query === "" || project.name.toLowerCase().includes(query);
+    const projectThreads = threads
+      .filter((thread) => thread.projectId === project.id)
+      .filter(passesFilter)
+      .filter(
+        (thread) => query === "" || projectMatched || thread.title.toLowerCase().includes(query),
+      );
+    return { project, threads: sortGroupThreads(projectThreads) };
+  });
   const keepEmptyProjects = opts.filter === "all" && query === "";
-  const shown = keepEmptyProjects ? groups : groups.filter((group) => group.threads.length > 0);
-  const orphans = sortGroupThreads(visible.filter((thread) => thread.projectId === null));
+  const shown = groups.filter(
+    (group) =>
+      keepEmptyProjects ||
+      group.threads.length > 0 ||
+      (query !== "" && group.project!.name.toLowerCase().includes(query)),
+  );
+  const orphans = sortGroupThreads(
+    threads
+      .filter((thread) => thread.projectId === null)
+      .filter(passesFilter)
+      .filter((thread) => query === "" || thread.title.toLowerCase().includes(query)),
+  );
   if (orphans.length > 0) shown.push({ project: null, threads: orphans });
   return shown;
 }

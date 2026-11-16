@@ -1,9 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useSettingsStore } from "../stores/settings";
+import { useT } from "../lib/i18n";
 
 export const Route = createFileRoute("/settings/chat")({ component: ChatSettings });
 
 function ChatSettings() {
+  const t = useT();
   const sendKey = useSettingsStore((s) => s.sendKey);
   const setSendKey = useSettingsStore((s) => s.setSendKey);
   const followStreaming = useSettingsStore((s) => s.followStreaming);
@@ -13,15 +15,13 @@ function ChatSettings() {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <h2 className="text-lg font-medium text-text-primary">Chat</h2>
-      <p className="mt-1 text-sm text-text-tertiary">
-        Composer behaviour and how the transcript streams.
-      </p>
+      <h2 className="text-lg font-medium text-text-primary">{t("settings.chat.title")}</h2>
+      <p className="mt-1 text-sm text-text-tertiary">{t("settings.chat.subtitle")}</p>
 
       <h3 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-        Send message with
+        {t("settings.chat.sendWith")}
       </h3>
-      <div role="radiogroup" aria-label="Send message with" className="mt-2 flex gap-1.5">
+      <div role="radiogroup" aria-label={t("settings.chat.sendWith")} className="mt-2 flex gap-1.5">
         {(
           [
             ["enter", "Enter"],
@@ -44,23 +44,19 @@ function ChatSettings() {
           </button>
         ))}
       </div>
-      <p className="mt-1 text-xs text-text-tertiary">
-        The other combination always inserts a newline.
-      </p>
+      <p className="mt-1 text-xs text-text-tertiary">{t("settings.chat.sendWithHint")}</p>
 
       <div className="mt-6 divide-y divide-border-subtle border-y border-border-subtle">
         <div className="flex items-center gap-4 py-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-text-primary">Follow streaming output</p>
-            <p className="mt-0.5 text-xs text-text-tertiary">
-              Keep the transcript pinned to the bottom while the agent writes.
-            </p>
+            <p className="text-sm text-text-primary">{t("settings.chat.follow")}</p>
+            <p className="mt-0.5 text-xs text-text-tertiary">{t("settings.chat.followDesc")}</p>
           </div>
           <button
             type="button"
             role="switch"
             aria-checked={followStreaming}
-            aria-label="Follow streaming output"
+            aria-label={t("settings.chat.follow")}
             onClick={() => setFollowStreaming(!followStreaming)}
             className={`relative h-5 w-9 shrink-0 rounded-full border transition ${
               followStreaming ? "border-accent bg-accent" : "border-border-strong bg-surface"
@@ -75,16 +71,14 @@ function ChatSettings() {
         </div>
         <div className="flex items-center gap-4 py-3">
           <div className="min-w-0 flex-1">
-            <p className="text-sm text-text-primary">Show message timestamps</p>
-            <p className="mt-0.5 text-xs text-text-tertiary">
-              The send time appears beside the copy and branch actions on hover.
-            </p>
+            <p className="text-sm text-text-primary">{t("settings.chat.timestamps")}</p>
+            <p className="mt-0.5 text-xs text-text-tertiary">{t("settings.chat.timestampsDesc")}</p>
           </div>
           <button
             type="button"
             role="switch"
             aria-checked={showTimestamps}
-            aria-label="Show message timestamps"
+            aria-label={t("settings.chat.timestamps")}
             onClick={() => setShowTimestamps(!showTimestamps)}
             className={`relative h-5 w-9 shrink-0 rounded-full border transition ${
               showTimestamps ? "border-accent bg-accent" : "border-border-strong bg-surface"

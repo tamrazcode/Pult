@@ -5,10 +5,12 @@ import { CreateProjectDialog } from "../components/projects/CreateProjectDialog"
 import { ProjectSettingsDialog } from "../components/projects/ProjectSettingsDialog";
 import { projectInitials, projectMonogram } from "../lib/projectColor";
 import { useProjectsStore } from "../stores/projects";
+import { useT } from "../lib/i18n";
 
 export const Route = createFileRoute("/settings/projects")({ component: ProjectsSettings });
 
 function ProjectsSettings() {
+  const t = useT();
   const projects = useProjectsStore((s) => s.projects);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -17,23 +19,21 @@ function ProjectsSettings() {
     <div className="mx-auto max-w-2xl">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h2 className="text-lg font-medium text-text-primary">Projects</h2>
-          <p className="mt-1 text-sm text-text-tertiary">
-            Folders pult can work in, with their worktree strategy.
-          </p>
+          <h2 className="text-lg font-medium text-text-primary">{t("settings.projects.title")}</h2>
+          <p className="mt-1 text-sm text-text-tertiary">{t("settings.projects.subtitle")}</p>
         </div>
         <button
           type="button"
           onClick={() => setCreating(true)}
           className="flex h-8 items-center gap-1.5 rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
         >
-          <Plus size={13} /> New project
+          <Plus size={13} /> {t("settings.projects.new")}
         </button>
       </div>
 
       <div className="mt-4 divide-y divide-border-subtle border-y border-border-subtle">
         {projects.length === 0 && (
-          <p className="py-6 text-sm text-text-tertiary">No projects yet.</p>
+          <p className="py-6 text-sm text-text-tertiary">{t("settings.projects.empty")}</p>
         )}
         {projects.map((project) => {
           const monogram = projectMonogram(project.color);
@@ -56,11 +56,13 @@ function ProjectsSettings() {
                 <p className="truncate font-mono text-xs text-text-tertiary">{project.rootPath}</p>
               </div>
               <span className="shrink-0 text-xs text-text-tertiary">
-                {project.worktreeStrategy === "worktree" ? "Worktree" : "Root"}
+                {project.worktreeStrategy === "worktree"
+                  ? t("settings.projects.worktree")
+                  : t("settings.projects.root")}
               </span>
               <button
                 type="button"
-                aria-label={`Edit ${project.name}`}
+                aria-label={t("settings.projects.edit", { name: project.name })}
                 onClick={() => setEditingId(project.id)}
                 className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
               >
