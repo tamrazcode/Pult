@@ -90,21 +90,21 @@
 
 ## T07 — Гейты и ревью
 
-- [ ] `pnpm typecheck`, `pnpm lint`, `pnpm test`, `cargo test --lib`, `cargo clippy --all-targets -D warnings`.
-- [ ] Playwright.
-- [ ] Gemini review дельты; исправить Critical/Important.
-- [ ] Release build + перезапуск приложения.
-- [ ] Обновить TODO/CHANGELOG одной строкой.
+- [x] `pnpm typecheck`, `pnpm lint`, `pnpm test`, `cargo test --lib`, `cargo clippy --all-targets -D warnings`.
+- [x] Playwright.
+- [x] Gemini review дельты; исправить Critical/Important.
+- [x] Release build + перезапуск приложения.
+- [x] Обновить TODO/CHANGELOG одной строкой.
 
 ## T08 — Full access: оранжевый акцент
 
-- [ ] `ComposerControls.tsx` ModePill: при `permissionMode === "full_access"` иконка, текст и стрелка — `text-warning`; в меню выбранная строка получает `bg-warning/10`, оранжевый заголовок и галочку.
-- [ ] Тест: Full access даёт warning-классы на пилюле и выбранной строке.
+- [x] `ComposerControls.tsx` ModePill: при `permissionMode === "full_access"` иконка, текст и стрелка — `text-warning`; в меню выбранная строка получает `bg-warning/10`, оранжевый заголовок и галочку.
+- [x] Тест: Full access даёт warning-классы на пилюле и выбранной строке.
 
 ## T09 — Убрать «…», перенести Options в пикер провайдера
 
-- [ ] Удалить `ComposerOverflowMenu` и кнопку `MoreHorizontal` из `Composer.tsx`.
-- [ ] В `ProviderModelPicker` добавить секции `AgentModePicker` и `ConfigOptionPickers` (без model/reasoning) — туда переезжают Collaboration mode, Fast mode и прочие опции агента.
-- [ ] Fast mode: если у выбранного провайдера есть boolean-опция с `fast` в id/name, показывать рядом с пикером кнопку-молнию (`Zap`), tooltip `composer.fastMode`; клик переключает опцию, включённая — акцентная. Если опции нет — кнопки нет.
-- [ ] i18n: `composer.fastMode` (и подпись секции `composer.options`, если нужна).
-- [ ] Тесты: «…» больше нет; опции видны в пикере; молния появляется только при fast-опции и переключает её.
+- [x] Удалить `ComposerOverflowMenu` и кнопку `MoreHorizontal` из `Composer.tsx`.
+- [x] В `ProviderModelPicker` добавить секции `AgentModePicker` и `ConfigOptionPickers` (без model/reasoning) — туда переезжают Collaboration mode, Fast mode и прочие опции агента.
+- [x] Fast mode: если у выбранного провайдера есть boolean-опция с `fast` в id/name, показывать рядом с пикером кнопку-молнию (`Zap`), tooltip `composer.fastMode`; клик переключает опцию, включённая — акцентная. Если опции нет — кнопки нет.
+- [x] i18n: `composer.fastMode` (и подпись секции `composer.options`, если нужна).
+- [x] Тесты: «…» больше нет; опции видны в пикере; молния появляется только при fast-опции и переключает её.

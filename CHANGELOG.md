@@ -21,10 +21,19 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
   “No project” icon aligns with project badges.
 - **Composer:** permission pill is flat (no surface); workspace radios in project dialogs
   are app-styled; keybindings render `Kbd + Kbd` with visible `+`.
-- **Timeline:** consecutive tools/thoughts/traces collapse into a T3-style summary row
-  (newest action visible, expand for the full chronological list); completed sub-second
-  “Thought for 0s” rows are suppressed; live thinking ticks seconds and switches to
-  minutes; a looping ASCII spinner precedes “Thinking”.
+- **Timeline:** every consecutive tool/thought/trace run now lives in one smart activity
+  row that auto-expands while the agent works, folds away on completion and labels the
+  current action (“Reading file”, “Running command”, …). Expanded details show numbered
+  read excerpts, command output and an **Open diff** action; a slow glow sweeps the active
+  label. Completed sub-second “Thought for 0s” rows are suppressed and the live timer
+  switches to minutes.
+- **Composer:** queued messages attach to the input as a narrower rounded cap (the
+  “Keep typing…” hint is gone); the card gets inner-shadow depth, Send/Queue/Stop a soft
+  gradient, and Stop a filled square. Full access is tinted orange in the pill and menu.
+  The `…` overflow is gone: session modes and agent options move into the provider/model
+  popover, and a provider fast-mode option becomes a lightning toggle.
+- **Welcome:** the living ASCII backdrop leaves a fading trail behind the pointer, breathes
+  slowly while idle, and a click blooms gradually instead of drawing an instant disk.
 - **i18n:** zero-dependency typed catalogs, language picker (English default, Russian,
   German, Spanish, Japanese, Chinese, French), persisted per install, `Intl` date/number
   formatting and localized IPC error codes.
