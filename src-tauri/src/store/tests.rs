@@ -581,7 +581,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 6, "migrations applied through v6");
+    assert_eq!(version, 7, "migrations applied through v7");
     drop(first);
 
     let second = Store::open(&path).unwrap();
@@ -867,7 +867,7 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 6, "migrations v4-v6 should bump user_version to 6");
+    assert_eq!(version, 7, "migrations v4-v7 should bump user_version to 7");
 
     let has_pinned_col: bool = store
         .with_conn(|conn| {

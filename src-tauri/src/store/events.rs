@@ -25,7 +25,14 @@ impl Store {
             match conn.execute(
                 "INSERT INTO events (id, run_id, seq, ts, kind, payload)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![event.id, event.run_id, event.seq as i64, event.ts, kind, payload],
+                params![
+                    event.id,
+                    event.run_id,
+                    event.seq as i64,
+                    event.ts,
+                    kind,
+                    payload
+                ],
             ) {
                 Ok(_) => Ok(()),
                 Err(e) if is_unique_violation(&e) => Err(PultError::store(format!(
@@ -55,7 +62,14 @@ impl Store {
                 tx.execute(
                     "INSERT INTO events (id, run_id, seq, ts, kind, payload)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![event.id, event.run_id, event.seq as i64, event.ts, kind, payload],
+                    params![
+                        event.id,
+                        event.run_id,
+                        event.seq as i64,
+                        event.ts,
+                        kind,
+                        payload
+                    ],
                 )
                 .map_err(|e| {
                     if is_unique_violation(&e) {
@@ -163,8 +177,11 @@ fn split_kind(event: &Event) -> Result<(String, String), PultError> {
         .to_string();
     let payload = serde_json::to_string(value.get("payload").unwrap_or(&serde_json::Value::Null))
         .map_err(|e| {
-            PultError::store(format!("append_event encode payload (id {}): {e}", event.id))
-        })?;
+        PultError::store(format!(
+            "append_event encode payload (id {}): {e}",
+            event.id
+        ))
+    })?;
     Ok((kind, payload))
 }
 

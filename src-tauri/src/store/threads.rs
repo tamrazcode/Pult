@@ -120,7 +120,13 @@ impl Store {
     /// Pinning is list organization, not activity, so it does not bump
     /// `updated_at` (that would reshuffle the recency-ordered list).
     pub fn set_thread_pinned(&self, id: &str, pinned: bool) -> Result<(), PultError> {
-        self.update_thread("set_thread_pinned", "pinned = ?1", i64::from(pinned), id, false)
+        self.update_thread(
+            "set_thread_pinned",
+            "pinned = ?1",
+            i64::from(pinned),
+            id,
+            false,
+        )
     }
 
     /// Deletes the thread. Runs and events cascade via foreign keys; session
@@ -131,10 +137,15 @@ impl Store {
                 .execute("DELETE FROM threads WHERE id = ?1", [id])
                 .map_err(|e| sql("delete_thread delete", e))?;
             if deleted == 0 {
-                return Err(PultError::store(format!("delete_thread: thread not found: {id}")));
+                return Err(PultError::store(format!(
+                    "delete_thread: thread not found: {id}"
+                )));
             }
-            conn.execute("DELETE FROM provider_session_refs WHERE thread_id = ?1", [id])
-                .map_err(|e| sql("delete_thread clear session refs", e))?;
+            conn.execute(
+                "DELETE FROM provider_session_refs WHERE thread_id = ?1",
+                [id],
+            )
+            .map_err(|e| sql("delete_thread clear session refs", e))?;
             Ok(())
         })
     }
@@ -151,7 +162,8 @@ impl Store {
     ) -> Result<(), PultError> {
         self.with_conn(|conn| {
             let updated = if bump_updated_at {
-                let query = format!("UPDATE threads SET {assignment}, updated_at = ?2 WHERE id = ?3");
+                let query =
+                    format!("UPDATE threads SET {assignment}, updated_at = ?2 WHERE id = ?3");
                 conn.execute(&query, params![value, now_millis(), id])
             } else {
                 let query = format!("UPDATE threads SET {assignment} WHERE id = ?2");
@@ -159,7 +171,9 @@ impl Store {
             }
             .map_err(|e| sql(action, e))?;
             if updated == 0 {
-                return Err(PultError::store(format!("{action}: thread not found: {id}")));
+                return Err(PultError::store(format!(
+                    "{action}: thread not found: {id}"
+                )));
             }
             Ok(())
         })

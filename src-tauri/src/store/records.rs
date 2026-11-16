@@ -106,9 +106,7 @@ pub struct QueueItem {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    pub config_options: std::collections::BTreeMap<
-        String,
-        crate::protocol::types::ConfigOptionValue,
-    >,
+    pub config_options:
+        std::collections::BTreeMap<String, crate::protocol::types::ConfigOptionValue>,
     pub created_at: i64,
 }

@@ -6,20 +6,22 @@
 //! `threads` / `runs` / `events` (per-entity methods), and the `Store` handle
 //! itself plus session refs and settings here.
 
-mod events;
+mod custom_mcp;
 mod delegated_tasks;
+mod events;
 mod migrations;
 mod projects;
 mod queue;
 pub mod records;
 mod runs;
-mod threads;
-pub mod usage;
+mod secrets;
 #[cfg(test)]
 mod tests;
+mod threads;
+pub mod usage;
 
-pub use records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
 pub use delegated_tasks::DelegatedTaskUpdate;
+pub use records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -32,6 +34,8 @@ use crate::PultError;
 /// mutex beats a connection pool. `Store` is `Send + Sync` and cheap to share.
 pub struct Store {
     conn: Mutex<Connection>,
+    /// Install key for at-rest secrets, loaded next to the database.
+    secrets: crate::mcp::secrets::Secrets,
 }
 
 impl Store {
@@ -47,21 +51,29 @@ impl Store {
         }
         let conn = Connection::open(path)
             .map_err(|e| PultError::store(format!("open db at {}: {e}", path.display())))?;
-        Self::init(conn)
+        let key_dir = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty());
+        Self::init(conn, crate::mcp::secrets::Secrets::load(key_dir)?)
     }
 
-    /// Unnamed in-memory database (tests, ephemeral use).
+    /// Unnamed in-memory database (tests, ephemeral use). Its secrets use an
+    /// in-memory key: rows vanish with the connection, as they should.
     pub fn open_in_memory() -> Result<Self, PultError> {
         let conn = Connection::open_in_memory()
             .map_err(|e| PultError::store(format!("open in-memory db: {e}")))?;
-        Self::init(conn)
+        Self::init(conn, crate::mcp::secrets::Secrets::ephemeral()?)
     }
 
-    fn init(mut conn: Connection) -> Result<Self, PultError> {
+    fn init(
+        mut conn: Connection,
+        secrets: crate::mcp::secrets::Secrets,
+    ) -> Result<Self, PultError> {
         configure(&conn)?;
         migrations::run(&mut conn)?;
         Ok(Self {
             conn: Mutex::new(conn),
+            secrets,
         })
     }
 

@@ -18,6 +18,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_4,
     migration_5,
     migration_6,
+    migration_7,
 ];
 
 /// Applies every migration newer than the stored `user_version`.
@@ -249,4 +250,19 @@ fn migration_6(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 6: orchestration + MCP", e))
+}
+
+/// Version 7: sealed secret values for custom MCP servers (and later provider
+/// env). Values are AES-GCM ciphertext; the install key lives outside the DB.
+fn migration_7(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE app_secrets (
+            key TEXT PRIMARY KEY,
+            value BLOB NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        "#,
+    )
+    .map_err(|e| sql("migration 7: app secrets", e))
 }

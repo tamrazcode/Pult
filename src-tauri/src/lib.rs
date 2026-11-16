@@ -7,6 +7,7 @@ pub mod drivers;
 pub mod events;
 pub mod git;
 pub mod ipc;
+pub mod mcp;
 pub mod orchestrator;
 pub mod plugins;
 pub mod protocol;

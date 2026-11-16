@@ -56,7 +56,9 @@ impl Store {
                 )
                 .map_err(|e| sql("finish_run update", e))?;
             if updated == 0 {
-                return Err(PultError::store(format!("finish_run: run not found: {run_id}")));
+                return Err(PultError::store(format!(
+                    "finish_run: run not found: {run_id}"
+                )));
             }
             Ok(())
         })

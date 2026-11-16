@@ -81,7 +81,10 @@ impl Store {
                 )
                 .map_err(|e| sql("update_queue_item_text update", e))?;
             if changed == 0 {
-                return Err(PultError::with_code("queue.item_not_found", "queue item not found"));
+                return Err(PultError::with_code(
+                    "queue.item_not_found",
+                    "queue item not found",
+                ));
             }
             Ok(())
         })
@@ -104,7 +107,10 @@ impl Store {
                     .iter()
                     .any(|id| !current.contains(id) || !seen.insert(id.as_str()))
             {
-                return Err(PultError::with_code("queue.order_mismatch", "queue order does not match the queue"));
+                return Err(PultError::with_code(
+                    "queue.order_mismatch",
+                    "queue order does not match the queue",
+                ));
             }
 
             conn.execute("BEGIN IMMEDIATE", [])
@@ -125,11 +131,7 @@ impl Store {
     }
 
     /// Moves one item ahead of the rest so auto-dispatch picks it first.
-    pub fn move_queue_item_to_head(
-        &self,
-        thread_id: &str,
-        item_id: &str,
-    ) -> Result<(), PultError> {
+    pub fn move_queue_item_to_head(&self, thread_id: &str, item_id: &str) -> Result<(), PultError> {
         self.with_conn(|conn| {
             let changed = conn
                 .execute(
@@ -143,7 +145,10 @@ impl Store {
                 )
                 .map_err(|e| sql("move_queue_item_to_head update", e))?;
             if changed == 0 {
-                return Err(PultError::with_code("queue.item_not_found", "queue item not found"));
+                return Err(PultError::with_code(
+                    "queue.item_not_found",
+                    "queue item not found",
+                ));
             }
             Ok(())
         })
@@ -311,7 +316,10 @@ fn queue_item_row(row: &Row<'_>) -> rusqlite::Result<QueueItem> {
 /// mirroring `store::events::split_kind` for the transactional insert.
 fn encode_event(event: &Event) -> Result<(String, String), PultError> {
     let value = serde_json::to_value(&event.kind).map_err(|e| {
-        PultError::store(format!("commit_claimed_queue_run encode kind ({}): {e}", event.id))
+        PultError::store(format!(
+            "commit_claimed_queue_run encode kind ({}): {e}",
+            event.id
+        ))
     })?;
     let kind = value["kind"]
         .as_str()
@@ -378,9 +386,15 @@ mod tests {
                 })
                 .unwrap();
         }
-        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
-        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
-        store.enqueue_queue_item(&item("q3", "t2", "other thread", 5)).unwrap();
+        store
+            .enqueue_queue_item(&item("q1", "t1", "first", 10))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q2", "t1", "second", 20))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q3", "t2", "other thread", 5))
+            .unwrap();
 
         let listed = store.list_queue("t1").unwrap();
         assert_eq!(
@@ -422,8 +436,12 @@ mod tests {
                 child_role: None,
             })
             .unwrap();
-        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
-        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
+        store
+            .enqueue_queue_item(&item("q1", "t1", "first", 10))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q2", "t1", "second", 20))
+            .unwrap();
 
         store.update_queue_item_text("q1", "first updated").unwrap();
         let listed = store.list_queue("t1").unwrap();
@@ -458,8 +476,12 @@ mod tests {
                 child_role: None,
             })
             .unwrap();
-        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
-        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
+        store
+            .enqueue_queue_item(&item("q1", "t1", "first", 10))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q2", "t1", "second", 20))
+            .unwrap();
 
         store
             .reorder_queue_items("t1", &["q2".to_string(), "q1".to_string()])
@@ -499,9 +521,15 @@ mod tests {
                 child_role: None,
             })
             .unwrap();
-        store.enqueue_queue_item(&item("q1", "t1", "first", 10)).unwrap();
-        store.enqueue_queue_item(&item("q2", "t1", "second", 20)).unwrap();
-        store.enqueue_queue_item(&item("q3", "t1", "third", 30)).unwrap();
+        store
+            .enqueue_queue_item(&item("q1", "t1", "first", 10))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q2", "t1", "second", 20))
+            .unwrap();
+        store
+            .enqueue_queue_item(&item("q3", "t1", "third", 30))
+            .unwrap();
 
         store.move_queue_item_to_head("t1", "q3").unwrap();
         let listed = store.list_queue("t1").unwrap();
