@@ -384,4 +384,20 @@ describe("Markdown links", () => {
     expect(dialog.querySelector("img")).toHaveAttribute("src", "img.png");
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
+
+  it("passes the active thread id as the second argument to readImageDataUrl for raw and %5C Windows paths", async () => {
+    readImageDataUrl.mockReset().mockResolvedValue("data:image/png;base64,SHOT");
+    useThreadsStore.setState({ activeThreadId: "thread-img" });
+
+    render(
+      <Markdown
+        text={"![raw](C:\\work\\alpha\\raw.png)\n\n![enc](C:%5Cwork%5Calpha%5Cencoded.png)"}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(readImageDataUrl).toHaveBeenCalledWith("C:\\work\\alpha\\raw.png", "thread-img");
+      expect(readImageDataUrl).toHaveBeenCalledWith("C:\\work\\alpha\\encoded.png", "thread-img");
+    });
+  });
 });

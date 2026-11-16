@@ -85,8 +85,12 @@ export function ProjectInfoWidget({ threadId }: { threadId: string }) {
     >
       <button
         type="button"
+        aria-label={t("panels.files.reveal")}
+        title={t("panels.files.reveal")}
         onClick={() =>
-          void openInEditor(workspace).catch((err) => console.error("open_in_editor failed", err))
+          void openInEditor(workspace, "explorer").catch((err) =>
+            console.error("reveal_in_explorer failed", err),
+          )
         }
         className="flex w-full items-center gap-2 px-3 py-2 text-left transition hover:bg-hover"
       >

@@ -215,4 +215,16 @@ describe("queue actions", () => {
 
     await waitFor(() => expect(runsQueueReorder).toHaveBeenCalledWith("th", ["q2", "q1"]));
   });
+
+  it("renders no inline queue textbox while editing a queued message", () => {
+    const { container } = render(<Composer threadId="th" />);
+
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
+
+    expect(screen.getAllByRole("textbox")).toHaveLength(1);
+    const cap = container.querySelector(".rounded-t-\\[18px\\]");
+    expect(cap).not.toBeNull();
+    expect(cap!.querySelectorAll("input, textarea")).toHaveLength(0);
+  });
 });

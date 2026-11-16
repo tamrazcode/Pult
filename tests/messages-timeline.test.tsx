@@ -1121,4 +1121,75 @@ describe("MessagesTimeline", () => {
     expect(screen.getByText(/C:\\work\\alpha/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /this agent & project/i })).toBeInTheDocument();
   });
+
+  it("applies activity-shimmer to WorkingTimer text and active group labels, removing it on completion", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [{ ...run("r1", "running", 0), startedAt: Date.now() - 3_000 }] },
+      viewsByRun: {
+        r1: {
+          items: [{ type: "user", text: "Check shimmer", images: [] }],
+          streaming: true,
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+    const workingSpan = screen.getByText(/Working for \d+s/);
+    expect(workingSpan).toHaveClass("activity-shimmer");
+
+    act(() => {
+      useRunsStore.setState({
+        viewsByRun: {
+          r1: {
+            items: [
+              { type: "user", text: "Check shimmer", images: [] },
+              {
+                type: "tool",
+                toolCallId: "exec-1",
+                title: "Run tests",
+                kind: "execute",
+                status: "in_progress",
+                locations: [],
+              },
+            ],
+            streaming: true,
+          },
+        },
+      });
+    });
+
+    const activeBtn = screen.getByRole("button", { name: /Running command · \d+s/ });
+    const activeLabel = activeBtn.querySelector("span.truncate");
+    expect(activeLabel).not.toBeNull();
+    expect(activeLabel).toHaveClass("activity-shimmer", "truncate");
+    expect(screen.queryByText(/Working for \d+s/)).toBeNull();
+
+    act(() => {
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "finished", 0)] },
+        viewsByRun: {
+          r1: {
+            items: [
+              { type: "user", text: "Check shimmer", images: [] },
+              {
+                type: "tool",
+                toolCallId: "exec-1",
+                title: "Run tests",
+                kind: "execute",
+                status: "completed",
+                locations: [],
+              },
+            ],
+            streaming: false,
+          },
+        },
+      });
+    });
+
+    const doneBtn = screen.getByRole("button", { name: "ran 1 command" });
+    const doneLabel = doneBtn.querySelector("span.truncate");
+    expect(doneLabel).not.toBeNull();
+    expect(doneLabel).not.toHaveClass("activity-shimmer");
+    expect(doneLabel).toHaveClass("text-text-secondary");
+  });
 });

@@ -1340,7 +1340,7 @@ describe("composer", () => {
     const cap = container.querySelector(".rounded-t-\\[18px\\]") as HTMLElement;
     expect(cap).not.toBeNull();
     expect(cap.className).not.toContain("divide-y");
-    expect(cap.className).toContain("backdrop-blur");
+    expect(cap.className).toContain("backdrop-blur-(--composer-blur)");
     expect(cap.className).toContain("pt-1");
     expect(cap.className).toContain("pb-4");
 
@@ -1350,6 +1350,85 @@ describe("composer", () => {
     fireEvent.pointerUp(row, { clientY: 44, pointerId: 1 });
 
     expect(runsQueueReorder).toHaveBeenCalledWith("th", ["q2", "q1"]);
+  });
+
+  it("omits persistent border/bg-surface classes on model trigger and fast bolt, and hides bolt without a fast boolean option", () => {
+    useRunsStore.setState({ runsByThread: {} });
+    useUiStore.setState({
+      selectedInstanceId: "codex",
+      instances: [
+        makeInstance({
+          id: "codex",
+          displayName: "Codex",
+          driver: "codex",
+          command: "codex",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "gpt-5",
+              options: [{ value: "gpt-5", name: "GPT-5" }],
+            },
+            {
+              type: "boolean",
+              id: "fast_mode",
+              name: "Fast mode",
+              category: "other",
+              currentValue: false,
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const trigger = screen.getByRole("button", { name: /Codex/i });
+    const bolt = screen.getByRole("button", { name: "Fast mode" });
+
+    for (const el of [trigger, bolt]) {
+      const classes = el.className.split(/\s+/);
+      expect(classes).not.toContain("border");
+      expect(classes).not.toContain("border-border-subtle");
+      expect(classes).not.toContain("bg-surface");
+    }
+
+    cleanup();
+    useUiStore.setState({
+      selectedInstanceId: "claude",
+      instances: [
+        makeInstance({
+          id: "claude",
+          displayName: "Claude Code",
+          driver: "claude",
+          command: "claude",
+          configOptions: [
+            {
+              type: "select",
+              id: "speed",
+              name: "Fast",
+              category: "other",
+              currentValue: "normal",
+              options: [{ value: "normal", name: "Normal" }],
+            },
+            {
+              type: "boolean",
+              id: "web_search",
+              name: "Web search",
+              category: "other",
+              currentValue: false,
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<ProviderModelPicker threadId="th" />);
+    const claudeTrigger = screen.getByRole("button", { name: /Claude Code/i });
+    expect(claudeTrigger.className.split(/\s+/)).not.toContain("border");
+    expect(claudeTrigger.className.split(/\s+/)).not.toContain("bg-surface");
+    expect(screen.queryByRole("button", { name: "Fast mode" })).toBeNull();
   });
 
   it("shows 'Queue message' button when running run has typed text and 'Stop run' when empty", async () => {

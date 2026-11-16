@@ -192,6 +192,14 @@ describe("Floating ProjectInfoWidget", () => {
     expect(screen.getByRole("button", { name: /Commit & push/i })).toBeInTheDocument();
   });
 
+  it("opens the project folder in Explorer from the widget header", () => {
+    render(<ChatColumn title="Widget thread" threadId="th" />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in File Explorer" }));
+
+    expect(openInEditor).toHaveBeenCalledWith("C:\\work\\alpha", "explorer");
+  });
+
   it("toggles widget independently via header Toggle project info button without changing rightPanelOpen", () => {
     render(<ChatColumn title="Widget thread" threadId="th" />);
 

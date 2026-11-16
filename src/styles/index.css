@@ -69,10 +69,10 @@
    enough contrast at both ends; reduced motion falls back to plain text. */
 @keyframes activity-shimmer {
   from {
-    background-position: 200% 0;
+    background-position: 0% 0;
   }
   to {
-    background-position: -100% 0;
+    background-position: 200% 0;
   }
 }
 .activity-shimmer {
@@ -84,12 +84,13 @@
     var(--text-primary) 62%,
     var(--text-tertiary) 82%
   );
-  background-size: 250% 100%;
+  background-size: 200% 100%;
+  background-repeat: repeat;
   background-clip: text;
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-  animation: activity-shimmer 4.2s ease-in-out infinite;
+  animation: activity-shimmer 4.5s ease-in-out infinite;
 }
 @media (prefers-reduced-motion: reduce) {
   .activity-shimmer {

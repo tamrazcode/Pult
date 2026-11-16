@@ -703,6 +703,33 @@ describe("Sidebar", () => {
 
     expect(statusSpy).toHaveBeenCalledWith("t2", "settled");
   });
+
+  it("uses fade-truncate instead of truncate on project and thread name spans while keeping full accessible titles", () => {
+    const longProjectName = "Very Long Project Workspace Name Alpha";
+    const longThreadTitle = "Investigate long sidebar truncation behavior across panels";
+    useProjectsStore.setState({
+      projects: [makeProject("p-long", longProjectName)],
+    });
+    useThreadsStore.setState({
+      threads: [makeThread("t-long", longThreadTitle, { projectId: "p-long" })],
+    });
+
+    render(<Sidebar width={288} />);
+
+    const projectSpan = screen.getByText(longProjectName);
+    expect(projectSpan.tagName).toBe("SPAN");
+    expect(projectSpan).toHaveClass("fade-truncate");
+    expect(projectSpan).not.toHaveClass("truncate");
+    expect(projectSpan).not.toHaveAttribute("title");
+    expect(screen.getByRole("button", { name: new RegExp(longProjectName) })).toBeInTheDocument();
+
+    const threadSpan = screen.getByText(longThreadTitle);
+    expect(threadSpan.tagName).toBe("SPAN");
+    expect(threadSpan).toHaveClass("fade-truncate");
+    expect(threadSpan).not.toHaveClass("truncate");
+    expect(threadSpan).not.toHaveAttribute("title");
+    expect(screen.getByRole("link", { name: new RegExp(longThreadTitle) })).toBeInTheDocument();
+  });
 });
 
 describe("Sidebar branding", () => {
