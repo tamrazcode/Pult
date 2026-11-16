@@ -478,6 +478,10 @@ async fn threads_delete_inner(
     // Stop a live run and let it release the process before touching the
     // worktree: Windows refuses to remove directories still held open.
     runtime.orchestrator.cancel_subtree(thread_id, true);
+    // Parked child sessions (and their bearers) belong to this tree too.
+    for child in runtime.orchestrator.descendant_thread_ids(thread_id) {
+        runtime.pool.invalidate_thread(&child);
+    }
     if let Some(run_id) = runtime.active_run_for(thread_id) {
         let _ = runtime.cancel(&run_id);
         for _ in 0..40 {

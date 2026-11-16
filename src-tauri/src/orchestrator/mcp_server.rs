@@ -20,7 +20,9 @@ use crate::orchestrator::{
 pub const ORCHESTRATOR_SERVER_NAME: &str = "pult_orchestrator";
 const MAX_BODY: usize = 1024 * 1024;
 const MAX_HEADERS: usize = 16 * 1024;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Reading a request must be prompt; tool execution may legitimately wait
+/// (`wait_tasks` up to 240 s), so it is never wrapped in this timeout.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Bound loopback server. Dropping it stops nothing by itself; the accept loop
 /// lives for the process, like the app-owned orchestrator it serves.
@@ -48,8 +50,7 @@ impl OrchestratorMcpServer {
                 let host = Arc::clone(&host);
                 let registry = Arc::clone(&registry);
                 tokio::spawn(async move {
-                    let _ =
-                        tokio::time::timeout(REQUEST_TIMEOUT, serve(stream, host, registry)).await;
+                    let _ = serve(stream, host, registry).await;
                 });
             }
         });
@@ -71,13 +72,14 @@ async fn serve(
     host: Arc<dyn OrchestratorHost>,
     registry: Arc<McpTokenRegistry>,
 ) -> io::Result<()> {
-    let request = match read_request(&mut stream).await {
-        Ok(Some(request)) => request,
-        Ok(None) => return Ok(()),
-        Err(Failure::TooLarge) => {
+    let request = match tokio::time::timeout(READ_TIMEOUT, read_request(&mut stream)).await {
+        Ok(Ok(Some(request))) => request,
+        Ok(Ok(None)) => return Ok(()),
+        Ok(Err(Failure::TooLarge)) => {
             return respond(&mut stream, 413, "text/plain", b"request too large").await
         }
-        Err(Failure::Io(error)) => return Err(error),
+        Ok(Err(Failure::Io(error))) => return Err(error),
+        Err(_) => return respond(&mut stream, 408, "text/plain", b"request timed out").await,
     };
 
     if request.method != "POST" {
@@ -87,7 +89,7 @@ async fn serve(
         return respond(&mut stream, 404, "text/plain", b"not found").await;
     }
     let Some(scope) = authorized(&request, &registry) else {
-        return respond(&mut stream, 401, "application/json", b"unauthorized").await;
+        return respond(&mut stream, 401, "text/plain", b"unauthorized").await;
     };
 
     let body = String::from_utf8_lossy(&request.body);
@@ -260,7 +262,7 @@ async fn call_tool(
     if !ORCHESTRATOR_TOOL_NAMES.contains(&name) {
         return rpc_error(id, -32602, &format!("unknown tool: {name}"));
     }
-    if !scope.can_orchestrate {
+    if !is_read_only_tool(name) && !scope.can_orchestrate {
         return rpc_error(id, -32003, "orchestration is not allowed for this thread");
     }
     let arguments = params
@@ -331,6 +333,7 @@ async fn respond(
         401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        408 => "Request Timeout",
         413 => "Payload Too Large",
         _ => "Error",
     };

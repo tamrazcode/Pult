@@ -2149,6 +2149,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     crate::PultError::Internal { code, .. } if code == "auth_required"
                 );
                 conn.kill();
+                // The session never opened: its bearer and terminals must die
+                // with the attempt, not linger until app shutdown.
+                runtime.mcp_registry.revoke(&owner_token);
                 if died {
                     emit_process("crashed", Some(err.to_string()));
                 } else if !auth_required {
@@ -2336,6 +2339,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     match payload {
                         AnswerPayload::Permission { option_id } => {
                             if let Some(pending) = pending_permissions.remove(&request_id) {
+                                runtime
+                                    .orchestrator
+                                    .mark_child_status(&thread_id, "running");
                                 let flushed = batcher.push(EventKind::ApprovalResponse {
                                     request_id: request_id.clone(),
                                     option_id: option_id.clone(),
@@ -2365,6 +2371,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         }
                         AnswerPayload::Elicitation { action, content } => {
                             if let Some(pending) = pending_elicitations.remove(&request_id) {
+                                runtime
+                                    .orchestrator
+                                    .mark_child_status(&thread_id, "running");
                                 let _ = conn
                                     .respond_client(
                                         pending.wire_id,
@@ -2447,6 +2456,11 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                 stop_reason = Some("failed".to_string());
                                 break;
                             }
+                            if pending_permissions.contains_key(&request_id_key(&request_id)) {
+                                runtime
+                                    .orchestrator
+                                    .mark_child_status(&thread_id, "waiting_approval");
+                            }
                         }
                         ClientRequest::ReadFile { request_id, params } => {
                             let reply = read_file_sandboxed(&root, &params);
@@ -2474,6 +2488,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                 stop_reason = Some("failed".to_string());
                                 break;
                             }
+                            runtime
+                                .orchestrator
+                                .mark_child_status(&thread_id, "waiting_input");
                         }
                         ClientRequest::TerminalCreate { request_id, params } => {
                             let reply = handle_terminal_create(

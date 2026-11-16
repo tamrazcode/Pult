@@ -194,6 +194,49 @@ impl Store {
         self.list_delegated_tasks(parent_thread_id)
     }
 
+    /// Attaches the run id without clobbering a status the finalizer already
+    /// set (the child may finish before this write lands).
+    pub fn attach_delegated_run(&self, id: &str, child_run_id: &str) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let updated = conn
+                .execute(
+                    "UPDATE delegated_tasks SET
+                        child_run_id = ?1,
+                        status = CASE WHEN status = 'queued' THEN 'running' ELSE status END
+                     WHERE id = ?2",
+                    params![child_run_id, id],
+                )
+                .map_err(|e| sql("delegated_tasks attach run", e))?;
+            if updated == 0 {
+                return Err(PultError::store(format!(
+                    "attach_delegated_run: not found: {id}"
+                )));
+            }
+            Ok(())
+        })
+    }
+
+    /// Re-arms a task for a follow-up run before dispatch; keeps the stale
+    /// child_run_id so a fast failure is still attributed to this task.
+    pub fn begin_delegated_retry(&self, id: &str, started_at: i64) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let updated = conn
+                .execute(
+                    "UPDATE delegated_tasks SET status = 'running', summary = NULL,
+                        error = NULL, finished_at = NULL, started_at = ?1
+                     WHERE id = ?2",
+                    params![started_at, id],
+                )
+                .map_err(|e| sql("delegated_tasks begin retry", e))?;
+            if updated == 0 {
+                return Err(PultError::store(format!(
+                    "begin_delegated_retry: not found: {id}"
+                )));
+            }
+            Ok(())
+        })
+    }
+
     /// Status/finish patch used by the runtime finalizer and the orphan sweep.
     pub fn update_delegated_task_status(
         &self,

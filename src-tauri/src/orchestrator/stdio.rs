@@ -6,7 +6,7 @@ use std::io::{self, BufRead, Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(30);
+const IO_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Returns `Some(exit_code)` when the process was launched as the bridge.
 /// Called before Tauri starts so no window or runtime is created.
@@ -56,7 +56,26 @@ fn run(args: &[String]) -> i32 {
                 }
             }
             Ok(None) => {}
-            Err(error) => eprintln!("pult mcp-stdio: {error}"),
+            Err(error) => {
+                eprintln!("pult mcp-stdio: {error}");
+                // The agent waits for a reply keyed by this id; silence would
+                // hang the turn forever. Return a JSON-RPC error instead.
+                if let Ok(request) = serde_json::from_str::<serde_json::Value>(&line) {
+                    if let Some(id) = request.get("id").cloned().filter(|id| !id.is_null()) {
+                        let reply = serde_json::json!({
+                            "jsonrpc": "2.0",
+                            "id": id,
+                            "error": { "code": -32603, "message": error.to_string() }
+                        });
+                        if writeln!(stdout, "{reply}")
+                            .and_then(|_| stdout.flush())
+                            .is_err()
+                        {
+                            return 1;
+                        }
+                    }
+                }
+            }
         }
     }
     0

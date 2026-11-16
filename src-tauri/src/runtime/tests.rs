@@ -230,9 +230,20 @@ async fn orchestrator_delegates_and_waits_for_a_child_task() {
         .await
         .expect("wait_tasks returns");
     assert_eq!(waited["timedOut"], false);
-    let status = waited["tasks"][0]["status"].as_str().unwrap();
+    let mut status = waited["tasks"][0]["status"].as_str().unwrap().to_string();
+    if matches!(status.as_str(), "waiting_approval" | "waiting_input") {
+        wait_for(Duration::from_secs(30), || {
+            runtime
+                .store
+                .get_delegated_task(&task_id)
+                .map(|task| matches!(task.status.as_str(), "completed" | "failed"))
+                .unwrap_or(false)
+        })
+        .await;
+        status = runtime.store.get_delegated_task(&task_id).unwrap().status;
+    }
     assert!(
-        matches!(status, "completed" | "failed"),
+        matches!(status.as_str(), "completed" | "failed"),
         "unexpected task status {status}"
     );
 

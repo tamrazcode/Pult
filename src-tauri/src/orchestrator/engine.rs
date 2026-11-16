@@ -233,7 +233,7 @@ impl OrchestratorEngine {
             child_run_id: None,
             client_request_id: client_request_id.clone(),
             title: title.clone(),
-            prompt_summary: truncate(&task, 500),
+            prompt_summary: task.clone(),
             role: role.clone(),
             target_instance_id: target_instance_id.clone(),
             target_model: requested_model.clone(),
@@ -281,17 +281,7 @@ impl OrchestratorEngine {
         let dispatched = runtime.dispatch(&child, &task, &[], &target_instance_id);
         match dispatched {
             Ok(run) => {
-                let _ = self.store.update_delegated_task_status(
-                    &record.id,
-                    &crate::store::DelegatedTaskUpdate {
-                        status: "running",
-                        child_run_id: Some(&run.id),
-                        summary: None,
-                        error: None,
-                        usage_json: None,
-                        finished_at: None,
-                    },
-                );
+                let _ = self.store.attach_delegated_run(&record.id, &run.id);
                 if let Ok(updated) = self.store.get_delegated_task(&record.id) {
                     runtime.emit(
                         "subagent:spawned",
@@ -301,6 +291,7 @@ impl OrchestratorEngine {
                             "parentRunId": parent_run_id,
                         }),
                     );
+                    self.arm_timeout(&updated, arguments);
                     return Ok(json!({
                         "task": task_json(&updated),
                         "deduplicated": false
@@ -325,6 +316,29 @@ impl OrchestratorEngine {
                 Err(format!("could not start child run: {message}"))
             }
         }
+    }
+
+    /// A delegated task may carry its own deadline; cancel it when it passes.
+    fn arm_timeout(&self, task: &DelegatedTaskRecord, arguments: &Value) {
+        let Some(seconds) = arguments.get("timeoutSec").and_then(Value::as_u64) else {
+            return;
+        };
+        let Ok(runtime) = self.runtime() else {
+            return;
+        };
+        let engine = Arc::clone(&runtime.orchestrator);
+        let task_id = task.id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(seconds.clamp(30, 3600))).await;
+            let still_active = engine
+                .store
+                .get_delegated_task(&task_id)
+                .map(|current| !task_finished(&current.status))
+                .unwrap_or(false);
+            if still_active {
+                let _ = engine.cancel_task_admin(&task_id, true);
+            }
+        });
     }
 
     fn parent_instance(
@@ -365,11 +379,16 @@ impl OrchestratorEngine {
             .min(MAX_WAIT);
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
+            // Register before reading the DB: a finish between the read and
+            // the wait must not be missed (lost wakeup).
+            let notified = self.waiters.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
             let tasks = self.tasks_for(scope, &requested)?;
             let satisfied = if mode == "all" {
-                !tasks.is_empty() && tasks.iter().all(|task| task_finished(&task.status))
+                !tasks.is_empty() && tasks.iter().all(|task| task_needs_attention(&task.status))
             } else {
-                tasks.iter().any(|task| task_finished(&task.status))
+                tasks.iter().any(|task| task_needs_attention(&task.status))
             };
             if satisfied || tokio::time::Instant::now() >= deadline {
                 return Ok(json!({
@@ -378,7 +397,7 @@ impl OrchestratorEngine {
                 }));
             }
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let _ = tokio::time::timeout(remaining, self.waiters.notified()).await;
+            let _ = tokio::time::timeout(remaining, notified).await;
         }
     }
 
@@ -502,11 +521,32 @@ impl OrchestratorEngine {
             .store
             .get_thread(&task.child_thread_id)
             .map_err(|error| error.to_string())?;
-        let run = runtime
-            .dispatch(&child, &task.prompt_summary, &[], &task.target_instance_id)
-            .map_err(|error| error.to_string())?;
+        // Re-arm first: a run that fails instantly must still be attributed
+        // to this task instead of leaving it stuck on the old status.
         self.store
-            .restart_delegated_task(&task.id, &run.id, now_millis())
+            .begin_delegated_retry(&task.id, now_millis())
+            .map_err(|error| error.to_string())?;
+        let run =
+            match runtime.dispatch(&child, &task.prompt_summary, &[], &task.target_instance_id) {
+                Ok(run) => run,
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = self.store.update_delegated_task_status(
+                        &task.id,
+                        &crate::store::DelegatedTaskUpdate {
+                            status: "failed",
+                            child_run_id: None,
+                            summary: None,
+                            error: Some(&message),
+                            usage_json: None,
+                            finished_at: Some(now_millis()),
+                        },
+                    );
+                    return Err(message);
+                }
+            };
+        self.store
+            .attach_delegated_run(&task.id, &run.id)
             .map_err(|error| error.to_string())?;
         let updated = self
             .store
@@ -601,6 +641,51 @@ impl OrchestratorEngine {
         (!summary.is_empty()).then(|| truncate(summary, 2_000))
     }
 
+    /// Child run reached the human gate (permission or elicitation). The
+    /// parent's `wait_tasks` wakes on this even before the child finishes.
+    pub fn mark_child_status(&self, thread_id: &str, status: &str) {
+        let Ok(Some(task)) = self.store.find_delegated_task_by_child_thread(thread_id) else {
+            return;
+        };
+        if task_finished(&task.status) || task.status == status {
+            return;
+        }
+        let _ = self.store.update_delegated_task_status(
+            &task.id,
+            &crate::store::DelegatedTaskUpdate {
+                status,
+                child_run_id: None,
+                summary: None,
+                error: None,
+                usage_json: None,
+                finished_at: None,
+            },
+        );
+        if let Ok(runtime) = self.runtime() {
+            runtime.emit(
+                "subagent:updated",
+                &json!({ "taskId": task.id, "status": status }),
+            );
+        }
+        self.waiters.notify_waiters();
+    }
+
+    /// All child threads under one parent, recursively (pool cleanup).
+    pub fn descendant_thread_ids(&self, parent_thread_id: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut stack = vec![parent_thread_id.to_string()];
+        while let Some(parent) = stack.pop() {
+            let Ok(tasks) = self.store.list_delegated_tasks(&parent) else {
+                continue;
+            };
+            for task in tasks {
+                out.push(task.child_thread_id.clone());
+                stack.push(task.child_thread_id);
+            }
+        }
+        out
+    }
+
     /// Stop every live child of a thread, recursively. Used by Stop and
     /// thread deletion so no grandchild outlives its parent.
     pub fn cancel_subtree(&self, parent_thread_id: &str, force: bool) {
@@ -665,6 +750,11 @@ fn task_finished(status: &str) -> bool {
         status,
         "completed" | "failed" | "cancelled" | "orphaned" | "interrupted"
     )
+}
+
+/// Statuses that should wake `wait_tasks`: done, or blocked on the human.
+fn task_needs_attention(status: &str) -> bool {
+    task_finished(status) || matches!(status, "waiting_approval" | "waiting_input")
 }
 
 fn string_arg(arguments: &Value, key: &str) -> Result<String, String> {
