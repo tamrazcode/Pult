@@ -40,6 +40,7 @@
   --shadow-composer-lift:
     0 1px 0 rgb(255 255 255 / 8%) inset, 0 22px 40px -18px rgb(0 0 0 / 90%),
     0 6px 14px -8px rgb(0 0 0 / 80%);
+  --shadow-composer-volume: inset 0 2px 8px rgb(0 0 0 / 28%), inset 0 -1px 0 rgb(255 255 255 / 4%);
   --focus-ring: 0 0 0 1px var(--border-strong);
 
   /* fonts (bundled via @fontsource-variable, see main.tsx) */

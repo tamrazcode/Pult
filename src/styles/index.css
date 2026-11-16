@@ -56,26 +56,6 @@
   font-feature-settings: "tnum";
 }
 
-/* Composer progress hairline (§6.1): a slim accent sliver traveling the top
-   edge while a turn runs. Disabled entirely under prefers-reduced-motion
-   (the wrapper carries motion-reduce:hidden). */
-@keyframes composer-hairline {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(400%);
-  }
-}
-.composer-hairline {
-  animation: composer-hairline 1.8s ease-in-out infinite;
-}
-@media (prefers-reduced-motion: reduce) {
-  .composer-hairline {
-    animation: none;
-  }
-}
-
 @layer base {
   html,
   body,

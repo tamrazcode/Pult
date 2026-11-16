@@ -1209,6 +1209,7 @@ describe("composer", () => {
 
     render(<Composer threadId="th" />);
 
+    expect(screen.queryByText("Keep typing to queue another message")).toBeNull();
     expect(screen.getByText("follow up")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /reorder queued message/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /steer queued message/i })).toBeInTheDocument();
@@ -1265,6 +1266,7 @@ describe("composer", () => {
     expect(card.style.backgroundColor).toContain("color-mix");
     expect(card.style.backgroundColor).toContain("var(--composer-tint)");
     expect(card.style.backgroundColor).toContain("100%");
+    expect(card.style.boxShadow).toContain("var(--shadow-composer-volume)");
 
     cleanup();
     useSettingsStore.setState({ glassOpacity: 40 });

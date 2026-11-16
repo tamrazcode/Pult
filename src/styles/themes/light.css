@@ -33,4 +33,5 @@
   --shadow-composer-lift:
     0 1px 0 rgb(255 255 255 / 100%) inset, 0 16px 32px -16px rgb(0 0 0 / 28%),
     0 4px 10px -6px rgb(0 0 0 / 16%);
+  --shadow-composer-volume: inset 0 2px 6px rgb(0 0 0 / 7%), inset 0 -1px 0 rgb(255 255 255 / 90%);
 }

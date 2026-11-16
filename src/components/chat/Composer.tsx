@@ -834,137 +834,134 @@ export function Composer({ threadId }: { threadId?: string }) {
         </div>
       )}
       {queue && queue.length > 0 && threadId && (
-        <div className="mx-auto mb-2 flex max-w-3xl flex-col gap-1">
-          {queue.map((item) => (
-            <div
-              key={item.id}
-              draggable={editingQueueId !== item.id}
-              onDragStart={(event) => {
-                setDraggingQueueId(item.id);
-                event.dataTransfer?.setData("text/plain", item.id);
-              }}
-              onDragEnd={() => setDraggingQueueId(null)}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                reorderQueue(item.id, event.dataTransfer?.getData("text/plain") || draggingQueueId);
-              }}
-              className={`flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5 ${
-                draggingQueueId === item.id ? "opacity-60" : ""
-              }`}
-            >
-              <button
-                type="button"
-                aria-label={t("composer.queue.reorderAria")}
-                title={t("composer.queue.dragTitle")}
-                className="flex h-5 w-4 cursor-grab items-center justify-center text-text-tertiary"
+        <div className="relative z-0 mx-auto -mb-3 w-full max-w-3xl px-3">
+          <div className="flex flex-col divide-y divide-border-subtle overflow-hidden rounded-t-[18px] border border-b-0 border-border-strong bg-surface-raised pb-4">
+            {queue.map((item) => (
+              <div
+                key={item.id}
+                draggable={editingQueueId !== item.id}
+                onDragStart={(event) => {
+                  setDraggingQueueId(item.id);
+                  event.dataTransfer?.setData("text/plain", item.id);
+                }}
+                onDragEnd={() => setDraggingQueueId(null)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  reorderQueue(
+                    item.id,
+                    event.dataTransfer?.getData("text/plain") || draggingQueueId,
+                  );
+                }}
+                className={`flex items-center gap-2 px-2 py-1.5 ${
+                  draggingQueueId === item.id ? "opacity-60" : ""
+                }`}
               >
-                <GripVertical size={13} />
-              </button>
-              {editingQueueId === item.id ? (
-                <input
-                  autoFocus
-                  value={editQueueText}
-                  onChange={(event) => setEditQueueText(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      saveQueueEdit();
-                    }
-                    if (event.key === "Escape") {
-                      event.preventDefault();
-                      setEditingQueueId(null);
-                    }
-                  }}
-                  aria-label={t("composer.queue.textAria")}
-                  className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 py-0.5 text-sm text-text-primary focus:border-border-strong focus:outline-none"
-                />
-              ) : (
-                <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
-              )}
-              {editingQueueId === item.id ? (
-                <>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.save")}
-                    onClick={saveQueueEdit}
-                    className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-success transition hover:bg-hover"
-                  >
-                    <Check size={12} />
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.cancel")}
-                    onClick={() => setEditingQueueId(null)}
-                    className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <X size={12} />
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.steerAria")}
-                    title={t("composer.queue.steerTitle")}
-                    onClick={() =>
-                      runsQueueSteer(threadId, item.id).catch((err) =>
-                        setError(localizeIpcError(err)),
-                      )
-                    }
-                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.editAria")}
-                    onClick={() => {
-                      setEditingQueueId(item.id);
-                      setEditQueueText(item.text);
+                <button
+                  type="button"
+                  aria-label={t("composer.queue.reorderAria")}
+                  title={t("composer.queue.dragTitle")}
+                  className="flex h-5 w-4 cursor-grab items-center justify-center text-text-tertiary"
+                >
+                  <GripVertical size={13} />
+                </button>
+                {editingQueueId === item.id ? (
+                  <input
+                    autoFocus
+                    value={editQueueText}
+                    onChange={(event) => setEditQueueText(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        saveQueueEdit();
+                      }
+                      if (event.key === "Escape") {
+                        event.preventDefault();
+                        setEditingQueueId(null);
+                      }
                     }}
-                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <Pencil size={11} /> {t("composer.queue.edit")}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.removeAria")}
-                    onClick={() =>
-                      runsQueueRemove(threadId, item.id).catch((err) =>
-                        console.error("runs_queue_remove failed", err),
-                      )
-                    }
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <X size={12} />
-                  </button>
-                </>
-              )}
-            </div>
-          ))}
-          <p className="px-1 text-xs text-text-tertiary">{t("composer.queue.keepTyping")}</p>
+                    aria-label={t("composer.queue.textAria")}
+                    className="min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 py-0.5 text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                  />
+                ) : (
+                  <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
+                )}
+                {editingQueueId === item.id ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={t("composer.queue.save")}
+                      onClick={saveQueueEdit}
+                      className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-success transition hover:bg-hover"
+                    >
+                      <Check size={12} />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("composer.queue.cancel")}
+                      onClick={() => setEditingQueueId(null)}
+                      className="flex h-6 w-6 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                    >
+                      <X size={12} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      aria-label={t("composer.queue.steerAria")}
+                      title={t("composer.queue.steerTitle")}
+                      onClick={() =>
+                        runsQueueSteer(threadId, item.id).catch((err) =>
+                          setError(localizeIpcError(err)),
+                        )
+                      }
+                      className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                    >
+                      <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("composer.queue.editAria")}
+                      onClick={() => {
+                        setEditingQueueId(item.id);
+                        setEditQueueText(item.text);
+                      }}
+                      className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                    >
+                      <Pencil size={11} /> {t("composer.queue.edit")}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={t("composer.queue.removeAria")}
+                      onClick={() =>
+                        runsQueueRemove(threadId, item.id).catch((err) =>
+                          console.error("runs_queue_remove failed", err),
+                        )
+                      }
+                      className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                    >
+                      <X size={12} />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
-      <div className="relative mx-auto w-full max-w-3xl">
+      <div className="relative z-10 mx-auto w-full max-w-3xl">
         <div
           aria-hidden
           className="pointer-events-none absolute -inset-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border-4 border-b-[6px] border-surface-raised"
         />
         <div
-          className="relative rounded-(--radius-lg) border border-border-strong shadow-(--shadow-composer-lift) backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
+          className="relative rounded-(--radius-lg) border border-border-strong backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
           style={{
             backgroundColor: `color-mix(in srgb, var(--composer-tint) ${glassOpacity}%, transparent)`,
+            boxShadow: "var(--shadow-composer-lift), var(--shadow-composer-volume)",
           }}
         >
-          {runActive && (
-            <div
-              aria-hidden
-              className="pointer-events-none absolute inset-x-4 top-0 h-px overflow-hidden motion-reduce:hidden"
-            >
-              <div className="h-full w-1/4 rounded-full bg-accent/70 composer-hairline" />
-            </div>
-          )}
           {mentionOpen && (
             <div
               className="absolute bottom-full left-0 mb-2 max-h-56 w-full overflow-y-auto rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer)"
@@ -1121,7 +1118,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   aria-label={t("composer.queue")}
                   title={t("composer.queue")}
                   disabled={awaitingDecision || busy}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
                   <ListPlus size={15} />
                 </button>
@@ -1131,9 +1128,9 @@ export function Composer({ threadId }: { threadId?: string }) {
                   onClick={handleStop}
                   aria-label={cancelling ? t("composer.forceStop") : t("composer.stop")}
                   title={cancelling ? t("composer.forceStop") : t("composer.stop")}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-danger text-white transition hover:brightness-110"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-danger bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-white transition hover:brightness-110"
                 >
-                  <Square size={11} />
+                  <Square size={12} strokeWidth={3.5} />
                 </button>
               )
             ) : (
@@ -1147,7 +1144,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   awaitingDecision ||
                   busy
                 }
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-accent-fg transition hover:brightness-110 disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
               >
                 <ArrowUp size={14} />
               </button>
