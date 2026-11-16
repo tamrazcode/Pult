@@ -856,6 +856,8 @@ export const fr: Record<string, string> = {
   "subagents.card.open": "Open chat",
   "subagents.card.stop": "Stop",
   "subagents.card.retry": "Retry",
+  "subagents.card.steer": "Steer",
+  "subagents.card.send": "Send",
   "subagents.status.running": "Working",
   "subagents.status.queued": "Queued",
   "subagents.status.completed": "Done",

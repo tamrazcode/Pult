@@ -866,6 +866,8 @@ export const ru: Record<string, string> = {
   "subagents.card.open": "Открыть чат",
   "subagents.card.stop": "Остановить",
   "subagents.card.retry": "Повторить",
+  "subagents.card.steer": "Уточнить",
+  "subagents.card.send": "Отправить",
   "subagents.status.running": "Работает",
   "subagents.status.queued": "В очереди",
   "subagents.status.completed": "Готово",

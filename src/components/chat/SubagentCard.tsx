@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "@tanstack/react-router";
-import { ChevronRight, RotateCcw, Square } from "lucide-react";
-import { orchestratorCancelTask, orchestratorRetryTask } from "../../lib/ipc";
+import { ChevronRight, MessageSquare, RotateCcw, Square } from "lucide-react";
+import {
+  orchestratorCancelTask,
+  orchestratorRetryTask,
+  orchestratorSteerTask,
+} from "../../lib/ipc";
 import { useT } from "../../lib/i18n";
 import type { DelegatedTask } from "../../lib/types";
 import { isTaskActive, useSubagentsStore } from "../../stores/subagents";
@@ -29,6 +33,8 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
   const t = useT();
   const router = useRouter();
   const [now, setNow] = useState(() => Date.now());
+  const [steerOpen, setSteerOpen] = useState(false);
+  const [steerText, setSteerText] = useState("");
   const active = isTaskActive(task.status);
   useEffect(() => {
     if (!active) return;
@@ -62,6 +68,17 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
       to: "/thread/$threadId",
       params: { threadId: task.childThreadId },
     });
+  };
+  const sendSteer = () => {
+    const message = steerText.trim();
+    if (!message) return;
+    void orchestratorSteerTask(task.taskId, message)
+      .then((updated) => {
+        useSubagentsStore.getState().upsert(updated);
+        setSteerText("");
+        setSteerOpen(false);
+      })
+      .catch((error) => console.error("orchestrator_steer_task failed", error));
   };
 
   return (
@@ -112,6 +129,15 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
           {t("subagents.card.open")}
           <ChevronRight size={11} />
         </button>
+        <button
+          type="button"
+          onClick={() => setSteerOpen((open) => !open)}
+          aria-label={t("subagents.card.steer")}
+          title={t("subagents.card.steer")}
+          className="flex h-6 items-center gap-1 rounded-(--radius-sm) px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+        >
+          <MessageSquare size={11} />
+        </button>
         <span className="flex-1" />
         {active ? (
           <button
@@ -135,6 +161,29 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
           </button>
         )}
       </div>
+
+      {steerOpen && (
+        <div className="mt-2 flex items-center gap-1.5">
+          <input
+            value={steerText}
+            onChange={(event) => setSteerText(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") sendSteer();
+              if (event.key === "Escape") setSteerOpen(false);
+            }}
+            placeholder={t("subagents.card.steer")}
+            aria-label={t("subagents.card.steer")}
+            className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={sendSteer}
+            className="flex h-7 shrink-0 items-center rounded-(--radius-sm) bg-accent px-2 text-xs font-medium text-accent-fg transition hover:brightness-110"
+          >
+            {t("subagents.card.send")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

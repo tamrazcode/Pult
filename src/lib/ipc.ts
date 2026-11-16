@@ -745,6 +745,10 @@ export function orchestratorRetryTask(taskId: string): Promise<DelegatedTask> {
   return invokeRequired<DelegatedTask>("orchestrator_retry_task", { taskId });
 }
 
+export function orchestratorSteerTask(taskId: string, message: string): Promise<DelegatedTask> {
+  return invokeRequired<DelegatedTask>("orchestrator_steer_task", { taskId, message });
+}
+
 /** Stop was pressed: the UI may offer a force-stop escalation. */
 export function onRunCancelling(handler: (runId: string) => void): Promise<UnlistenFn> {
   return listenOrNoop<{ runId: string; threadId: string }>("run:cancelling", (payload) =>

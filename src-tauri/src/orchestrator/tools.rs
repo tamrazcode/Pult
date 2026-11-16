@@ -4,13 +4,14 @@
 
 use serde_json::{json, Value};
 
-pub const ORCHESTRATOR_TOOL_NAMES: [&str; 6] = [
+pub const ORCHESTRATOR_TOOL_NAMES: [&str; 7] = [
     "orchestrator_capabilities",
     "delegate_task",
     "wait_tasks",
     "get_task",
     "list_tasks",
     "cancel_task",
+    "steer_task",
 ];
 
 /// Tools that read only orchestration state and therefore work even when the
@@ -95,6 +96,19 @@ pub fn tool_specs() -> Value {
                 "properties": {
                     "taskId": { "type": "string" },
                     "force": { "type": "boolean" }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "steer_task",
+            "description": "Send a refinement to a running child, or start a follow-up turn in the same child thread when it already finished.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["taskId", "message"],
+                "properties": {
+                    "taskId": { "type": "string" },
+                    "message": { "type": "string" }
                 },
                 "additionalProperties": false
             }

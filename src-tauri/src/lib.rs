@@ -269,6 +269,7 @@ pub fn run() {
             ipc::orchestrator_cancel_task,
             ipc::orchestrator_cancel_all,
             ipc::orchestrator_retry_task,
+            ipc::orchestrator_steer_task,
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::workspace_tree,

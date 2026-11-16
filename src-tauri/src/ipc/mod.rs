@@ -1957,6 +1957,18 @@ pub fn orchestrator_retry_task(
         .map_err(PultError::internal)
 }
 
+#[tauri::command]
+pub fn orchestrator_steer_task(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    task_id: String,
+    message: String,
+) -> Result<serde_json::Value, PultError> {
+    runtime
+        .orchestrator
+        .steer_task_admin(&task_id, &message)
+        .map_err(PultError::internal)
+}
+
 #[cfg(test)]
 mod external_url_tests {
     use super::validate_external_url;

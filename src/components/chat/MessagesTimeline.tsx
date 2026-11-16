@@ -36,6 +36,8 @@ import {
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
 import { useSubagentsStore, useThreadSubagents } from "../../stores/subagents";
 import { SubagentCard } from "./SubagentCard";
+import { SubagentGroupCard } from "./SubagentGroupCard";
+import type { DelegatedTask } from "../../lib/types";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
@@ -114,6 +116,16 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const entries = useMemo(() => threadTimelineItems(runs, views), [runs, views]);
   const pendingUser = useRunsStore((s) => (threadId ? s.pendingUserByThread[threadId] : undefined));
   const subagents = useThreadSubagents(threadId);
+  const subagentGroups = useMemo(() => {
+    const groups = new Map<string, DelegatedTask[]>();
+    for (const task of subagents) {
+      const key = task.parentRunId;
+      const group = groups.get(key);
+      if (group) group.push(task);
+      else groups.set(key, [task]);
+    }
+    return [...groups.values()];
+  }, [subagents]);
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
@@ -173,9 +185,13 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
             <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
             <ThinkingRow />
-            {subagents.map((task) => (
-              <SubagentCard key={task.taskId} task={task} />
-            ))}
+            {subagentGroups.map((group) =>
+              group.length > 1 ? (
+                <SubagentGroupCard key={group[0].parentRunId} tasks={group} />
+              ) : (
+                <SubagentCard key={group[0].taskId} task={group[0]} />
+              ),
+            )}
           </div>
         </div>
       </div>
@@ -268,9 +284,13 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
           {subagents.length > 0 && (
             <div className="flex flex-col gap-2">
-              {subagents.map((task) => (
-                <SubagentCard key={task.taskId} task={task} />
-              ))}
+              {subagentGroups.map((group) =>
+                group.length > 1 ? (
+                  <SubagentGroupCard key={group[0].parentRunId} tasks={group} />
+                ) : (
+                  <SubagentCard key={group[0].taskId} task={group[0]} />
+                ),
+              )}
             </div>
           )}
 
