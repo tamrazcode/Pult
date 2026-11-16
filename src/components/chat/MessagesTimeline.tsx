@@ -11,6 +11,7 @@ import {
   GitBranch,
   Globe,
   Layers,
+  LogIn,
   MessageSquare,
   Pencil,
   Search,
@@ -23,6 +24,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useRouter } from "@tanstack/react-router";
 import { readImageDataUrl, runsDispatch } from "../../lib/ipc";
 import {
   formatTime as formatClock,
@@ -1135,6 +1137,8 @@ function CrashBanner({
 }) {
   const [copied, setCopied] = useState(false);
   const t = useT();
+  const router = useRouter();
+  const authRequired = /authentication required|auth_required|sign in|unauthorized/i.test(detail);
   const copyDiagnostics = () => {
     const text = `pult run failed\n${new Date().toISOString()}\n${detail}`;
     navigator.clipboard
@@ -1156,6 +1160,16 @@ function CrashBanner({
           {detail}
         </pre>
         <div className="flex flex-wrap items-center gap-2">
+          {authRequired && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => void router.navigate({ to: "/settings/providers" })}
+            >
+              <LogIn size={12} />
+              {t("settings.signIn.signIn")}
+            </Button>
+          )}
           {onRetry && retryText && (
             <Button size="sm" variant="secondary" onClick={onRetry}>
               <RotateCcw size={12} />
