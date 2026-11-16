@@ -13,6 +13,10 @@ export interface ProviderCatalogEntry {
   /** No ACP path yet: the row is visible but cannot be added as ACP. */
   adapterRequired?: boolean;
   experimental?: boolean;
+  /** npm package Pult can install for one-click connect. */
+  installPackage?: string;
+  /** Optional env var for API-key auth instead of a subscription login. */
+  apiKeyEnv?: string;
 }
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -24,6 +28,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     detectedId: "codex",
     command: "npx",
     args: ["-y", "@agentclientprotocol/codex-acp"],
+    installPackage: "@openai/codex",
+    apiKeyEnv: "OPENAI_API_KEY",
   },
   {
     id: "claude-code",
@@ -33,6 +39,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     detectedId: "claude-code",
     command: "npx",
     args: ["-y", "@zed-industries/claude-code-acp"],
+    installPackage: "@anthropic-ai/claude-code",
+    apiKeyEnv: "ANTHROPIC_API_KEY",
   },
   {
     id: "cursor",

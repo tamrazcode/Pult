@@ -481,6 +481,11 @@ export function providersDetectInstalled(): Promise<DetectedAgent[]> {
   return invokeWithFallback<DetectedAgent[]>("providers_detect_installed", []);
 }
 
+/** Installs a known provider CLI globally through npm (fixed package map). */
+export function providersInstall(provider: string): Promise<string> {
+  return invokeRequired<string>("providers_install", { provider });
+}
+
 /** One-click connect check: spawn → handshake → cache caps → shut down. */
 export function providersPreflight(instanceId: string): Promise<PreflightReport> {
   return invokeRequired<PreflightReport>("providers_preflight", { instanceId });

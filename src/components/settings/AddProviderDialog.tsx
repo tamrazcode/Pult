@@ -3,7 +3,12 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, Check, X } from "lucide-react";
 import { ProviderLogo } from "../chat/ProviderLogo";
 import { PROVIDER_CATALOG, type ProviderCatalogEntry } from "../../lib/providerCatalog";
-import { providersInstancesList, providersInstancesSave, providersPreflight } from "../../lib/ipc";
+import {
+  providersInstancesList,
+  providersInstancesSave,
+  providersPreflight,
+  providersInstall,
+} from "../../lib/ipc";
 import { localizeIpcError } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
 import type { DetectedAgent, InstanceInfo } from "../../lib/types";
@@ -43,8 +48,10 @@ export function AddProviderDialog({
   const [id, setId] = useState(initial.id);
   const [command, setCommand] = useState(initial.command);
   const [args, setArgs] = useState(initial.args);
+  const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const onCloseRef = useRef(onClose);
@@ -95,6 +102,7 @@ export function AddProviderDialog({
     setId(fields.id);
     setCommand(fields.command);
     setArgs(fields.args);
+    setApiKey("");
     setError(null);
   };
 
@@ -135,6 +143,17 @@ export function AddProviderDialog({
     setSaving(true);
     setError(null);
     try {
+      if (entry.installPackage && !detectedAgent) {
+        setInstalling(true);
+        try {
+          await providersInstall(entry.id);
+        } catch (err) {
+          setError(`Install failed: ${localizeIpcError(err)}`);
+          return;
+        } finally {
+          setInstalling(false);
+        }
+      }
       const all = await providersInstancesList();
       if (all.some((instance) => instance.id === id.trim())) {
         setError("That instance ID is taken.");
@@ -160,7 +179,7 @@ export function AddProviderDialog({
           .split(/[\n,]/)
           .map((value) => value.trim())
           .filter(Boolean),
-        env: {},
+        env: entry.apiKeyEnv && apiKey.trim() ? { [entry.apiKeyEnv]: apiKey.trim() } : {},
         enabled: true,
       });
       await providersInstancesSave(next);
@@ -399,6 +418,31 @@ export function AddProviderDialog({
                   className="mt-1.5 w-full resize-y rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 py-1.5 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
                 />
               </label>
+              {entry.installPackage && !detectedAgent && (
+                <p className="rounded-(--radius-sm) border border-border-subtle bg-surface px-3 py-2 text-xs text-text-tertiary">
+                  Install &amp; connect runs{" "}
+                  <span className="font-mono">npm install -g {entry.installPackage}</span>, then
+                  tests the agent.
+                </p>
+              )}
+              {entry.apiKeyEnv && (
+                <label className="block">
+                  <span className="text-sm font-medium text-text-primary">
+                    API key <span className="font-normal text-text-tertiary">(optional)</span>
+                  </span>
+                  <span className="mt-0.5 block text-xs text-text-tertiary">
+                    Use an API key when the account has no Claude Code plan. Saved as{" "}
+                    <span className="font-mono">{entry.apiKeyEnv}</span> in the local config.
+                  </span>
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(event) => setApiKey(event.target.value)}
+                    placeholder={entry.apiKeyEnv}
+                    className="mt-1.5 h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                  />
+                </label>
+              )}
             </div>
           )}
 
@@ -437,11 +481,17 @@ export function AddProviderDialog({
             ) : (
               <button
                 type="button"
-                disabled={saving}
+                disabled={saving || installing}
                 onClick={() => void add()}
                 className="h-8 rounded-(--radius-sm) bg-accent px-4 text-xs font-medium text-accent-fg transition hover:brightness-110 disabled:opacity-60"
               >
-                {saving ? "Adding…" : "Add instance"}
+                {installing
+                  ? "Installing…"
+                  : saving
+                    ? "Connecting…"
+                    : entry.installPackage && !detectedAgent
+                      ? "Install & connect"
+                      : "Add instance"}
               </button>
             )}
           </div>

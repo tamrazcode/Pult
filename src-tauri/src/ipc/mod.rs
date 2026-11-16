@@ -718,6 +718,48 @@ pub fn providers_detect_installed() -> Result<Vec<crate::config::DetectedAgent>,
     Ok(crate::config::detect_installed())
 }
 
+/// Installs a known provider CLI globally through npm (fixed package map).
+#[tauri::command]
+pub async fn providers_install(provider: String) -> Result<String, PultError> {
+    let package = match provider.as_str() {
+        "claude-code" | "claude" => "@anthropic-ai/claude-code",
+        "codex" => "@openai/codex",
+        "gemini-cli" | "gemini" => "@google/gemini-cli",
+        _ => {
+            return Err(PultError::with_code(
+                "provider.install_unsupported",
+                format!("no automatic installer for {provider}"),
+            ));
+        }
+    };
+    #[cfg(windows)]
+    let mut command = {
+        let mut command = tokio::process::Command::new("cmd.exe");
+        command.args(["/d", "/s", "/c", &format!("npm install -g {package}")]);
+        command.creation_flags(0x0800_0000);
+        command
+    };
+    #[cfg(not(windows))]
+    let mut command = {
+        let mut command = tokio::process::Command::new("npm");
+        command.args(["install", "-g", package]);
+        command
+    };
+    let output = tokio::time::timeout(std::time::Duration::from_secs(600), command.output())
+        .await
+        .map_err(|_| PultError::with_code("provider.install_timeout", "npm install timed out"))?
+        .map_err(|e| PultError::internal(format!("npm install failed to start: {e}")))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        return Err(PultError::with_code(
+            "provider.install_failed",
+            format!("npm install {package} failed:\n{stderr}\n{stdout}"),
+        ));
+    }
+    Ok(format!("{stdout}\n{stderr}").trim().to_string())
+}
+
 /// Rewrites the agent matrix (settings UI): validates, persists to
 /// config.toml, and swaps the live registry.
 #[tauri::command]
