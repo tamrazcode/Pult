@@ -865,4 +865,5 @@ export const ru: Record<string, string> = {
     "Положите папку с pult-plugin.json в ~/.pult/plugins и вернитесь сюда. Плагины пока декларативные — метаданные, команды и слоты — и не получают доступ к shell или файловой системе.",
   "plugins.enabled": "Включён",
   "plugins.dir": "Папка плагинов:",
+  "settings.appearance.mainTheme": "Основная",
 };

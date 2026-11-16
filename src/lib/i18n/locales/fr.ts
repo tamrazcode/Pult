@@ -855,4 +855,5 @@ export const fr: Record<string, string> = {
     "Déposez un dossier avec pult-plugin.json dans ~/.pult/plugins puis revenez ici. Les extensions sont déclaratives pour l’instant — métadonnées, commandes et slots — sans accès au shell ni au système de fichiers.",
   "plugins.enabled": "Activée",
   "plugins.dir": "Dossier des extensions :",
+  "settings.appearance.mainTheme": "Principale",
 };

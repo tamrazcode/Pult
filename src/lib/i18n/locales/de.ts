@@ -850,4 +850,5 @@ export const de: Record<string, string> = {
     "Lege einen Ordner mit pult-plugin.json in ~/.pult/plugins ab und komm zurück. Plugins sind vorerst deklarativ — Metadaten, Befehle und Slots — ohne Shell- oder Dateisystemzugriff.",
   "plugins.enabled": "Aktiviert",
   "plugins.dir": "Plugin-Ordner:",
+  "settings.appearance.mainTheme": "Standard",
 };

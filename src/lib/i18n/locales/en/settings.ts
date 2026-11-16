@@ -226,4 +226,5 @@ export const settings = {
     "Drop a folder with pult-plugin.json into ~/.pult/plugins, then return here. Plugins are declarative for now — metadata, commands and slots — and never receive shell or raw filesystem access.",
   "plugins.enabled": "Enabled",
   "plugins.dir": "Plugins folder:",
+  "settings.appearance.mainTheme": "Main",
 } as const;

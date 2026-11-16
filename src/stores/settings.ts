@@ -9,7 +9,7 @@ import { applyTheme } from "../lib/theme";
 import { useGitStore } from "./git";
 
 export type PermissionMode = "supervised" | "auto_edit" | "auto" | "full_access";
-export type ThemeName = "dark" | "light" | "graphite" | "liquid";
+export type ThemeName = "dark" | "light" | "graphite";
 
 /** Human-readable labels for permission modes (raw enum ids are not user-facing copy). */
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
@@ -93,7 +93,7 @@ interface SettingsState {
 }
 
 const isThemeName = (v: unknown): v is ThemeName =>
-  v === "dark" || v === "light" || v === "graphite" || v === "liquid";
+  v === "dark" || v === "light" || v === "graphite";
 
 /** Lowercase handle without the leading @; 2–24 letters, digits or underscores. */
 export function isValidHandle(value: string): boolean {
@@ -130,7 +130,7 @@ export function sanitizeProfile(value: unknown): LocalProfile | null {
 }
 
 export const useSettingsStore = create<SettingsState>((set, get) => ({
-  theme: "dark",
+  theme: "graphite",
   accentHue: null,
   permissionMode: "supervised",
   profile: null,
@@ -264,7 +264,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("language").catch(() => null),
       settingsGet("profile").catch(() => null),
     ]);
-    const resolvedTheme = isThemeName(theme) ? theme : "dark";
+    const resolvedTheme = isThemeName(theme) ? theme : "graphite";
     const resolvedHue =
       typeof accentHue === "number" && accentHue >= 0 && accentHue < 360 ? accentHue : null;
     const resolvedMode =

@@ -133,15 +133,15 @@ describe("LivingAscii", () => {
     }
     darkRender.unmount();
 
-    // Liquid theme with green accent -> base glyphs still neutral gray [168, 168, 168]
-    document.documentElement.dataset.theme = "liquid";
+    // Graphite theme with green accent -> base glyphs still neutral gray [168, 168, 168]
+    document.documentElement.dataset.theme = "graphite";
     document.documentElement.style.setProperty("--accent", "#10b981");
-    const liquidRender = render(<LivingAscii />);
+    const graphiteRender = render(<LivingAscii />);
     expect(draws.length).toBeGreaterThan(0);
     for (const call of draws) {
       expect(parseRgb(call.fillStyle)).toEqual([168, 168, 168]);
     }
-    liquidRender.unmount();
+    graphiteRender.unmount();
 
     // Light theme -> base glyphs use darker neutral gray [110, 110, 110], independent of accent
     document.documentElement.dataset.theme = "light";

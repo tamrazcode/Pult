@@ -848,4 +848,5 @@ export const ja: Record<string, string> = {
     "pult-plugin.json を含むフォルダーを ~/.pult/plugins に置いて戻ってください。現時点では宣言型（メタデータ、コマンド、スロット）で、シェルやファイルシステムへのアクセスはありません。",
   "plugins.enabled": "有効",
   "plugins.dir": "プラグインフォルダー:",
+  "settings.appearance.mainTheme": "メイン",
 };

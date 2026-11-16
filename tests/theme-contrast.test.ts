@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { relativeLuminance } from "../src/lib/theme";
 
@@ -24,72 +24,15 @@ function parseTokens(css: string): Tokens {
   return tokens;
 }
 
-function readOptionalCss(relativePath: string): string {
-  const fullPath = join(ROOT, relativePath);
-  return existsSync(fullPath) ? readFileSync(fullPath, "utf8") : "";
-}
-
-function inspectGlassCss(css: string) {
-  const clean = css.replace(/\/\*[\s\S]*?\*\//g, "");
-  const stack: string[] = [];
-  let buf = "";
-  let supportsBackdropCount = 0;
-  let reducedTransparencyCount = 0;
-  let wrappedBackdropDecls = 0;
-  let unwrappedBackdropDecls = 0;
-
-  for (let i = 0; i < clean.length; i++) {
-    const ch = clean[i];
-    if (ch === "{") {
-      const header = buf.trim();
-      stack.push(header);
-      if (/^@supports\b/i.test(header) && /backdrop-filter/i.test(header)) {
-        supportsBackdropCount++;
-      }
-      if (/^@media\b/i.test(header) && /prefers-reduced-transparency/i.test(header)) {
-        reducedTransparencyCount++;
-      }
-      buf = "";
-    } else if (ch === ";" || ch === "}") {
-      const decl = buf.trim();
-      if (/^(?:-webkit-)?backdrop-filter\s*:/i.test(decl)) {
-        const inSupports = stack.some((h) => /^@supports\b/i.test(h) && /backdrop-filter/i.test(h));
-        const inReduced = stack.some(
-          (h) => /^@media\b/i.test(h) && /prefers-reduced-transparency/i.test(h),
-        );
-        if (inSupports || inReduced) {
-          wrappedBackdropDecls++;
-        } else {
-          unwrappedBackdropDecls++;
-        }
-      }
-      if (ch === "}") stack.pop();
-      buf = "";
-    } else {
-      buf += ch;
-    }
-  }
-
-  return {
-    supportsBackdropCount,
-    reducedTransparencyCount,
-    wrappedBackdropDecls,
-    unwrappedBackdropDecls,
-  };
-}
-
 const ROOT = join(import.meta.dirname ?? ".", "..");
 const DARK = parseTokens(readFileSync(join(ROOT, "src/styles/tokens.css"), "utf8"));
 const LIGHT = parseTokens(readFileSync(join(ROOT, "src/styles/themes/light.css"), "utf8"));
 const GRAPHITE = parseTokens(readFileSync(join(ROOT, "src/styles/themes/graphite.css"), "utf8"));
-const LIQUID_CSS = readOptionalCss("src/styles/themes/liquid.css");
-const LIQUID = parseTokens(LIQUID_CSS);
 
 const THEMES: [string, Tokens][] = [
   ["dark", DARK],
   ["light", LIGHT],
   ["graphite", GRAPHITE],
-  ["liquid", LIQUID],
 ];
 
 describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
@@ -123,7 +66,6 @@ describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
   for (const [name, tokens] of [
     ["dark", DARK],
     ["graphite", GRAPHITE],
-    ["liquid", LIQUID],
   ] as const) {
     it(`${name}: --panel-bg has higher relative luminance than --canvas`, () => {
       expect(tokens["--panel-bg"], `${name} missing --panel-bg`).toBeTruthy();
@@ -134,24 +76,10 @@ describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
     });
   }
 
-  it("liquid: defines glass tokens and wraps backdrop-filter in @supports + prefers-reduced-transparency", () => {
-    expect(LIQUID_CSS, "src/styles/themes/liquid.css must exist").not.toBe("");
-    for (const token of ["--glass-blur", "--glass-border", "--glass-panel"]) {
-      expect(LIQUID[token], `liquid missing ${token}`).toBeTruthy();
-    }
-    const glass = inspectGlassCss(LIQUID_CSS);
-    expect(glass.supportsBackdropCount).toBeGreaterThan(0);
-    expect(glass.reducedTransparencyCount).toBeGreaterThan(0);
-    expect(glass.wrappedBackdropDecls).toBeGreaterThan(0);
-    expect(glass.unwrappedBackdropDecls).toBe(0);
-  });
-
   it("every theme only overrides tokens that exist (no typo'd names)", () => {
     const darkKeys = new Set(Object.keys(DARK));
     for (const [name, tokens] of THEMES.slice(1)) {
-      const unknown = Object.keys(tokens).filter(
-        (k) => !darkKeys.has(k) && !(name === "liquid" && k.startsWith("--glass-")),
-      );
+      const unknown = Object.keys(tokens).filter((k) => !darkKeys.has(k));
       expect(unknown, name).toEqual([]);
     }
   });
@@ -161,7 +89,6 @@ describe("theme contrast (§6.6: all text ≥ 4.5:1)", () => {
       ["dark", "src/styles/tokens.css"],
       ["light", "src/styles/themes/light.css"],
       ["graphite", "src/styles/themes/graphite.css"],
-      ["liquid", "src/styles/themes/liquid.css"],
     ];
 
     for (const [id, relPath] of themeFiles) {

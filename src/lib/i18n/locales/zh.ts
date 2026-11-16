@@ -816,4 +816,5 @@ export const zh: Record<string, string> = {
     "将包含 pult-plugin.json 的文件夹放入 ~/.pult/plugins，然后回到这里。目前插件是声明式的——元数据、命令和插槽——不会获得 shell 或原始文件系统访问权限。",
   "plugins.enabled": "已启用",
   "plugins.dir": "插件文件夹：",
+  "settings.appearance.mainTheme": "主要",
 };

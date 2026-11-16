@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -418,7 +418,7 @@ export function Sidebar({ width }: { width: number }) {
     void router.navigate({ to: "/chat" });
   };
 
-  const checkAppUpdate = () => {
+  const checkAppUpdate = useCallback(() => {
     if (!isTauri() || updateState === "checking" || updateState === "installing") return;
     setUpdateState("checking");
     setUpdateError(null);
@@ -438,7 +438,7 @@ export function Sidebar({ width }: { width: number }) {
         setUpdateState("error");
         setUpdateError(localizeIpcError(err));
       });
-  };
+  }, [t, updateState]);
 
   const installAppUpdate = () => {
     if (!isTauri() || updateState === "installing") return;
@@ -463,6 +463,19 @@ export function Sidebar({ width }: { width: number }) {
     if (updateState === "available") installAppUpdate();
     else if (updateState !== "installing") checkAppUpdate();
   };
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    const run = () => {
+      if (updateState !== "installing") checkAppUpdate();
+    };
+    const initial = window.setTimeout(run, 15_000);
+    const timer = window.setInterval(run, 6 * 60 * 60 * 1000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
+  }, [updateState, checkAppUpdate]);
 
   const copyPath = (path: string) => {
     if (!path) return;

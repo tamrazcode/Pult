@@ -852,4 +852,5 @@ export const es: Record<string, string> = {
     "Coloca una carpeta con pult-plugin.json en ~/.pult/plugins y vuelve aquí. Por ahora son declarativos — metadatos, comandos y ranuras — sin acceso a shell ni al sistema de archivos.",
   "plugins.enabled": "Activado",
   "plugins.dir": "Carpeta de complementos:",
+  "settings.appearance.mainTheme": "Principal",
 };

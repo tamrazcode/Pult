@@ -6,7 +6,6 @@ export const THEMES: { id: ThemeName; labelKey: TranslationKey }[] = [
   { id: "dark", labelKey: "settings.appearance.theme.dark" },
   { id: "light", labelKey: "settings.appearance.theme.light" },
   { id: "graphite", labelKey: "settings.appearance.theme.graphite" },
-  { id: "liquid", labelKey: "settings.appearance.theme.liquid" },
 ];
 
 /** Accent presets (hue values for `hsl(h s% l%)`) plus the "stock" reset. */

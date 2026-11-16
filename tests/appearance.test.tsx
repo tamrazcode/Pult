@@ -35,14 +35,16 @@ describe("AppearanceSettings theme previews", () => {
     useSettingsStore.setState({ theme: "dark", accentHue: null, glassOpacity: 100 });
   });
 
-  it("renders all 4 theme radio cards with scoped data-theme miniature previews while root stays dark", () => {
+  it("renders all 3 theme radio cards with scoped data-theme miniature previews while root stays dark", () => {
     const { container } = render(<AppearanceSettings />);
 
     expect(document.documentElement.getAttribute("data-theme")).toBeNull();
 
     for (const { id, labelKey } of THEMES) {
       const label = translate(labelKey);
-      const card = screen.getByRole("radio", { name: label });
+      const card = screen.getByRole("radio", {
+        name: id === "graphite" ? new RegExp(`^${label}`) : label,
+      });
       const themed = card.querySelector<HTMLElement>(`[data-theme="${id}"]`);
       expect(themed, `${label} card should contain [data-theme="${id}"]`).not.toBeNull();
 
@@ -57,15 +59,8 @@ describe("AppearanceSettings theme previews", () => {
       ).not.toBeNull();
     }
 
-    const liquidCard = screen.getByRole("radio", { name: "Liquid Glass" });
-    const liquidPreview = liquidCard.querySelector<HTMLElement>('[data-theme="liquid"]');
-    expect(liquidPreview, "Liquid Glass preview wrapper should exist").not.toBeNull();
-    const hasGlassSurface =
-      liquidPreview!.classList.contains("glass-surface") ||
-      liquidPreview!.querySelector(".glass-surface") !== null;
-    expect(hasGlassSurface, "Liquid Glass preview should use glass-surface").toBe(true);
-
-    expect(container.querySelectorAll("[data-theme]").length).toBe(4);
+    expect(container.querySelectorAll("[data-theme]").length).toBe(3);
+    expect(screen.getByText("Main")).toBeInTheDocument();
   });
 
   it("renders a Glass opacity range input defaulting to 100 and persists changes", () => {

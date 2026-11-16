@@ -45,19 +45,9 @@ function AppearanceSettings() {
             <span
               data-theme={id}
               aria-hidden
-              className={`block h-16 overflow-hidden rounded-(--radius-sm) border border-border-subtle bg-canvas ${
-                id === "liquid" ? "glass-surface" : ""
-              }`}
-              style={
-                id === "liquid"
-                  ? {
-                      backgroundImage:
-                        "radial-gradient(circle at 82% 18%, rgba(52,107,241,0.30), transparent 62%)",
-                    }
-                  : undefined
-              }
+              className="block h-16 overflow-hidden rounded-(--radius-sm) border border-border-subtle bg-canvas"
             >
-              <span className={`flex h-full ${id === "liquid" ? "glass-surface" : ""}`}>
+              <span className="flex h-full">
                 <span className="flex w-9 flex-col gap-1 border-r border-border-subtle bg-panel p-1">
                   <span className="h-1.5 w-5 rounded-full bg-text-secondary/80" />
                   <span className="h-1 w-6 rounded-full bg-text-tertiary/50" />
@@ -87,6 +77,11 @@ function AppearanceSettings() {
             </span>
             <span className="mt-2 flex items-center gap-1.5 text-sm text-text-primary">
               {t(labelKey)}
+              {id === "graphite" && (
+                <span className="text-xs font-normal text-text-tertiary">
+                  {t("settings.appearance.mainTheme")}
+                </span>
+              )}
               {theme === id && <Check size={13} className="text-accent" />}
             </span>
           </button>

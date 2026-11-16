@@ -105,6 +105,44 @@ fn init_tracing() {
     tracing_subscriber::fmt().with_env_filter(filter).init();
 }
 
+#[cfg(windows)]
+fn register_toast_app_id() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let icon = exe.display().to_string();
+    let _ = std::process::Command::new("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Classes\AppUserModelId\app.pult.desktop",
+            "/v",
+            "DisplayName",
+            "/t",
+            "REG_SZ",
+            "/d",
+            "Pult",
+            "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+    let _ = std::process::Command::new("reg")
+        .args([
+            "add",
+            r"HKCU\Software\Classes\AppUserModelId\app.pult.desktop",
+            "/v",
+            "IconUri",
+            "/t",
+            "REG_SZ",
+            "/d",
+            &icon,
+            "/f",
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     init_tracing();
@@ -135,6 +173,8 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
+            #[cfg(windows)]
+            register_toast_app_id();
             let store = open_store()?;
             let runtime: Arc<runtime::AgentRuntime> = Arc::new(runtime::AgentRuntime::new(
                 store,

@@ -297,14 +297,12 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 }
 
 const ChatItemRow = memo(
-  function ChatItemRow({ item, showCaret }: { item: ChatItem; showCaret: boolean }) {
+  function ChatItemRow({ item }: { item: ChatItem }) {
     switch (item.type) {
       case "user":
         return <UserRow text={item.text} images={item.images} ts={item.ts} />;
       case "assistant":
-        return (
-          <TextRow text={item.text} streaming={item.streaming} showCaret={showCaret} ts={item.ts} />
-        );
+        return <TextRow text={item.text} streaming={item.streaming} ts={item.ts} />;
       case "trace":
         return <TraceRow optionId={item.optionId} />;
       case "compaction":
@@ -313,7 +311,7 @@ const ChatItemRow = memo(
         return <NoticeRow level={item.level} message={item.message} />;
     }
   },
-  (prev, next) => prev.item === next.item && prev.showCaret === next.showCaret,
+  (prev, next) => prev.item === next.item,
 );
 
 type TimelineEntry = ReturnType<typeof threadTimelineItems>[number];
@@ -435,7 +433,7 @@ function TimelineRows({ entries, startedAt }: { entries: TimelineEntry[]; starte
         data-history-key={entry.key}
         data-history-user={entry.item.type === "user" ? entry.key : undefined}
       >
-        <ChatItemRow item={entry.item} showCaret={entry.showCaret} />
+        <ChatItemRow item={entry.item} />
       </div>,
     );
   }
@@ -711,15 +709,6 @@ function EmptyState() {
   );
 }
 
-function Caret({ show }: { show: boolean }) {
-  if (!show) return null;
-  return (
-    <span aria-hidden className="text-accent">
-      ▍
-    </span>
-  );
-}
-
 function formatTime(ts: number | undefined): string | null {
   if (!ts) return null;
   return formatClock(ts);
@@ -843,22 +832,11 @@ function UserRow({
   );
 }
 
-function TextRow({
-  text,
-  streaming,
-  showCaret,
-  ts,
-}: {
-  text: string;
-  streaming: boolean;
-  showCaret: boolean;
-  ts?: number;
-}) {
+function TextRow({ text, streaming, ts }: { text: string; streaming: boolean; ts?: number }) {
   return (
     <div className="group">
       <div className="md text-base text-text-primary">
         <Markdown text={text} streaming={streaming} />
-        {streaming && showCaret && <Caret show />}
       </div>
       {!streaming && <MessageActions text={text} ts={ts} align="left" />}
     </div>

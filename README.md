@@ -1,169 +1,121 @@
-# pult
+# Pult
 
-A local-first **Agent Development Environment** over ACP: one desktop app that hosts your
-coding agents (Claude Code, Gemini CLI, Codex, dsh — anything speaking the Agent Client
-Protocol) in one place. Bring your own subscription; Pult is not an agent and holds no API
-keys. MIT licensed.
+**A local-first Agent Development Environment.** One desktop workspace for the coding
+agents already on your computer — Codex, Claude Code, Gemini/Antigravity, opencode and
+anything else that speaks the Agent Client Protocol (ACP).
 
-![chat — dark](docs/screenshots/chat-dark.png)
+Bring your own subscription. Pult is not an agent, stores no API keys, and keeps every
+chat in a local SQLite database.
+
+![Pult — dark workspace](docs/screenshots/chat-dark.png)
+
+## Download
+
+Grab the latest Windows installer from
+[GitHub Releases](https://github.com/tamrazcode/Pult/releases/latest):
+
+- **Windows** — `pult_<version>_x64-setup.exe` (NSIS)
+- macOS / Linux builds are not published yet.
+
+A clean install starts with a four-step onboarding: detect agents on the machine, connect
+the ones you want, tour git/worktrees + browser + terminal, then create a **local profile**
+(avatar, nickname, `@handle`).
 
 ## What it does
 
-- **Agents over ACP** — spawn any ACP-speaking CLI (`command + args` in `~/.pult/config.toml`),
-  detect installed ones in the onboarding wizard, run the bundled mock agent for development.
-- **Streaming chat** — thoughts, tool calls, plans, diffs, approvals; queued messages while a
-  turn runs; permission modes (Supervised / Auto edit / Auto / Full access) with one-keystroke
-  approvals (`A` / `S` / `D`).
-- **Git built in** — live diff per thread (scratch-index diffing is byte-exact and never
-  touches your real index), per-file review checkboxes, one-click Commit ▸ Push ▸ Create PR
-  (via `gh`), isolated worktrees per thread, hidden checkpoint refs per run.
-- **Terminals** — real ConPTY per thread in xterm.js; agent-opened terminals mirror into the
-  panel.
-- **Built-in browser** — a native child webview, not an iframe: any site opens regardless of
-  `X-Frame-Options`/CSP, and local HTML/JS/CSS run with relative imports from a token-scoped
-  loopback server.
-- **Timeline that scales** — consecutive tools and thoughts collapse into a T3-style summary;
-  the newest action stays visible, expanding shows the full chronological list.
+- **Agents over ACP** — add any ACP CLI as `command + args`; Pult detects installed
+  agents, runs them side by side, and keeps each thread's session alive.
+- **Streaming chat** — thoughts, tool calls, plans, diffs and approvals. Consecutive
+  tools/thoughts fold into one smart activity row that shows the current action and
+  elapsed time; expanding reveals readable file excerpts, commands and diffs.
+- **Git built in** — live per-thread diff, per-file review, commit → push → PR, isolated
+  worktrees, hidden checkpoints per run.
+- **Real terminal** — ConPTY per thread (xterm.js), plus terminals the agent opens.
+- **Built-in browser** — a native child webview, not an iframe: any site opens regardless
+  of `X-Frame-Options`/CSP, and local HTML/JS/CSS works from a token-scoped loopback
+  server.
+- **Queue & steering** — keep typing while an agent runs; queued messages can be edited
+  in the composer, reordered by dragging, or sent immediately with Steer.
 - **Seven languages** — English (default), Russian, German, Spanish, Japanese, Chinese and
-  French, switchable in Settings ▸ General and applied without a restart.
-- **Sessions persist** — transcripts in sqlite (`~/.pult/pult.db`), resume via `session/load`,
-  JSONL-exportable; agents can crash and pult tells you with a recovery path, not a blank
-  screen.
+  French, switchable without restart.
+- **Light / dark / graphite / liquid themes**, a living ASCII backdrop, and a Full access
+  mode that is unmistakably orange.
+- **Local profile & plugins** — a customizable profile card and a declarative plugin
+  folder (`~/.pult/plugins`) for commands, slots and themes.
+- **Background notifications** — native toast + soft chime when a run finishes or fails
+  while Pult is in the background; both switchable in Settings → Chat.
 
-|                                                         |                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------- |
-| ![light](docs/screenshots/chat-light.png)               | ![graphite accent](docs/screenshots/chat-graphite-accent.png) |
-| ![palette](docs/screenshots/command-palette.png)        | ![diff panel](docs/screenshots/diff-panel.png)                |
-| ![appearance](docs/screenshots/settings-appearance.png) |                                                               |
+| Dark                                    | Light                                     |
+| --------------------------------------- | ----------------------------------------- |
+| ![dark](docs/screenshots/chat-dark.png) | ![light](docs/screenshots/chat-light.png) |
 
-## Quick start
+| Graphite accent                                        | Command palette                                  |
+| ------------------------------------------------------ | ------------------------------------------------ |
+| ![graphite](docs/screenshots/chat-graphite-accent.png) | ![palette](docs/screenshots/command-palette.png) |
+
+| Diff panel                               | Appearance settings                                     |
+| ---------------------------------------- | ------------------------------------------------------- |
+| ![diff](docs/screenshots/diff-panel.png) | ![appearance](docs/screenshots/settings-appearance.png) |
+
+## Build from source
+
+Prerequisites: Node 22+, pnpm 10+, Rust stable, and the Tauri system dependencies for
+your OS.
 
 ```sh
 pnpm install
-pnpm tauri dev   # full desktop app (Rust core + UI)
-pnpm dev         # UI only, in a browser (no IPC bridge)
+pnpm tauri dev      # desktop app (Rust core + UI)
+pnpm dev            # UI only in a browser (no IPC bridge)
 ```
 
 Verification:
 
 ```sh
-pnpm typecheck && pnpm lint && pnpm test      # vitest; Playwright smoke: pnpm exec playwright test
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-cargo test --manifest-path src-tauri/Cargo.toml
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm exec playwright test
+cargo test --lib --manifest-path src-tauri/Cargo.toml
+cargo clippy --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
 ```
 
 ## Configuration
 
-`~/.pult/config.toml` — the agent matrix source of truth:
+`~/.pult/config.toml` is the agent matrix. Add an instance with its command and args:
 
 ```toml
 [[instances]]
-id = "claude-code"
-displayName = "Claude Code"
-driver = "acp"                       # "mock" for the built-in dev agent
-command = "npx"
-args = ["-y", "@zed-industries/claude-code-acp"]
-
-[instances.env]                      # per-instance environment
-MOCK_SLOW_TURN = "1"
+id = "codex"
+display_name = "Codex"
+driver = "codex-acp"
+command = "codex-acp"
+args = []
+enabled = true
 ```
 
-Everything else lives in the sqlite settings table (`~/.pult/pult.db`): theme, accent,
-permission mode, keybindings — editable in Settings → Appearance / Keybindings.
-
-## Themes
-
-Dark (default), Light, and Graphite are pure token-block overrides
-(`src/styles/tokens.css` + `src/styles/themes/`). The accent hue picker regenerates
-accent/mention/monogram tokens via HSL. A test suite (`tests/theme-contrast.test.ts`)
-enforces WCAG ≥ 4.5:1 for every text pair in all three themes.
-
-## Keyboard
-
-`Ctrl/Cmd+K` command palette · `Ctrl/Cmd+N` new thread · `Ctrl/Cmd+B` sidebar ·
-`Ctrl/Cmd+Alt+D` diff panel · `Ctrl/Cmd+Alt+T` terminal panel · Enter send · Esc stop ·
-`A/S/D` approval answers. Rebindable in Settings → Keybindings.
-
-## Building & distribution
-
-```sh
-pnpm tauri build   # release bundle: NSIS installer (Windows), dmg (macOS), deb/AppImage (Linux)
-```
-
-Per-OS bundling is configured in `src-tauri/tauri.conf.json` (`bundle.targets: "all"`,
-`createUpdaterArtifacts: true`). Windows code signing is not configured in-repo — set
-`TAURI_SIGNING_PRIVATE_KEY` / matching vars in CI as usual for Tauri apps.
-
-### Updates
-
-The updater plugin is wired (`tauri-plugin-updater`) but inert until you point it somewhere:
-
-1. Signing keys: the repo ships with a **dev keypair** — the public key is in
-   `tauri.conf.json`, the private key lives outside the repo at `~/.tauri/pult.key`
-   (empty passphrase). For production, generate your own:
-   `pnpm tauri signer generate -w ~/.tauri/pult.key` and replace the `pubkey` in
-   `tauri.conf.json`.
-2. Host update manifests at your endpoint and put its URL into `plugins.updater.endpoints`
-   (currently a placeholder domain, `releases.pult.local`).
-3. Sign release artifacts by setting `TAURI_SIGNING_PRIVATE_KEY` (path or contents of the
-   private key) when running `pnpm tauri build` — the bundler then emits `.sig` updater
-   artifacts alongside the installers. The private key never leaves your machine; pult
-   itself holds nothing but the public key.
-
-While the endpoint is the placeholder, the app runs normally; nothing calls the updater at
-startup.
-
-### macOS first-run notes
-
-macOS Gatekeeper will warn about unsigned/ad-hoc builds ("pult is an app downloaded from the
-internet"). Right-click → Open bypasses it for local builds; distribution builds should be
-signed and notarized (`codesign` + `xcrun notarytool`) — CI territory, not wired here.
-
-## Project layout
+Runtime data lives outside the app bundle:
 
 ```
-src/                 React frontend (routes, stores, components; zustand + tanstack router)
-src-tauri/           Rust core (tauri 2): protocol/, drivers/, runtime/, store/, git/, ipc/
-protocol/            pinned ACP JSON schema (authoritative; codegen/tests read it)
-fixtures/            mock ACP agent, fixture repo + bare remote, mock gh
-docs/screenshots/    the images above
-DEVLOG.md            one entry per milestone: decisions, deviations, known issues
+~/.pult/pult.db      chats, runs, settings, local profile
+~/.pult/plugins/     declarative plugins (see docs/PLUGINS.md)
+~/.pult/config.toml  provider instances
 ```
 
-## Status
+## Updates
 
-Beyond the M0–M8 milestones (see [DEVLOG.md](DEVLOG.md) and [CHANGELOG.md](CHANGELOG.md)),
-the current build includes in-app sign-in for terminal auth methods, model / reasoning-effort
-pickers driven by agent-advertised config options, `/usage` token reporting, the built-in
-browser surface, the floating project widget, queue steer / edit / reorder, and the
-Dark / Light / Graphite / Liquid themes.
+Pult checks GitHub Releases for updates in the background and on demand from the footer
+button. When a release is available it shows a badge, downloads with a determinate
+progress ring, installs silently and restarts. Release artifacts are signed with the
+Tauri updater key; see [docs/RELEASING.md](docs/RELEASING.md).
 
-Verification on this machine (Windows):
+## Documentation
 
-```sh
-pnpm typecheck && pnpm lint && pnpm test
-cargo test --manifest-path src-tauri/Cargo.toml
-cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
-pnpm tauri build --no-bundle
-```
+- [docs/PLUGINS.md](docs/PLUGINS.md) — plugin manifest and security model
+- [docs/RELEASING.md](docs/RELEASING.md) — NSIS build, GitHub release, updater signing
+- [CONTRIBUTING.md](CONTRIBUTING.md) — dev workflow and checks
+- [SECURITY.md](SECURITY.md) — reporting a vulnerability
+- [CHANGELOG.md](CHANGELOG.md) — what changed
 
-`pnpm exec playwright test` exercises the UI in a browser without the Tauri IPC bridge.
+## License
 
-## Harness capability matrix
-
-Everything below is what the adapter/advertisement path supports. `Last verified` means a
-real signed-in account completed the scenario end-to-end on this machine; `—` means it has
-not been verified yet and must not be assumed from tests alone.
-
-| Agent       | Adapter / command                              | Auth                 | Images | Resume | Cancel | Model & effort | Last verified |
-| ----------- | ---------------------------------------------- | -------------------- | ------ | ------ | ------ | -------------- | ------------- |
-| Mock (dev)  | bundled `fixtures/mock-acp-agent.mjs`          | none                 | yes    | yes    | yes    | yes            | —             |
-| Claude Code | `npx -y @zed-industries/claude-code-acp`       | terminal sign-in     | —      | —      | —      | —              | —             |
-| Gemini CLI  | `npx -y @google/gemini-cli --experimental-acp` | terminal sign-in     | —      | —      | —      | —              | —             |
-| Codex CLI   | `npx -y @agentclientprotocol/codex-acp`        | terminal sign-in     | —      | —      | —      | —              | —             |
-| OpenCode    | `opencode acp`                                 | provider CLI sign-in | —      | —      | —      | —              | —             |
-| dsh         | `dsh --profile acp`                            | provider CLI sign-in | —      | —      | —      | —              | —             |
-
-Windows is the verified platform. macOS/Linux build, signing/notarization, and the updater
-endpoint (`releases.pult.local` placeholder) remain release blockers — see
-[TODO.md](TODO.md).
+MIT — see [LICENSE](LICENSE).

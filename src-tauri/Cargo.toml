@@ -3,7 +3,9 @@ name = "pult-core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "pult — local-first Agent Development Environment over ACP (Rust core)"
+repository = "https://github.com/tamrazcode/Pult"
+homepage = "https://github.com/tamrazcode/Pult"
+description = "pult - local-first Agent Development Environment over ACP (Rust core)"
 
 [lib]
 name = "pult_core"
