@@ -518,7 +518,8 @@ function WorkingTimer({ startedAt }: { startedAt: number }) {
     return () => window.clearInterval(timer);
   }, []);
   return (
-    <div className="py-1 text-sm text-text-tertiary">
+    <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
+      <ThinkingAscii />
       {t("chat.workingFor", { duration: formatDuration(startedAt, now) })}
     </div>
   );

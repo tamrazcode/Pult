@@ -815,7 +815,15 @@ describe("MessagesTimeline", () => {
       });
 
       render(<MessagesTimeline threadId="th" />);
-      expect(screen.getByText(/Working for \d+s/)).toHaveTextContent("Working for 4s");
+      const line = screen.getByText(/Working for \d+s/);
+      expect(line).toHaveTextContent("Working for 4s");
+      const spinner = line.querySelector("span[aria-hidden]")!;
+      expect(spinner.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u);
+      const initial = spinner.textContent;
+      act(() => {
+        vi.advanceTimersByTime(90);
+      });
+      expect(spinner.textContent).not.toBe(initial);
 
       act(() => {
         vi.advanceTimersByTime(2_000);
