@@ -779,4 +779,6 @@ export const es: Record<string, string> = {
   "chat.action.moreLines.one": "+{{count}} línea más",
   "chat.action.moreLines.other": "+{{count}} líneas más",
   "composer.fastMode": "Modo rápido",
+  "composer.queue.editing": "Editando mensaje en cola",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 };

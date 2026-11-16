@@ -751,4 +751,6 @@ export const zh: Record<string, string> = {
   "chat.action.moreLines.one": "+{{count}} 行",
   "chat.action.moreLines.other": "+{{count}} 行",
   "composer.fastMode": "快速模式",
+  "composer.queue.editing": "正在编辑排队消息",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 };

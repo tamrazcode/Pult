@@ -333,7 +333,7 @@ describe("Markdown links", () => {
     );
 
     await waitFor(() =>
-      expect(readImageDataUrl).toHaveBeenCalledWith(
+      expect(readImageDataUrl.mock.calls[0]?.[0]).toBe(
         "C:\\Users\\borch\\pult-workspace\\outputs\\desktop.png",
       ),
     );
@@ -350,7 +350,7 @@ describe("Markdown links", () => {
     );
 
     await waitFor(() =>
-      expect(readImageDataUrl).toHaveBeenCalledWith(
+      expect(readImageDataUrl.mock.calls[0]?.[0]).toBe(
         "C:\\Users\\borch\\pult-workspace\\outputs\\screenshots\\desktop.png",
       ),
     );

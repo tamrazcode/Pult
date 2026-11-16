@@ -87,18 +87,6 @@ function makeQueueItems(): QueueItem[] {
   ];
 }
 
-function makeDataTransfer() {
-  const store = new Map<string, string>();
-  return {
-    effectAllowed: "move",
-    dropEffect: "move",
-    setData: (type: string, value: string) => {
-      store.set(type, value);
-    },
-    getData: (type: string) => store.get(type) ?? "",
-  };
-}
-
 describe("queue actions", () => {
   beforeEach(() => {
     navigate.mockReset().mockResolvedValue(undefined);
@@ -158,12 +146,12 @@ describe("queue actions", () => {
     await Promise.allSettled([updatePromise, reorderPromise, steerPromise]);
   });
 
-  it("renders draggable reorder handle, pencil Edit button, and Steer button on queue rows", () => {
+  it("renders reorder handle, pencil Edit button, and Steer button on queue rows", () => {
     render(<Composer threadId="th" />);
 
     const handles = screen.getAllByLabelText("Reorder queued message");
     expect(handles).toHaveLength(2);
-    expect(handles[0].closest("[draggable='true']")).toBeTruthy();
+    expect(handles[0].className).toContain("cursor-grab");
 
     const editButtons = screen.getAllByRole("button", { name: "Edit queued message" });
     expect(editButtons).toHaveLength(2);
@@ -173,57 +161,37 @@ describe("queue actions", () => {
     expect(steerButtons).toHaveLength(2);
   });
 
-  it("edits a queued message inline with Save and Cancel without calling runsQueueRemove", async () => {
+  it("edits a queued message in the composer and restores the draft afterwards", async () => {
     render(<Composer threadId="th" />);
 
-    const editButtons = screen.getAllByRole("button", { name: "Edit queued message" });
-    fireEvent.click(editButtons[0]);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "my draft" } });
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
 
     expect(runsQueueRemove).not.toHaveBeenCalled();
+    expect(textarea.value).toBe("first queued");
+    expect(screen.getByText("Editing queued message")).toBeInTheDocument();
 
-    const editBox = screen.getByDisplayValue("first queued");
-    expect(screen.getAllByRole("textbox")).toContain(editBox);
-    const saveBtn = screen.getByRole("button", { name: /^save$/i });
-    const cancelBtn = screen.getByRole("button", { name: /^cancel$/i });
-    expect(saveBtn).toBeInTheDocument();
-    expect(cancelBtn).toBeInTheDocument();
-
-    fireEvent.change(editBox, { target: { value: "edited queued" } });
-    fireEvent.click(saveBtn);
+    fireEvent.change(textarea, { target: { value: "edited queued" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
 
     await waitFor(() => expect(runsQueueUpdate).toHaveBeenCalledWith("th", "q1", "edited queued"));
+    await waitFor(() => expect(textarea.value).toBe("my draft"));
     expect(runsQueueRemove).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
-    const editBoxAgain = screen.getByDisplayValue("first queued");
-    fireEvent.change(editBoxAgain, { target: { value: "discarded edit" } });
-    fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
-
-    expect(runsQueueUpdate).toHaveBeenCalledTimes(1);
-    expect(runsQueueRemove).not.toHaveBeenCalled();
-    expect(screen.getByText("first queued")).toBeInTheDocument();
   });
 
-  it("saves inline edit on Enter and cancels on Escape without cancelling the active run", async () => {
+  it("cancels queued-message editing with Escape and keeps the composer draft", () => {
     render(<Composer threadId="th" />);
 
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "my draft" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
-    const editBox = screen.getByDisplayValue("first queued");
-    fireEvent.change(editBox, { target: { value: "saved via enter" } });
-    fireEvent.keyDown(editBox, { key: "Enter" });
+    fireEvent.change(textarea, { target: { value: "aborted via escape" } });
+    fireEvent.keyDown(window, { key: "Escape" });
 
-    await waitFor(() =>
-      expect(runsQueueUpdate).toHaveBeenCalledWith("th", "q1", "saved via enter"),
-    );
-
-    fireEvent.click(screen.getAllByRole("button", { name: "Edit queued message" })[0]);
-    const editBoxAgain = screen.getByDisplayValue("first queued");
-    fireEvent.change(editBoxAgain, { target: { value: "aborted via escape" } });
-    fireEvent.keyDown(editBoxAgain, { key: "Escape" });
-
-    expect(runsQueueUpdate).toHaveBeenCalledTimes(1);
+    expect(runsQueueUpdate).not.toHaveBeenCalled();
     expect(runsCancel).not.toHaveBeenCalled();
-    expect(screen.getByText("first queued")).toBeInTheDocument();
+    expect(textarea.value).toBe("my draft");
   });
 
   it("calls runsQueueSteer when clicking Steer without calling runsQueueRemove or runsDispatch", async () => {
@@ -237,15 +205,13 @@ describe("queue actions", () => {
     expect(runsDispatch).not.toHaveBeenCalled();
   });
 
-  it("reorders queued messages on HTML5 dragstart, dragover, and drop", async () => {
+  it("reorders queued messages with a pointer drag", async () => {
     render(<Composer threadId="th" />);
 
-    const handles = screen.getAllByLabelText("Reorder queued message");
-    const dataTransfer = makeDataTransfer();
-
-    fireEvent.dragStart(handles[0], { dataTransfer });
-    fireEvent.dragOver(handles[1], { dataTransfer });
-    fireEvent.drop(handles[1], { dataTransfer });
+    const row = screen.getByText("first queued").parentElement!;
+    fireEvent.pointerDown(row, { clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(row, { clientY: 44, pointerId: 1 });
+    fireEvent.pointerUp(row, { clientY: 44, pointerId: 1 });
 
     await waitFor(() => expect(runsQueueReorder).toHaveBeenCalledWith("th", ["q2", "q1"]));
   });

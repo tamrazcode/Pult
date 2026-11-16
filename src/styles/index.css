@@ -56,6 +56,15 @@
   font-feature-settings: "tnum";
 }
 
+/* Long sidebar names fade out on the right instead of ending in an ellipsis. */
+@utility fade-truncate {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent);
+}
+
 /* Slow, uneven glow that sweeps the active activity label. The gradient keeps
    enough contrast at both ends; reduced motion falls back to plain text. */
 @keyframes activity-shimmer {

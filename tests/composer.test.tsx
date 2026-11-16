@@ -10,6 +10,7 @@ const {
   runsRespondPermission,
   runsQueueRemove,
   runsQueueUpdate,
+  runsQueueReorder,
   workspaceFiles,
   runsSetMode,
   runsSetConfigOption,
@@ -28,6 +29,7 @@ const {
   runsRespondPermission: vi.fn(),
   runsQueueRemove: vi.fn(),
   runsQueueUpdate: vi.fn(),
+  runsQueueReorder: vi.fn(),
   workspaceFiles: vi.fn(),
   runsSetMode: vi.fn(),
   runsSetConfigOption: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     runsRespondPermission,
     runsQueueRemove,
     runsQueueUpdate,
+    runsQueueReorder,
     workspaceFiles,
     runsSetMode,
     runsSetConfigOption,
@@ -133,6 +136,7 @@ describe("composer", () => {
     runsRespondPermission.mockReset().mockResolvedValue(undefined);
     runsQueueRemove.mockReset().mockResolvedValue(undefined);
     runsQueueUpdate.mockReset().mockResolvedValue(undefined);
+    runsQueueReorder.mockReset().mockResolvedValue(undefined);
     workspaceFiles.mockReset().mockResolvedValue([]);
     runsSetMode.mockReset().mockResolvedValue(undefined);
     runsSetConfigOption.mockReset().mockResolvedValue(undefined);
@@ -1238,7 +1242,7 @@ describe("composer", () => {
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 
-  it("renders queued row with drag handle, Steer, Edit, and Remove controls and edits inline via runsQueueUpdate", async () => {
+  it("edits a queued message in the composer and restores the draft afterwards", async () => {
     useRunsStore.setState({
       queueByThread: {
         th: [
@@ -1262,24 +1266,90 @@ describe("composer", () => {
     expect(screen.getByRole("button", { name: /steer queued message/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /remove queued message/i })).toBeInTheDocument();
 
-    const editBtn = screen.getByRole("button", { name: /edit queued message/i });
-    fireEvent.click(editBtn);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "my draft" } });
 
-    expect(runsQueueRemove).not.toHaveBeenCalled();
-    const inlineInput = screen.getByRole("textbox", {
-      name: /queued message text/i,
-    }) as HTMLInputElement;
-    expect(inlineInput.value).toBe("follow up");
-    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /edit queued message/i }));
+    expect(screen.getByText("Editing queued message")).toBeInTheDocument();
+    expect(textarea.value).toBe("follow up");
 
-    fireEvent.change(inlineInput, { target: { value: "updated follow up" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.change(textarea, { target: { value: "updated follow up" } });
+    fireEvent.keyDown(textarea, { key: "Enter" });
 
     await waitFor(() =>
       expect(runsQueueUpdate).toHaveBeenCalledWith("th", "q1", "updated follow up"),
     );
+    await waitFor(() => expect(textarea.value).toBe("my draft"));
+    expect(screen.queryByText("Editing queued message")).toBeNull();
     expect(runsQueueRemove).not.toHaveBeenCalled();
+  });
+
+  it("cancels queued-message editing with Escape and keeps the composer draft", () => {
+    useRunsStore.setState({
+      queueByThread: {
+        th: [
+          {
+            id: "q1",
+            threadId: "th",
+            instanceId: "mock",
+            text: "follow up",
+            images: [],
+            createdAt: 100,
+          },
+        ],
+      },
+    });
+
+    render(<Composer threadId="th" />);
+    const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;
+    fireEvent.change(textarea, { target: { value: "my draft" } });
+    fireEvent.click(screen.getByRole("button", { name: /edit queued message/i }));
+    fireEvent.change(textarea, { target: { value: "discard me" } });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(textarea.value).toBe("my draft");
+    expect(runsQueueUpdate).not.toHaveBeenCalled();
+  });
+
+  it("renders the queue as one glass cap without dividers and reorders rows by pointer drag", () => {
+    useRunsStore.setState({
+      queueByThread: {
+        th: [
+          {
+            id: "q1",
+            threadId: "th",
+            instanceId: "mock",
+            text: "first queued",
+            images: [],
+            createdAt: 100,
+          },
+          {
+            id: "q2",
+            threadId: "th",
+            instanceId: "mock",
+            text: "second queued",
+            images: [],
+            createdAt: 200,
+          },
+        ],
+      },
+    });
+
+    const { container } = render(<Composer threadId="th" />);
+    const cap = container.querySelector(".rounded-t-\\[18px\\]") as HTMLElement;
+    expect(cap).not.toBeNull();
+    expect(cap.className).not.toContain("divide-y");
+    expect(cap.className).toContain("backdrop-blur");
+    expect(cap.className).toContain("pt-1");
+    expect(cap.className).toContain("pb-4");
+
+    const row = screen.getByText("first queued").parentElement!;
+    fireEvent.pointerDown(row, { clientY: 10, pointerId: 1 });
+    fireEvent.pointerMove(row, { clientY: 44, pointerId: 1 });
+    fireEvent.pointerUp(row, { clientY: 44, pointerId: 1 });
+
+    expect(runsQueueReorder).toHaveBeenCalledWith("th", ["q2", "q1"]);
   });
 
   it("shows 'Queue message' button when running run has typed text and 'Stop run' when empty", async () => {

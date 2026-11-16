@@ -776,4 +776,6 @@ export const de: Record<string, string> = {
   "chat.action.moreLines.one": "+{{count}} weitere Zeile",
   "chat.action.moreLines.other": "+{{count}} weitere Zeilen",
   "composer.fastMode": "Schneller Modus",
+  "composer.queue.editing": "Nachricht in der Warteschlange bearbeiten",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 };

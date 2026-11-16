@@ -211,6 +211,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     setActiveHistoryKey((previous) => (previous === current ? previous : current));
   };
 
+  const hasActionItems = entries.some((entry) => isActionItem(entry.item));
+
   return (
     <div className="relative flex min-h-0 flex-1">
       <div
@@ -227,7 +229,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               {t("chat.earlierMessagesHidden", { count: hiddenCount })}
             </button>
           )}
-          {windowedEntries.length > 0 && <TimelineRows entries={windowedEntries} />}
+          {windowedEntries.length > 0 && (
+            <TimelineRows entries={windowedEntries} startedAt={activeRun?.startedAt} />
+          )}
 
           {pendingUser && (
             <div>
@@ -235,11 +239,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             </div>
           )}
 
-          {view.streaming && activeRun?.startedAt !== undefined && (
+          {view.streaming && activeRun?.startedAt !== undefined && !hasActionItems && (
             <WorkingTimer startedAt={activeRun.startedAt} />
           )}
 
-          {entries.length === 0 && view.streaming && (
+          {entries.length === 0 && view.streaming && activeRun?.startedAt === undefined && (
             <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
               <ThinkingAscii />
               <span className="activity-shimmer">{t("chat.workingEllipsis")}</span>
@@ -397,7 +401,7 @@ function summarizeActionGroup(items: ChatItem[]): string {
 }
 
 /** Consecutive tools/thoughts/traces collapse into one T3-style summary row. */
-function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
+function TimelineRows({ entries, startedAt }: { entries: TimelineEntry[]; startedAt?: number }) {
   const rows: ReactNode[] = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -419,7 +423,7 @@ function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
       // the row itself auto-expands while the agent works.
       rows.push(
         <div key={entry.key} data-history-key={entry.key}>
-          <ActionGroupRow entries={group} />
+          <ActionGroupRow entries={group} startedAt={startedAt} />
         </div>,
       );
       index = next - 1;
@@ -456,7 +460,7 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
   think: "chat.thinking",
 };
 
-function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
+function ActionGroupRow({ entries, startedAt }: { entries: TimelineEntry[]; startedAt?: number }) {
   const t = useT();
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
@@ -476,10 +480,15 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
   }, [active]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (activeItem?.type !== "thought") return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [activeItem]);
+    if (!active) return;
+    if (
+      activeItem?.type === "thought" ||
+      (activeItem?.type === "tool" && startedAt !== undefined)
+    ) {
+      const timer = window.setInterval(() => setNow(Date.now()), 1000);
+      return () => window.clearInterval(timer);
+    }
+  }, [active, activeItem, startedAt]);
 
   let label: string;
   if (activeItem?.type === "thought") {
@@ -487,7 +496,14 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
       duration: formatDuration(activeItem.startedAt, now),
     });
   } else if (activeItem?.type === "tool") {
-    label = t(ACTION_LABEL_KEYS[activeItem.kind] ?? "chat.tool.working");
+    const action = t(ACTION_LABEL_KEYS[activeItem.kind] ?? "chat.tool.working");
+    label =
+      startedAt !== undefined
+        ? t("chat.action.withDuration", {
+            action,
+            duration: formatDuration(startedAt, now),
+          })
+        : action;
   } else if (items.length === 1 && last.type === "thought") {
     label = t("chat.thoughtFor", { duration: formatDuration(last.startedAt, last.endedAt) });
   } else if (items.length === 1 && last.type === "trace") {

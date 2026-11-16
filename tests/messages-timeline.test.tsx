@@ -547,12 +547,14 @@ describe("MessagesTimeline", () => {
       locations: [],
     };
     useRunsStore.setState({
-      runsByThread: { th: [run("r1", "running", 0)] },
+      runsByThread: { th: [{ ...run("r1", "running", 0), startedAt: Date.now() - 4_000 }] },
       viewsByRun: { r1: { items: [first, latest], streaming: true } },
     });
     const { container } = render(<MessagesTimeline threadId="th" />);
     expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
-    const summary = screen.getByRole("button", { name: "Running command" });
+    const summary = screen.getByRole("button", { name: /Running command ·/ });
+    expect(summary).toHaveTextContent(/Running command · \d+s/);
+    expect(screen.queryByText(/Working for \d+s/)).toBeNull();
     expect(summary).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Read source")).toBeNull();
     fireEvent.click(summary);
@@ -567,7 +569,7 @@ describe("MessagesTimeline", () => {
         },
       }),
     );
-    expect(screen.getByRole("button", { name: "Running command" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /Running command ·/ })).toHaveAttribute(
       "aria-expanded",
       "true",
     );
@@ -841,7 +843,9 @@ describe("MessagesTimeline", () => {
 
   it("shows the ASCII spinner beside the initial Working… line", () => {
     useRunsStore.setState({
-      runsByThread: { th: [run("r1", "running", 0)] },
+      runsByThread: {
+        th: [{ ...run("r1", "running", 0), startedAt: undefined as unknown as number }],
+      },
       viewsByRun: {
         r1: { items: [], streaming: true },
       },

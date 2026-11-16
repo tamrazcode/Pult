@@ -795,4 +795,6 @@ export const ru: Record<string, string> = {
   "chat.action.moreLines.many": "+ещё {{count}} строк",
   "chat.action.moreLines.other": "+ещё {{count}} строки",
   "composer.fastMode": "Быстрый режим",
+  "composer.queue.editing": "Редактирование сообщения в очереди",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 };

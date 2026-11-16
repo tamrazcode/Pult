@@ -24,6 +24,7 @@ import { useT } from "../../lib/i18n";
 import { classifyMarkdownHref } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
+import { useThreadsStore } from "../../stores/threads";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
 
@@ -321,7 +322,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     setDataUrl(null);
     setFailed(false);
     let cancelled = false;
-    readImageDataUrl(fileUrlToPath(source))
+    readImageDataUrl(fileUrlToPath(source), useThreadsStore.getState().activeThreadId ?? undefined)
       .then((url) => {
         if (!cancelled) setDataUrl(url);
       })

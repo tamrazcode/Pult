@@ -776,4 +776,6 @@ export const ja: Record<string, string> = {
   "chat.action.moreLines.one": "+{{count}} 行",
   "chat.action.moreLines.other": "+{{count}} 行",
   "composer.fastMode": "高速モード",
+  "composer.queue.editing": "キューのメッセージを編集中",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 };

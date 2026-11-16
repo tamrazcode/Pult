@@ -151,8 +151,8 @@ export function projectsDelete(id: string): Promise<void> {
 }
 
 /** Reads a local raster image as a data URL (Markdown image artifacts). */
-export function readImageDataUrl(path: string): Promise<string> {
-  return invokeRequired<string>("read_image_data_url", { path });
+export function readImageDataUrl(path: string, threadId?: string): Promise<string> {
+  return invokeRequired<string>("read_image_data_url", { path, threadId: threadId ?? null });
 }
 
 /** Native folder picker; null outside Tauri or when the user cancels. */

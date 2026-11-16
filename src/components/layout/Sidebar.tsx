@@ -140,7 +140,7 @@ function ThreadRow({
               }`}
             />
           ) : null}
-          <span className="truncate">{thread.title || t("sidebar.untitled")}</span>
+          <span className="min-w-0 fade-truncate">{thread.title || t("sidebar.untitled")}</span>
           <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
             {relativeTime(thread.updatedAt)}
           </span>
@@ -204,7 +204,9 @@ function ProjectRow({
         >
           {initials}
         </span>
-        <span className="truncate text-sm font-medium text-text-primary">{project.name}</span>
+        <span className="min-w-0 fade-truncate text-sm font-medium text-text-primary">
+          {project.name}
+        </span>
       </button>
       <button
         type="button"

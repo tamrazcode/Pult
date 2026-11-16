@@ -473,7 +473,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
-          className="flex h-8 min-w-0 max-w-[320px] items-center gap-1.5 rounded-full border border-border-subtle bg-surface px-2.5 text-xs text-text-secondary transition hover:bg-hover"
+          className="flex h-8 min-w-0 max-w-[320px] items-center gap-1.5 rounded-full px-2.5 text-xs text-text-secondary transition hover:bg-hover"
         >
           <ProviderLogo instance={selected} />
           <span className="min-w-0 max-w-[150px] truncate text-text-primary">{modelLabel}</span>
@@ -491,8 +491,8 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
             aria-label={t("composer.fastMode")}
             title={t("composer.fastMode")}
             onClick={() => pickConfig(fastOption.id, !fastOn)}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-subtle transition hover:bg-hover ${
-              fastOn ? "bg-warning/10 text-warning" : "bg-surface text-text-tertiary"
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition hover:bg-hover ${
+              fastOn ? "text-warning" : "text-text-tertiary"
             }`}
           >
             <Zap size={13} fill={fastOn ? "currentColor" : "none"} />

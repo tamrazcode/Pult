@@ -1644,7 +1644,18 @@ pub async fn workspace_read_html(
 pub async fn read_image_data_url(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     path: String,
+    thread_id: Option<String>,
 ) -> Result<String, PultError> {
+    // Full access already lets the agent read these files itself; the display
+    // restriction exists to protect supervised/auto threads, not to hide the
+    // agent's own screenshots.
+    let full_access = thread_id
+        .as_deref()
+        .map(|id| {
+            runtime.permission_mode_for(id)
+                == crate::runtime::permissions::PermissionMode::FullAccess
+        })
+        .unwrap_or(false);
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(threads) = runtime.store().list_threads() {
         roots.extend(threads.into_iter().filter_map(|thread| thread.workspace.map(Into::into)));
@@ -1666,7 +1677,7 @@ pub async fn read_image_data_url(
             .iter()
             .filter_map(|root| root.canonicalize().ok())
             .any(|root| canonical.starts_with(root));
-        if !allowed {
+        if !allowed && !full_access {
             return Err(PultError::internal(
                 "image is outside the project/thread workspace",
             ));

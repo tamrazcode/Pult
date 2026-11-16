@@ -101,4 +101,5 @@ export const chat = {
   "chat.action.openDiff": "Open diff",
   "chat.action.moreLines.one": "+{{count}} more line",
   "chat.action.moreLines.other": "+{{count}} more lines",
+  "chat.action.withDuration": "{{action}} · {{duration}}",
 } as const;
