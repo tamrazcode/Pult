@@ -98,7 +98,9 @@ const SHIKI_LANG_LOADERS: Record<string, () => Promise<{ default: unknown }>> = 
   csharp: () => import("shiki/langs/csharp.mjs"),
 };
 // Re-parse markdown at most this often while a message streams.
-const STREAM_PARSE_MS = 120;
+// ~30 fps: 120 ms batches made streaming look frozen between chunks. Shiki is
+// already disabled for an open fence (PlainCodeContext), so parsing stays cheap.
+const STREAM_PARSE_MS = 32;
 // Highlight at most once per this interval while the code grows during streaming.
 const STREAM_DEBOUNCE_MS = 150;
 const COPY_FEEDBACK_MS = 1500;
