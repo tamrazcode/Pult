@@ -1,8 +1,8 @@
-//! AgentRuntime (§4.4): run orchestration, permission policy, event fan-out
+//! AgentRuntime (В§4.4): run orchestration, permission policy, event fan-out
 //! (persist + emit to the UI), and the fs sandbox for client callbacks.
 //!
 //! M1 simplifications (DEVLOG): one ACP connection per RUN (spawn on dispatch,
-//! kill on finish — the mock agent is single-session; pooling lands in M6);
+//! kill on finish вЂ” the mock agent is single-session; pooling lands in M6);
 //! supervised permission policy only (auto modes + tests land in M3); one
 //! implicit workspace project (projects UI comes later).
 
@@ -33,7 +33,7 @@ use crate::store::Store;
 
 /// Event fan-out seam: the production sink is the Tauri app handle; tests
 /// record emissions in memory. Payloads are serialized once here. `notify`
-/// posts an OS notification when the window is unfocused (§5.5); the focus
+/// posts an OS notification when the window is unfocused (В§5.5); the focus
 /// check lives in the sink implementation.
 pub trait EventSink: Send + Sync + 'static {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String>;
@@ -178,7 +178,7 @@ struct PendingPermission {
     wire_id: RequestId,
     /// ACP ToolKind of the pending tool call (the remembered key class).
     tool_kind: String,
-    /// optionId → ACP kind, for remembered-decision bookkeeping.
+    /// optionId в†’ ACP kind, for remembered-decision bookkeeping.
     option_kinds: HashMap<String, String>,
 }
 
@@ -271,21 +271,21 @@ impl Drop for WarmGuard {
 }
 
 struct Inner {
-    /// Active runs: run_id → live connection/session.
+    /// Active runs: run_id в†’ live connection/session.
     runs: HashMap<String, RunState>,
     /// Per-run queue the IPC layer pushes UI answers into.
     answer_queues: HashMap<String, mpsc::UnboundedSender<(String, AnswerPayload)>>,
-    /// thread_id → active run_id (§4.2: at most one active run per thread).
+    /// thread_id в†’ active run_id (В§4.2: at most one active run per thread).
     threads_working: HashMap<String, String>,
     /// Threads being deleted: no new runs and no queue drain while present.
     deleting_threads: std::collections::HashSet<String>,
     /// Runs whose Stop was pressed (grace timer or force kill in flight).
     cancelling_runs: std::collections::HashSet<String>,
-    /// instance_id → capabilities observed at the last handshake.
+    /// instance_id в†’ capabilities observed at the last handshake.
     capabilities: HashMap<String, CachedCaps>,
-    /// thread_id → permission mode override (settings default otherwise).
+    /// thread_id в†’ permission mode override (settings default otherwise).
     permission_modes: HashMap<String, PermissionMode>,
-    /// Terminal callbacks registry (§5.5); survives runs for M5 reattach.
+    /// Terminal callbacks registry (В§5.5); survives runs for M5 reattach.
     terminals: Arc<TerminalRegistry>,
     /// User-facing PTY terminals (M5 panel): ConPTY-backed, event-streamed.
     ptys: Arc<crate::runtime::ptys::PtyRegistry>,
@@ -293,7 +293,7 @@ struct Inner {
     warm: HashMap<String, WarmConn>,
     /// Providers whose warmup is currently in flight (no duplicate spawns).
     warming: std::collections::HashSet<String>,
-    /// The agent matrix (§4.5 config.toml instances; mock fallback).
+    /// The agent matrix (В§4.5 config.toml instances; mock fallback).
     instances: Vec<crate::config::InstanceSpec>,
     /// Read/parse failure of config.toml; surfaced in Settings instead of
     /// looking like a normal empty install.
@@ -306,6 +306,10 @@ pub struct AgentRuntime {
     inner: Mutex<Inner>,
     /// Warm processes/sessions parked after a successful turn.
     pub pool: crate::runtime::pool::IdlePool,
+    /// App-owned orchestration tools and task log.
+    pub orchestrator: Arc<crate::orchestrator::engine::OrchestratorEngine>,
+    /// Bearer tokens for the orchestrator MCP server.
+    pub mcp_registry: Arc<crate::orchestrator::McpTokenRegistry>,
 }
 
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
@@ -329,7 +333,7 @@ fn workspace_key(root: &Path) -> String {
 impl AgentRuntime {
     pub fn new(store: Arc<Store>, sink: Arc<dyn EventSink>) -> Self {
         // Runs live only as long as the process: threads left in a run-state
-        // by a previous shutdown are orphans — make them drafts at boot.
+        // by a previous shutdown are orphans вЂ” make them drafts at boot.
         match store.reset_orphaned_run_states() {
             Ok(0) => {}
             Ok(n) => tracing::info!(target: "pult::runtime", count = n, "reset orphaned run states at boot"),
@@ -346,6 +350,10 @@ impl AgentRuntime {
         };
         let terminals = Arc::new(TerminalRegistry::default());
         let pool_terminals = Arc::clone(&terminals);
+        let orchestrator = Arc::new(crate::orchestrator::engine::OrchestratorEngine::new(
+            Arc::clone(&store),
+        ));
+        let mcp_registry = Arc::new(crate::orchestrator::McpTokenRegistry::new());
         Self {
             store,
             sink: Arc::clone(&sink),
@@ -364,8 +372,17 @@ impl AgentRuntime {
                 instances,
                 config_error,
             }),
-            pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals),
+            pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals)
+                .with_mcp_registry(Arc::clone(&mcp_registry)),
+            orchestrator,
+            mcp_registry,
         }
+    }
+
+    /// Connects the engine back to this runtime. Called once at boot, after
+    /// the runtime is behind an `Arc`.
+    pub fn attach_orchestrator(self: &Arc<Self>) {
+        self.orchestrator.attach(self);
     }
 
     /// Spawns and initializes the selected provider in the background so the
@@ -492,6 +509,66 @@ impl AgentRuntime {
             .clone()
     }
 
+    /// MCP servers for one ACP session: always the app-owned orchestrator,
+    /// spoken over HTTP when the agent advertises it, else through the stdio
+    /// bridge. The token is bound to this connection and revoked with it.
+    pub fn mcp_servers_for(
+        &self,
+        thread_id: &str,
+        owner_token: &str,
+        http_capable: bool,
+    ) -> (Vec<crate::protocol::types::McpServer>, Option<String>) {
+        let Some(server) = self.orchestrator.server() else {
+            return (Vec::new(), None);
+        };
+        let depth = self
+            .store
+            .get_thread(thread_id)
+            .map(|thread| thread.depth.clamp(0, u8::MAX as i64) as u8)
+            .unwrap_or(0);
+        let scope = crate::orchestrator::McpScope {
+            owner_token: owner_token.to_string(),
+            thread_id: thread_id.to_string(),
+            depth,
+            can_orchestrate: depth < crate::orchestrator::instructions::MAX_DEPTH,
+        };
+        let token = self.mcp_registry.issue(scope);
+        let entry = if http_capable {
+            crate::protocol::types::McpServer::Http {
+                extra: serde_json::json!({
+                    "name": crate::orchestrator::ORCHESTRATOR_SERVER_NAME,
+                    "url": server.url(),
+                    "headers": [{
+                        "name": "Authorization",
+                        "value": format!("Bearer {token}")
+                    }]
+                }),
+            }
+        } else {
+            let binary = std::env::var("PULT_MCP_STDIO_BIN")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| {
+                    std::env::current_exe()
+                        .ok()
+                        .map(|path| path.to_string_lossy().into_owned())
+                })
+                .unwrap_or_else(|| "pult-core".to_string());
+            crate::protocol::types::McpServer::Stdio {
+                extra: serde_json::json!({
+                    "name": crate::orchestrator::ORCHESTRATOR_SERVER_NAME,
+                    "command": binary,
+                    "args": ["mcp-stdio"],
+                    "env": [
+                        { "name": "PULT_MCP_URL", "value": server.url() },
+                        { "name": "PULT_MCP_TOKEN", "value": token }
+                    ]
+                }),
+            }
+        };
+        (vec![entry], Some(token))
+    }
+
     /// Agent matrix projection (§4.3): configured instances + capabilities
     /// from the last handshake each completed (empty until the first run).
     pub fn instances(&self) -> Vec<InstanceInfo> {
@@ -564,7 +641,7 @@ impl AgentRuntime {
         };
         if !spec.enabled {
             return Err(crate::PultError::internal(format!(
-                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
         match spec.driver.as_str() {
@@ -644,8 +721,8 @@ impl AgentRuntime {
             .and_then(|inner| inner.config_error.clone())
     }
 
-    /// Diagnostics (§8 M6): last raw protocol frames from any live run of
-    /// this instance; no live session → typed error.
+    /// Diagnostics (В§8 M6): last raw protocol frames from any live run of
+    /// this instance; no live session в†’ typed error.
     pub fn diagnostics_frames(&self, instance_id: &str) -> Result<Vec<String>, crate::PultError> {
         let inner = self.inner.lock().expect("runtime lock poisoned");
         for state in inner.runs.values() {
@@ -654,11 +731,11 @@ impl AgentRuntime {
             }
         }
         Err(crate::PultError::internal(format!(
-            "no live session for {instance_id} — frames appear while a run is active"
+            "no live session for {instance_id} вЂ” frames appear while a run is active"
         )))
     }
 
-    /// Switches the session mode (§5.4 session/set_mode). The choice is
+    /// Switches the session mode (В§5.4 session/set_mode). The choice is
     /// remembered even when no run is live (connection-per-run): the next
     /// dispatch applies it before its first prompt.
     pub fn set_mode(&self, thread_id: &str, mode_id: &str) -> Result<(), crate::PultError> {
@@ -679,10 +756,10 @@ impl AgentRuntime {
             }
         };
         let mode_id = mode_id.to_string();
-        // Sync commands run on the main thread — reach the reactor through a
+        // Sync commands run on the main thread вЂ” reach the reactor through a
         // handle instead of panicking outside the tokio context.
         let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-            crate::PultError::internal("no tokio runtime — cannot reach the agent process")
+            crate::PultError::internal("no tokio runtime вЂ” cannot reach the agent process")
         })?;
         handle.spawn(async move {
             if let Err(err) = conn.set_mode(&session_id, &mode_id).await {
@@ -765,7 +842,7 @@ impl AgentRuntime {
         Ok(())
     }
 
-    /// Queue-aware send (§6.1 composer semantics): if the thread is working,
+    /// Queue-aware send (В§6.1 composer semantics): if the thread is working,
     /// the message is stored and auto-dispatches when the active run ends;
     /// otherwise it starts a run immediately.
     #[allow(clippy::too_many_arguments)]
@@ -855,9 +932,18 @@ impl AgentRuntime {
         })
     }
 
-    /// The thread's live run id, if any (§4.2: at most one active run).
-    pub fn active_run_for(&self, thread_id: &str) -> Option<String> {
+    /// The thread's live run id, if any (В§4.2: at most one active run).
+    /// True once the spawned turn has registered its live connection. Stop
+    /// before that point is a no-op, so callers that must cancel reliably wait.
+    pub fn live_run_registered(&self, run_id: &str) -> bool {
         self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .runs
+            .contains_key(run_id)
+    }
+
+    pub fn active_run_for(&self, thread_id: &str) -> Option<String> {        self.inner
             .lock()
             .expect("runtime lock poisoned")
             .threads_working
@@ -936,7 +1022,7 @@ impl AgentRuntime {
 
     /// Remembers handshake capabilities per instance for composer gating and
     /// the M6 mode picker (modes come from the session handshake). An empty
-    /// mode list preserves the previously cached one — resumes that carry no
+    /// mode list preserves the previously cached one вЂ” resumes that carry no
     /// advertised list must not blind the picker.
     fn cache_capabilities(
         &self,
@@ -1103,7 +1189,7 @@ impl AgentRuntime {
         }
     }
 
-    /// Start a run (§4.2): registers the run, persists the user message, and
+    /// Start a run (В§4.2): registers the run, persists the user message, and
     /// hands the turn to a background task. Returns the created run. Callers
     /// that must respect an active run use [`AgentRuntime::send`].
     pub fn dispatch(
@@ -1285,7 +1371,7 @@ impl AgentRuntime {
         err
     }
 
-    /// Stop button / Esc: cancel the active run's prompt turn (§5.3).
+    /// Stop button / Esc: cancel the active run's prompt turn (В§5.3).
     pub fn cancel(self: &Arc<Self>, run_id: &str) -> Result<(), crate::PultError> {
         self.cancel_with_force(run_id, false)
     }
@@ -1323,6 +1409,8 @@ impl AgentRuntime {
             "run:cancelling",
             &serde_json::json!({ "runId": run_id, "threadId": thread_id }),
         );
+        // Stop cascades: no child or grandchild outlives the run that asked.
+        self.orchestrator.cancel_subtree(&thread_id, force);
         if force {
             conn.kill();
             let terminals = {
@@ -1462,7 +1550,7 @@ impl AgentRuntime {
             .expect("runtime lock poisoned")
             .permission_modes
             .insert(thread_id.to_string(), mode);
-        // The chosen mode also becomes the default for new threads (§5.7).
+        // The chosen mode also becomes the default for new threads (В§5.7).
         self.store.set_setting(
             "permission_mode",
             &serde_json::to_value(mode).unwrap_or_default(),
@@ -1470,8 +1558,18 @@ impl AgentRuntime {
         Ok(())
     }
 
+    /// Child-thread ceiling: does not touch the global default, so a subagent
+    /// cannot silently change the user's mode for new chats.
+    pub fn set_thread_permission_mode(&self, thread_id: &str, mode: PermissionMode) {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .permission_modes
+            .insert(thread_id.to_string(), mode);
+    }
+
     /// Remembered allow_always decision per (workspace, instance, tool class)
-    /// (§5.5). A permission granted in one project must not leak into another;
+    /// (В§5.5). A permission granted in one project must not leak into another;
     /// legacy unscoped entries are ignored (they fall back to asking).
     fn remembered_for(
         &self,
@@ -1513,7 +1611,7 @@ impl AgentRuntime {
         }
     }
 
-    /// Flat view for Settings ▸ General (revoke list).
+    /// Flat view for Settings в–ё General (revoke list).
     pub fn list_remembered_permissions(&self) -> Vec<RememberedPermission> {
         let Some(value) = self.store.get_setting("remembered_permissions").ok().flatten() else {
             return Vec::new();
@@ -1717,7 +1815,7 @@ impl AgentRuntime {
     }
 
     /// Writes a hidden `refs/pult/checkpoints/<run_id>` ref so any run's
-    /// resulting tree stays recoverable (§4.4; the rollback UI stays out of
+    /// resulting tree stays recoverable (В§4.4; the rollback UI stays out of
     /// scope, the data does not). Best-effort: skips non-repo workspaces.
     fn spawn_checkpoint(self: &Arc<Self>, thread: &ThreadRecord, run_id: &str) {
         let Some(workspace) = thread.workspace.clone() else {
@@ -1934,6 +2032,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // Terminals are owned by the connection, not by the ACP session id.
     let owner_token: String;
     let mut applied_config: DesiredConfigMap;
+    let mcp_token: Option<String>;
+    let session_context_ready: bool;
+    let session_has_orchestrator: bool;
     let mut context_reset_reason: Option<String> = None;
     let mut replayed_metadata = Vec::new();
     let mut preinit: Option<crate::protocol::types::InitializeResult> = None;
@@ -1952,6 +2053,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             session_id: pooled_session,
             owner_token: pooled_owner,
             applied_config: pooled_config,
+            mcp_token: pooled_token,
             ..
         } = entry;
         // Anything buffered after the previous prompt completed is stale.
@@ -1962,6 +2064,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         session_id = pooled_session;
         owner_token = pooled_owner;
         applied_config = pooled_config;
+        mcp_token = pooled_token;
+        // A parked session already got the instructions on its first prompt.
+        session_context_ready = true;
+        session_has_orchestrator = mcp_token.is_some();
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
             guard.runs.insert(
@@ -2028,6 +2134,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             &runtime,
             &thread_id,
             &instance_id,
+            &owner_token,
             &run_id,
             &root,
             preinit.take(),
@@ -2061,6 +2168,10 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         timing.session_ms = resolved.session_ms;
         session_id = resolved.session_id;
         context_reset_reason = resolved.context_reset_reason;
+        mcp_token = resolved.mcp_token;
+        // A resumed session keeps the context it was given before.
+        session_context_ready = resolved.resumed;
+        session_has_orchestrator = mcp_token.is_some();
         // A resumed session re-announces the prior transcript while `session/load`
         // is in flight. Persisting that replay would duplicate history in this
         // run: drop transcript items, keep session metadata.
@@ -2128,7 +2239,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
 
     // Apply the thread's config picks to this fresh session, then tell the
     // timeline about the effective option set. A rejecting agent never kills
-    // the prompt (§5.4: stale picks must degrade, not fail). `model` goes
+    // the prompt (В§5.4: stale picks must degrade, not fail). `model` goes
     // first because agents narrow dependent options (thought level) when the
     // model changes.
     let advertised_config = runtime.config_option_ids(&instance_id);
@@ -2183,7 +2294,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // Assigned on every break path before the post-loop read.
     let mut stop_reason: Option<String>;
 
-    let mut content = Vec::with_capacity(1 + images.len());
+    let mut content = Vec::with_capacity(2 + images.len());
+    // Wire-only block: the transcript still shows just the user's message.
+    // Never glued before a slash command - the adapter must parse it first.
+    if session_has_orchestrator && !session_context_ready && !text.trim_start().starts_with('/') {
+        if let Ok(thread_record) = runtime.store.get_thread(&thread_id) {
+            if let Some(block) = crate::orchestrator::instructions::prompt_context(&thread_record) {
+                content.push(crate::protocol::types::ContentBlock::text(block));
+            }
+        }
+    }
     content.push(crate::protocol::types::ContentBlock::text(text.clone()));
     for image in &images {
         content.push(crate::protocol::types::ContentBlock::Image {
@@ -2370,7 +2490,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         }
                         ClientRequest::TerminalWait { request_id, params } => {
                             // Answer from a detached task: waiting must not
-                            // stall the event stream (§9 no blocking lanes).
+                            // stall the event stream (В§9 no blocking lanes).
                             let conn = Arc::clone(&conn);
                             let terminals = Arc::clone(&terminals);
                             let owner = owner_token.clone();
@@ -2450,7 +2570,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         "failed" => "failed",
         _ => "finished",
     };
-    // The agent dying mid-run is a designed error state (§8 M7): check before
+    // The agent dying mid-run is a designed error state (В§8 M7): check before
     // our own kill() so a crash is not mistaken for a normal shutdown.
     let crashed_mid_run = conn.died_on_own();
     // Park a healthy session for the next turn of this thread; cancel, crash,
@@ -2478,9 +2598,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 applied_config,
                 // Re-applied next turn: live mode changes are not tracked here.
                 applied_mode: None,
-                // T05 issues the token when it opens the session; the token
-                // lives for the ACP connection and is revoked on kill.
-                mcp_token: None,
+                // The token stays valid while the ACP connection lives; the
+                // pool revokes it when this entry is killed or evicted.
+                mcp_token,
                 instructions_injected: false,
                 compaction_epoch: 0,
                 last_used: std::time::Instant::now(),
@@ -2493,6 +2613,8 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         }
     } else {
         conn.kill();
+        // The agent process is gone, so its terminals and bearer are dead too.
+        runtime.mcp_registry.revoke(&owner_token);
         // The agent process is gone, so its terminals are unreachable: kill
         // their children instead of leaking orphaned processes.
         terminals.release_owner(&owner_token);
@@ -2540,6 +2662,14 @@ impl AgentRuntime {
             Some(stop_reason),
             failure.as_deref(),
         );
+        // Child runs settle their delegated-task row and wake `wait_tasks`.
+        self.orchestrator.finish_child_run(
+            thread_id,
+            run_id,
+            status,
+            stop_reason,
+            failure.as_deref(),
+        );
         if let Some(detail) = &failure {
             tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
         }
@@ -2563,7 +2693,7 @@ impl AgentRuntime {
             self.spawn_checkpoint(&thread, run_id);
         }
         // Queue auto-dispatch: the oldest queued message starts its own run
-        // now that the thread is free (§6.1 queue semantics).
+        // now that the thread is free (В§6.1 queue semantics).
         self.auto_dispatch_queue(thread_id);
         Ok(())
     }
@@ -2622,7 +2752,7 @@ impl AgentRuntime {
     }
 }
 
-/// Result of a one-click connect check (§4.3 providers surface).
+/// Result of a one-click connect check (В§4.3 providers surface).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreflightReport {
@@ -2651,8 +2781,9 @@ impl AgentRuntime {
         cwd: &str,
         instance_id: &str,
         methods: &[crate::protocol::types::AuthMethod],
+        mcp_servers: &[crate::protocol::types::McpServer],
     ) -> Result<crate::protocol::types::NewSessionResult, crate::PultError> {
-        match conn.new_session(cwd).await {
+        match conn.new_session_with_mcp(cwd, mcp_servers.to_vec()).await {
             Ok(session) => {
                 self.cache_auth_state(instance_id, methods.to_vec(), false, None);
                 Ok(session)
@@ -2676,7 +2807,7 @@ impl AgentRuntime {
 
     /// One-click connect check: spawn the agent, complete the initialize
     /// handshake, cache its capabilities, shut it down. No prompt is sent, so
-    /// the check costs nothing and never touches a session — this is what the
+    /// the check costs nothing and never touches a session вЂ” this is what the
     /// "Connect" button runs so the user never wires commands by hand.
     pub async fn preflight(&self, instance_id: &str) -> Result<PreflightReport, crate::PultError> {
         let spec = {
@@ -2690,7 +2821,7 @@ impl AgentRuntime {
         .ok_or_else(|| crate::PultError::internal(format!("unknown instance: {instance_id}")))?;
         if !spec.enabled {
             return Err(crate::PultError::internal(format!(
-                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
         let spawn_config = self.spawn_config_for(instance_id)?;
@@ -2705,7 +2836,7 @@ impl AgentRuntime {
             })?;
         // Auth is real only if a session can actually be created: authMethods
         // advertise SUPPORTED methods, not a missing login (T3 semantics).
-        // The probe runs in a temp cwd and sends no prompt — free and safe.
+        // The probe runs in a temp cwd and sends no prompt вЂ” free and safe.
         let probe_cwd = std::env::temp_dir().to_string_lossy().into_owned();
         let (auth_required, auth_hint, config_options) = match conn.new_session(&probe_cwd).await {
             Ok(session) => (false, None, session.config_options),
@@ -2759,8 +2890,8 @@ impl AgentRuntime {
         })
     }
 
-    /// Runs an agent-managed sign-in: initialize → authenticate(method) →
-    /// fresh `session/new` probe → kill. The second probe is the only honest
+    /// Runs an agent-managed sign-in: initialize в†’ authenticate(method) в†’
+    /// fresh `session/new` probe в†’ kill. The second probe is the only honest
     /// proof: an agent may answer `{}` and still keep sessions locked.
     pub async fn authenticate(
         &self,
@@ -2789,7 +2920,7 @@ impl AgentRuntime {
         };
         if !spec.enabled {
             return Err(crate::PultError::internal(format!(
-                "provider {instance_id} is disabled — turn it on in Settings ▸ Providers"
+                "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
         if !cached_methods.is_empty() {
@@ -2906,17 +3037,21 @@ impl AgentRuntime {
 pub(crate) struct ResolvedSession {
     pub session_id: String,
     pub resumed: bool,
+    /// Bearer issued for this session's orchestrator MCP entry.
+    pub mcp_token: Option<String>,
     /// Set when the UI history and the agent's context can no longer match.
     pub context_reset_reason: Option<String>,
     pub handshake_ms: u64,
     pub session_ms: u64,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn resolve_session(
     conn: &AcpConn,
     runtime: &AgentRuntime,
     thread_id: &str,
     instance_id: &str,
+    owner_token: &str,
     current_run_id: &str,
     root: &Path,
     preinit: Option<crate::protocol::types::InitializeResult>,
@@ -2937,6 +3072,16 @@ async fn resolve_session(
         load_session = init.agent_capabilities.load_session,
         "agent initialized");
     let cwd = root.to_string_lossy().into_owned();
+    // Orchestration is injected per session: HTTP when the agent says it can
+    // speak it, otherwise the stdio bridge. A missing server (tests) is fine.
+    let http_mcp = init
+        .agent_capabilities
+        .mcp_capabilities
+        .as_ref()
+        .and_then(|caps| caps.get("http"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false);
+    let (mcp_servers, mcp_token) = runtime.mcp_servers_for(thread_id, owner_token, http_mcp);
     // A SQLite failure is not "no previous session": surface it instead of
     // silently starting fresh.
     let session_ref = runtime.store.get_session_ref(thread_id, instance_id)?;
@@ -2951,7 +3096,10 @@ async fn resolve_session(
     let mut context_reset_reason = None;
     let session = match session_ref {
         Some(remote) if init.agent_capabilities.load_session => {
-            match conn.load_session(&remote, &cwd).await {
+            match conn
+                .load_session_with_mcp(&remote, &cwd, mcp_servers.clone())
+                .await
+            {
                 Ok(loaded) => {
                     resumed = true;
                     tracing::info!(target: "pult::runtime",
@@ -2969,11 +3117,17 @@ async fn resolve_session(
                     tracing::warn!(target: "pult::runtime",
                         error = %err, "session/load failed; starting a new session");
                     context_reset_reason = Some(
-                        "The previous session could not be resumed — this run starts with fresh agent context."
+                        "The previous session could not be resumed вЂ” this run starts with fresh agent context."
                             .to_string(),
                     );
                     let fresh = runtime
-                        .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                        .open_session(
+                            conn,
+                            &cwd,
+                            instance_id,
+                            &init.auth_methods,
+                            &mcp_servers,
+                        )
                         .await?;
                     let _ = runtime.store.upsert_session_ref(thread_id, instance_id, &fresh.session_id);
                     runtime.cache_capabilities(
@@ -2990,11 +3144,11 @@ async fn resolve_session(
             // The agent advertises no session/load: the visible history is
             // not its context, so say so instead of pretending to continue.
             context_reset_reason = Some(
-                "This agent cannot resume sessions — this run starts with fresh agent context."
+                "This agent cannot resume sessions вЂ” this run starts with fresh agent context."
                     .to_string(),
             );
             let fresh = runtime
-                .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                .open_session(conn, &cwd, instance_id, &init.auth_methods, &mcp_servers)
                 .await?;
             let _ = runtime
                 .store
@@ -3013,12 +3167,12 @@ async fn resolve_session(
                 .is_some_and(|previous| previous != instance_id)
             {
                 context_reset_reason = Some(
-                    "Switched agent — this run starts without the previous agent's context."
+                    "Switched agent вЂ” this run starts without the previous agent's context."
                         .to_string(),
                 );
             }
             let fresh = runtime
-                .open_session(conn, &cwd, instance_id, &init.auth_methods)
+                .open_session(conn, &cwd, instance_id, &init.auth_methods, &mcp_servers)
                 .await?;
             let _ = runtime
                 .store
@@ -3035,6 +3189,7 @@ async fn resolve_session(
     Ok(ResolvedSession {
         session_id: session,
         resumed,
+        mcp_token,
         context_reset_reason,
         handshake_ms,
         session_ms: t_session.elapsed().as_millis() as u64,
@@ -3123,7 +3278,7 @@ fn sync_applied_config(applied: &mut DesiredConfigMap, options: &[SessionConfigO
     }
 }
 
-/// Permission policy + surfacing (§5.5): the mode may auto-resolve before
+/// Permission policy + surfacing (В§5.5): the mode may auto-resolve before
 /// the UI ever sees the request; every auto resolution is traced (never
 /// silent). Surfaced requests park in `pending_permissions`.
 #[allow(clippy::too_many_arguments)]
@@ -3173,7 +3328,7 @@ async fn handle_permission_request(
         },
     );
     if let crate::runtime::permissions::PolicyDecision::AutoResolve(option_id) = decision {
-        // Trace row in the event log: never silent (§5.5).
+        // Trace row in the event log: never silent (В§5.5).
         let flushed = batcher.push(EventKind::ApprovalResponse {
             request_id: request_key,
             option_id: Some(option_id.clone()),
@@ -3255,7 +3410,7 @@ fn surface_permission(
     Ok(())
 }
 
-/// Elicitation (§5.5): surface for the modal; the run parks until answered.
+/// Elicitation (В§5.5): surface for the modal; the run parks until answered.
 fn surface_elicitation(
     runtime: &AgentRuntime,
     run_id: &str,
@@ -3289,13 +3444,13 @@ fn surface_elicitation(
     Ok(())
 }
 
-/// OS notification when the window is not focused (§5.5); the focus check
+/// OS notification when the window is not focused (В§5.5); the focus check
 /// lives in the AppHandle EventSink impl.
 fn notify_if_unfocused(runtime: &AgentRuntime, title: &str, body: &str) {
     runtime.sink_notify(title, body);
 }
 
-/// `terminal/create` handler: sandbox-checked cwd + spawn (§5.5).
+/// `terminal/create` handler: sandbox-checked cwd + spawn (В§5.5).
 fn handle_terminal_create(
     terminals: &TerminalRegistry,
     owner_token: &str,
@@ -3352,7 +3507,7 @@ fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply 
     .map_err(|e| fs_error(e.to_string()))
 }
 
-/// `fs/write_text_file`: sandboxed write plus the computed diff (§5.4) —
+/// `fs/write_text_file`: sandboxed write plus the computed diff (В§5.4) вЂ”
 /// the fs layer attaches old-vs-new to the thread's "Changed files".
 fn write_file_sandboxed(
     root: &Path,
@@ -3378,7 +3533,7 @@ fn write_file_sandboxed(
     (Ok(serde_json::json!({})), Some(change))
 }
 
-/// Unified diff of old→new (3 context lines, same header style as git).
+/// Unified diff of oldв†’new (3 context lines, same header style as git).
 fn unified_diff(path: &str, old: &str, new: &str) -> String {
     similar::TextDiff::from_lines(old, new)
         .unified_diff()
@@ -3401,7 +3556,7 @@ fn diff_stats(diff: &str) -> (u64, u64) {
     (added, removed)
 }
 
-/// Reject paths escaping the workspace root (§5.5: -32002-style typed error).
+/// Reject paths escaping the workspace root (В§5.5: -32002-style typed error).
 fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     let escape = || {
         RpcError::new(
@@ -3427,7 +3582,7 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
         }
     }
     // Compare canonical against canonical: `canonicalize()` returns verbatim
-    // `\?\…` paths, and mixing that with a clean root makes `starts_with`
+    // `\?\вЂ¦` paths, and mixing that with a clean root makes `starts_with`
     // fail spuriously ("path escapes workspace" for `.`).
     let base = root.canonicalize().map_err(|_| escape())?;
     // New files and symlinked parents do not canonicalize themselves, so walk

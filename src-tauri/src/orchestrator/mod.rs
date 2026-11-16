@@ -5,6 +5,8 @@
 //! handled by hand. Tokens are 128-bit random values bound to a thread scope, so
 //! a token outliving its ACP session cannot keep delegating work.
 
+pub mod engine;
+pub mod instructions;
 mod mcp_server;
 pub mod stdio;
 mod tools;
@@ -198,7 +200,12 @@ mod tests {
 
     #[test]
     fn reserved_names_cannot_be_used_by_custom_servers() {
-        for name in ["pult_orchestrator", " Pult_Orchestrator ", "pult", "orchestrator"] {
+        for name in [
+            "pult_orchestrator",
+            " Pult_Orchestrator ",
+            "pult",
+            "orchestrator",
+        ] {
             assert!(is_reserved_mcp_name(name), "{name} must be reserved");
         }
         for name in ["my-server", "orchestrator-extra", "pult-user"] {

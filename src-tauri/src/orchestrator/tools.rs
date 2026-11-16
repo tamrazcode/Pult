@@ -4,14 +4,13 @@
 
 use serde_json::{json, Value};
 
-pub const ORCHESTRATOR_TOOL_NAMES: [&str; 7] = [
+pub const ORCHESTRATOR_TOOL_NAMES: [&str; 6] = [
     "orchestrator_capabilities",
     "delegate_task",
     "wait_tasks",
     "get_task",
     "list_tasks",
     "cancel_task",
-    "steer_task",
 ];
 
 /// Tools that read only orchestration state and therefore work even when the
@@ -99,19 +98,6 @@ pub fn tool_specs() -> Value {
                 },
                 "additionalProperties": false
             }
-        },
-        {
-            "name": "steer_task",
-            "description": "Send a refinement to a running child, or start a follow-up turn in the same child thread when it already finished.",
-            "inputSchema": {
-                "type": "object",
-                "required": ["taskId", "message"],
-                "properties": {
-                    "taskId": { "type": "string" },
-                    "message": { "type": "string" }
-                },
-                "additionalProperties": false
-            }
         }
     ])
 }
@@ -126,10 +112,7 @@ mod tests {
         let specs = specs.as_array().expect("tool specs array");
         assert_eq!(specs.len(), ORCHESTRATOR_TOOL_NAMES.len());
         for name in ORCHESTRATOR_TOOL_NAMES {
-            let matches = specs
-                .iter()
-                .filter(|spec| spec["name"] == name)
-                .count();
+            let matches = specs.iter().filter(|spec| spec["name"] == name).count();
             assert_eq!(matches, 1, "{name} must be advertised exactly once");
         }
     }

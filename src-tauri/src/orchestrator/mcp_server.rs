@@ -48,8 +48,8 @@ impl OrchestratorMcpServer {
                 let host = Arc::clone(&host);
                 let registry = Arc::clone(&registry);
                 tokio::spawn(async move {
-                    let _ = tokio::time::timeout(REQUEST_TIMEOUT, serve(stream, host, registry))
-                        .await;
+                    let _ =
+                        tokio::time::timeout(REQUEST_TIMEOUT, serve(stream, host, registry)).await;
                 });
             }
         });
@@ -386,10 +386,7 @@ mod tests {
 
     async fn fixture() -> (Arc<OrchestratorMcpServer>, String, String) {
         let host = Arc::new(FakeHost {
-            active: Mutex::new(HashMap::from([(
-                "th-a".to_string(),
-                "run-1".to_string(),
-            )])),
+            active: Mutex::new(HashMap::from([("th-a".to_string(), "run-1".to_string())])),
         });
         let registry = Arc::new(McpTokenRegistry::new());
         let token = registry.issue(McpScope::new("owner-a", "th-a", 0));
@@ -405,7 +402,9 @@ mod tests {
         path: &str,
         body: &str,
     ) -> String {
-        let mut stream = TcpStream::connect(("127.0.0.1", server.port())).await.unwrap();
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port()))
+            .await
+            .unwrap();
         let auth = token
             .map(|token| format!("Authorization: Bearer {token}\r\n"))
             .unwrap_or_default();
@@ -451,8 +450,14 @@ mod tests {
         let response = send(&server, Some(&token), "POST", "/mcp", initialize).await;
         assert!(response.starts_with("HTTP/1.1 200"), "{response}");
         let body = body_of(&response);
-        assert_eq!(body["result"]["serverInfo"]["name"], ORCHESTRATOR_SERVER_NAME);
-        assert_eq!(body["result"]["capabilities"]["tools"]["listChanged"], false);
+        assert_eq!(
+            body["result"]["serverInfo"]["name"],
+            ORCHESTRATOR_SERVER_NAME
+        );
+        assert_eq!(
+            body["result"]["capabilities"]["tools"]["listChanged"],
+            false
+        );
 
         let list = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
         let response = send(&server, Some(&token), "POST", "/mcp", list).await;
@@ -507,13 +512,18 @@ mod tests {
         let response = send(&server, Some(&token), "POST", "/mcp", call).await;
         let body = body_of(&response);
         assert_eq!(body["result"]["isError"], true);
-        assert_eq!(body["result"]["content"][0]["text"], "tool failed on purpose");
+        assert_eq!(
+            body["result"]["content"][0]["text"],
+            "tool failed on purpose"
+        );
     }
 
     #[tokio::test]
     async fn oversized_declared_body_is_rejected_before_reading() {
         let (server, token, _) = fixture().await;
-        let mut stream = TcpStream::connect(("127.0.0.1", server.port())).await.unwrap();
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port()))
+            .await
+            .unwrap();
         let request = format!(
             "POST /mcp HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer {token}\r\nContent-Length: {}\r\n\r\n",
             MAX_BODY + 1

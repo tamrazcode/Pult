@@ -185,6 +185,33 @@ pub fn run() {
                 store,
                 Arc::new(app.handle().clone()) as Arc<dyn runtime::EventSink>,
             ));
+            runtime.attach_orchestrator();
+            let engine = Arc::clone(&runtime.orchestrator);
+            let host = Arc::new(orchestrator::engine::RuntimeHost {
+                engine: Arc::clone(&engine),
+            });
+            let registry = Arc::clone(&runtime.mcp_registry);
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            tauri::async_runtime::spawn(async move {
+                match orchestrator::OrchestratorMcpServer::start(host, registry).await {
+                    Ok(server) => {
+                        engine.set_server(server);
+                        let _ = started_tx.send(Ok(()));
+                    }
+                    Err(error) => {
+                        let _ = started_tx.send(Err(error.to_string()));
+                    }
+                }
+            });
+            match started_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::error!(target: "pult::orchestrator", error = %error,
+                        "orchestration MCP server did not start; delegation is unavailable")
+                }
+                Err(error) => tracing::error!(target: "pult::orchestrator", error = %error,
+                    "orchestration MCP server startup timed out"),
+            }
             app.manage(runtime);
             app.manage(browser::BrowserState::default());
             Ok(())
@@ -238,6 +265,10 @@ pub fn run() {
             ipc::providers_detect_installed,
             ipc::providers_install,
             ipc::providers_login,
+            ipc::orchestrator_tasks_list,
+            ipc::orchestrator_cancel_task,
+            ipc::orchestrator_cancel_all,
+            ipc::orchestrator_retry_task,
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::workspace_tree,

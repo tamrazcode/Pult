@@ -22,7 +22,9 @@ use crate::store::Store;
 static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// In-memory event sink: records emissions so tests can answer the
@@ -35,7 +37,10 @@ struct TestSink(
 
 impl EventSink for TestSink {
     fn emit(&self, event: &str, payload: serde_json::Value) -> Result<(), String> {
-        self.0.lock().expect("sink lock").push((event.to_string(), payload));
+        self.0
+            .lock()
+            .expect("sink lock")
+            .push((event.to_string(), payload));
         Ok(())
     }
 
@@ -44,10 +49,10 @@ impl EventSink for TestSink {
     }
 
     fn notify(&self, title: &str, body: &str) {
-        self.0
-            .lock()
-            .expect("sink lock")
-            .push(("notify".to_string(), serde_json::json!({ "title": title, "body": body })));
+        self.0.lock().expect("sink lock").push((
+            "notify".to_string(),
+            serde_json::json!({ "title": title, "body": body }),
+        ));
     }
 }
 
@@ -64,7 +69,10 @@ impl TestSink {
         guard.retain(|(event, payload)| {
             if event == "permission:request" {
                 let run_id = payload["runId"].as_str().unwrap_or_default().to_string();
-                let request_id = payload["requestId"].as_str().unwrap_or_default().to_string();
+                let request_id = payload["requestId"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
                 let option_id = payload["options"]
                     .as_array()
                     .and_then(|o| o.first())
@@ -89,14 +97,20 @@ fn mock_runtime() -> (Arc<AgentRuntime>, Arc<TestSink>) {
         .try_init();
     let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
     let sink = Arc::new(TestSink::default());
-    let runtime = Arc::new(AgentRuntime::new(store, Arc::clone(&sink) as Arc<dyn EventSink>));
+    let runtime = Arc::new(AgentRuntime::new(
+        store,
+        Arc::clone(&sink) as Arc<dyn EventSink>,
+    ));
     runtime.set_instances_in_memory(vec![crate::config::mock_spec()]);
     (runtime, sink)
 }
 
 /// Background pump: answers every surfaced permission request with the first
 /// offered option (mirrors the supervised UI pressing "Allow").
-fn spawn_permission_pump(runtime: &Arc<AgentRuntime>, sink: &Arc<TestSink>) -> tokio::task::JoinHandle<()> {
+fn spawn_permission_pump(
+    runtime: &Arc<AgentRuntime>,
+    sink: &Arc<TestSink>,
+) -> tokio::task::JoinHandle<()> {
     let runtime = Arc::clone(runtime);
     let sink = Arc::clone(sink);
     tokio::spawn(async move {
@@ -115,10 +129,11 @@ fn fixture_path() -> std::path::PathBuf {
         candidates.push(cwd.join("fixtures/mock-acp-agent.mjs"));
         candidates.push(cwd.join("../fixtures/mock-acp-agent.mjs"));
     }
-    candidates.into_iter().find(|p| p.is_file()).expect("mock fixture present")
+    candidates
+        .into_iter()
+        .find(|p| p.is_file())
+        .expect("mock fixture present")
 }
-
-
 
 fn thread_record(id: &str) -> ThreadRecord {
     ThreadRecord {
@@ -163,10 +178,130 @@ fn kinds_of(runtime: &AgentRuntime, run_id: &str) -> Vec<EventKind> {
 }
 
 #[tokio::test]
+async fn orchestrator_delegates_and_waits_for_a_child_task() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-root"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-root").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let parent_run = runtime
+        .dispatch(&root, "coordinate the work", &[], "mock")
+        .unwrap();
+
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-root".to_string(),
+        thread_id: "th-root".to_string(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({
+                "title": "Independent check",
+                "task": "Say what you checked in one sentence.",
+                "role": "test"
+            }),
+        )
+        .await
+        .expect("delegate_task succeeds");
+    let task_id = started["task"]["taskId"].as_str().unwrap().to_string();
+    let child_thread_id = started["task"]["childThreadId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(started["task"]["targetInstanceId"], "mock");
+
+    let waited = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            None,
+            "wait_tasks",
+            &serde_json::json!({ "taskIds": [task_id], "timeoutSec": 30 }),
+        )
+        .await
+        .expect("wait_tasks returns");
+    assert_eq!(waited["timedOut"], false);
+    let status = waited["tasks"][0]["status"].as_str().unwrap();
+    assert!(
+        matches!(status, "completed" | "failed"),
+        "unexpected task status {status}"
+    );
+
+    let child = runtime.store().get_thread(&child_thread_id).unwrap();
+    assert_eq!(child.parent_thread_id.as_deref(), Some("th-root"));
+    assert_eq!(child.depth, 1);
+    assert_eq!(child.child_role.as_deref(), Some("test"));
+}
+
+#[tokio::test]
+async fn orchestrator_cancel_stops_a_blocked_child_run() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_HANG", "1")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-root-cancel"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-root-cancel").unwrap();
+    let parent_run = runtime.dispatch(&root, "coordinate", &[], "mock").unwrap();
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-root".to_string(),
+        thread_id: "th-root-cancel".to_string(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({ "title": "Blocked child", "task": "edit the file" }),
+        )
+        .await
+        .expect("delegate_task succeeds");
+    let task_id = started["task"]["taskId"].as_str().unwrap().to_string();
+    let child_thread_id = started["task"]["childThreadId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let child_run_id = started["task"]["childRunId"].as_str().unwrap().to_string();
+    wait_for(Duration::from_secs(10), || {
+        runtime.live_run_registered(&child_run_id)
+    })
+    .await;
+
+    let cancelled = runtime
+        .orchestrator
+        .cancel_task_admin(&task_id, true)
+        .expect("cancel succeeds");
+    assert_eq!(cancelled["cancelled"], true);
+    let task = runtime.store().get_delegated_task(&task_id).unwrap();
+    assert_eq!(task.status, "cancelled");
+    wait_for(Duration::from_secs(10), || {
+        runtime.active_run_for(&child_thread_id).is_none()
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn queue_auto_dispatch_failure_keeps_the_message() {
     let (runtime, _sink) = mock_runtime();
     let thread = thread_record("th-queue-fail");
-    runtime.store().create_thread(&thread).expect("create thread");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
     let item = crate::store::records::QueueItem {
         id: "q-fail".to_string(),
         thread_id: thread.id.clone(),
@@ -206,10 +341,17 @@ async fn queued_message_auto_dispatches_after_run_finished() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-queue");
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
         // First message starts a run; the second lands in the backend queue.
-        let first = runtime.send(&thread, "first", &[], "mock", None, &Default::default()).expect("send 1");
-        let second = runtime.send(&thread, "second", &[], "mock", None, &Default::default()).expect("send 2");
+        let first = runtime
+            .send(&thread, "first", &[], "mock", None, &Default::default())
+            .expect("send 1");
+        let second = runtime
+            .send(&thread, "second", &[], "mock", None, &Default::default())
+            .expect("send 2");
         Setup {
             runtime,
             sink,
@@ -227,7 +369,10 @@ async fn queued_message_auto_dispatches_after_run_finished() {
     } = setup;
     let pump = spawn_permission_pump(&runtime, &sink);
     let run1 = first.run.expect("immediate run");
-    assert!(second.queued, "second message must queue while run 1 is active");
+    assert!(
+        second.queued,
+        "second message must queue while run 1 is active"
+    );
     assert!(second.run.is_none());
     assert!(!second.queue_id.as_deref().unwrap_or_default().is_empty());
     assert_eq!(runtime.store().list_queue("th-queue").unwrap().len(), 1);
@@ -242,11 +387,17 @@ async fn queued_message_auto_dispatches_after_run_finished() {
     })
     .await;
     let runs = runtime.store().list_runs("th-queue").unwrap();
-    let run2 = runs.iter().find(|r| r.id != run1.id).expect("run 2").clone();
+    let run2 = runs
+        .iter()
+        .find(|r| r.id != run1.id)
+        .expect("run 2")
+        .clone();
 
     let run2_kinds = kinds_of(&runtime, &run2.id);
     assert!(
-        run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second")),
+        run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second")),
         "queued text must open run 2; got {run2_kinds:?}"
     );
     assert!(
@@ -284,8 +435,20 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-resume");
-        runtime.store().create_thread(&thread).expect("create thread");
-        let first = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send 1");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
+        let first = runtime
+            .send(
+                &thread,
+                "hello mock",
+                &[],
+                "mock",
+                None,
+                &Default::default(),
+            )
+            .expect("send 1");
         Setup {
             runtime,
             sink,
@@ -307,7 +470,11 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
         runtime
             .store()
             .list_runs("th-resume")
-            .map(|runs| runs.first().map(|r| r.status == "finished").unwrap_or(false))
+            .map(|runs| {
+                runs.first()
+                    .map(|r| r.status == "finished")
+                    .unwrap_or(false)
+            })
             .unwrap_or(false)
     })
     .await;
@@ -321,7 +488,16 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
     // A fresh process has no memory of session 1; the runtime resumes it via
     // session/load and the mock replays the earlier transcript. The env lock
     // covers the sync dispatch; the pump holds no env dependency.
-    let second = runtime.send(&thread, "second prompt", &[], "mock", None, &Default::default()).expect("send 2");
+    let second = runtime
+        .send(
+            &thread,
+            "second prompt",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send 2");
     let run2 = second.run.expect("immediate run 2");
     wait_for(Duration::from_secs(8), || {
         runtime
@@ -333,22 +509,30 @@ async fn resume_session_load_drops_replayed_transcript_but_keeps_commands() {
     .await;
     let run2_kinds = kinds_of(&runtime, &run2.id);
     assert!(
-        !run2_kinds.iter().any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
+        !run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
             if delta.contains("(replayed) earlier agent reply"))),
         "session/load replay must not duplicate the prior transcript; got {run2_kinds:?}"
     );
     assert!(
-        !run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. }
+        !run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. }
             if text.contains("(replayed) earlier user message"))),
         "replayed user message must be dropped; got {run2_kinds:?}"
     );
     assert!(
-        run2_kinds.iter().any(|k| matches!(k, EventKind::CommandsUpdate { commands }
+        run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::CommandsUpdate { commands }
             if commands.iter().any(|c| c.name == "replayed-command"))),
         "replayed session metadata (commands) must survive the drain; got {run2_kinds:?}"
     );
     assert!(
-        run2_kinds.iter().any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second prompt")),
+        run2_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "second prompt")),
         "run 2 must carry its own user message; got {run2_kinds:?}"
     );
     let thread_updates: Vec<_> = sink
@@ -382,7 +566,10 @@ async fn wait_request(sink: &TestSink, event: &str, timeout: Duration) -> (Strin
                 if taken.is_none() && kind == event {
                     taken = Some((
                         payload["runId"].as_str().unwrap_or_default().to_string(),
-                        payload["requestId"].as_str().unwrap_or_default().to_string(),
+                        payload["requestId"]
+                            .as_str()
+                            .unwrap_or_default()
+                            .to_string(),
                     ));
                     return false;
                 }
@@ -417,8 +604,20 @@ async fn elicitation_round_trip_reaches_the_agent() {
     let (runtime, sink) = mock_runtime();
     let pump = spawn_permission_pump(&runtime, &sink);
     let thread = thread_record("th-eli");
-    runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "please ask me a question", &[], "mock", None, &Default::default()).expect("send");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+    let sent = runtime
+        .send(
+            &thread,
+            "please ask me a question",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send");
     let run = sent.run.expect("immediate run");
 
     let (run_id, request_id) =
@@ -449,7 +648,9 @@ async fn elicitation_round_trip_reaches_the_agent() {
         "elicitation request must be in the transcript; got {kinds:?}"
     );
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
+        kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
             if delta.contains("you picked") && delta.contains("red"))),
         "the accepted content must reach the agent echo; got {kinds:?}"
     );
@@ -468,8 +669,20 @@ async fn terminal_callbacks_run_and_report() {
     let (runtime, sink) = mock_runtime();
     let pump = spawn_permission_pump(&runtime, &sink);
     let thread = thread_record("th-term");
-    runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "run a terminal command for me", &[], "mock", None, &Default::default()).expect("send");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+    let sent = runtime
+        .send(
+            &thread,
+            "run a terminal command for me",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send");
     let run = sent.run.expect("immediate run");
 
     wait_for(Duration::from_secs(12), || {
@@ -484,7 +697,9 @@ async fn terminal_callbacks_run_and_report() {
 
     let kinds = kinds_of(&runtime, &run.id);
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
+        kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::AgentMessageDelta { delta }
             if delta.contains("mock-term-ok") && delta.contains("exitCode:0"))),
         "terminal echo with exit code expected; got {kinds:?}"
     );
@@ -503,11 +718,26 @@ async fn auto_edit_resolves_edits_without_ui_prompt() {
 
     let (runtime, sink) = mock_runtime();
     let thread = thread_record("th-auto");
-    runtime.store().create_thread(&thread).expect("create thread");
     runtime
-        .set_permission_mode("th-auto", crate::runtime::permissions::PermissionMode::AutoEdit)
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+    runtime
+        .set_permission_mode(
+            "th-auto",
+            crate::runtime::permissions::PermissionMode::AutoEdit,
+        )
         .expect("set mode");
-    let sent = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send");
+    let sent = runtime
+        .send(
+            &thread,
+            "hello mock",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send");
     let run = sent.run.expect("immediate run");
 
     wait_for(Duration::from_secs(10), || {
@@ -521,16 +751,22 @@ async fn auto_edit_resolves_edits_without_ui_prompt() {
 
     let kinds = kinds_of(&runtime, &run.id);
     assert!(
-        !sink_events(&sink).iter().any(|(e, _)| e == "permission:request"),
+        !sink_events(&sink)
+            .iter()
+            .any(|(e, _)| e == "permission:request"),
         "auto_edit must resolve the edit without surfacing it"
     );
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
-            if *auto && o == "mock-allow")),
+        kinds.iter().any(
+            |k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
+            if *auto && o == "mock-allow")
+        ),
         "the event log must carry the auto-resolved trace row; got {kinds:?}"
     );
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::RunFinished { stop_reason, .. } if stop_reason == "end_turn")),
+        kinds.iter().any(
+            |k| matches!(k, EventKind::RunFinished { stop_reason, .. } if stop_reason == "end_turn")
+        ),
         "the turn must complete normally; got {kinds:?}"
     );
     let _ = std::fs::remove_dir_all(&sandbox);
@@ -548,8 +784,20 @@ async fn reject_once_round_trip_completes_the_turn() {
 
     let (runtime, sink) = mock_runtime();
     let thread = thread_record("th-reject");
-    runtime.store().create_thread(&thread).expect("create thread");
-    let sent = runtime.send(&thread, "hello mock", &[], "mock", None, &Default::default()).expect("send");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+    let sent = runtime
+        .send(
+            &thread,
+            "hello mock",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send");
     let run = sent.run.expect("immediate run");
 
     let (run_id, request_id) =
@@ -569,12 +817,16 @@ async fn reject_once_round_trip_completes_the_turn() {
 
     let kinds = kinds_of(&runtime, &run.id);
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
-            if !*auto && o == "mock-reject")),
+        kinds.iter().any(
+            |k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
+            if !*auto && o == "mock-reject")
+        ),
         "the user's rejection must be logged; got {kinds:?}"
     );
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::RunFinished { stop_reason, .. } if stop_reason == "end_turn")),
+        kinds.iter().any(
+            |k| matches!(k, EventKind::RunFinished { stop_reason, .. } if stop_reason == "end_turn")
+        ),
         "the mock completes the turn after a rejection; got {kinds:?}"
     );
     let _ = std::fs::remove_dir_all(&sandbox);
@@ -611,22 +863,38 @@ async fn allow_always_is_remembered_for_next_turn() {
     thread_a.workspace = Some(ws_a_str.clone());
     let mut thread_b = thread_record("th-remember-b");
     thread_b.workspace = Some(ws_b_str.clone());
-    runtime.store().create_thread(&thread_a).expect("create thread A");
-    runtime.store().create_thread(&thread_b).expect("create thread B");
+    runtime
+        .store()
+        .create_thread(&thread_a)
+        .expect("create thread A");
+    runtime
+        .store()
+        .create_thread(&thread_b)
+        .expect("create thread B");
     runtime
         .set_permission_mode(&thread_a.id, PermissionMode::Supervised)
         .expect("mode A supervised");
 
     // Turn 1 in workspace A (Supervised): answer with the allow_always option.
     let first = runtime
-        .send(&thread_a, "hello mock", &[], "mock", None, &Default::default())
+        .send(
+            &thread_a,
+            "hello mock",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 1");
     let run1 = first.run.expect("immediate run 1");
     eprintln!("[remember] t+{:?} run1 dispatched", started.elapsed());
     let (run_id, request_id) =
         wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
     assert_eq!(run_id, run1.id);
-    eprintln!("[remember] t+{:?} surfaced for run {run_id}", started.elapsed());
+    eprintln!(
+        "[remember] t+{:?} surfaced for run {run_id}",
+        started.elapsed()
+    );
     runtime
         .respond_permission(&run_id, &request_id, Some("mock-allow-always".to_string()))
         .expect("allow always");
@@ -656,7 +924,14 @@ async fn allow_always_is_remembered_for_next_turn() {
         .set_permission_mode(&thread_a.id, PermissionMode::AutoEdit)
         .expect("mode A auto_edit");
     let second = runtime
-        .send(&thread_a, "second turn", &[], "mock", None, &Default::default())
+        .send(
+            &thread_a,
+            "second turn",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 2");
     let run2 = second.run.expect("immediate run 2");
     eprintln!("[remember] t+{:?} run2 dispatched", started.elapsed());
@@ -671,13 +946,17 @@ async fn allow_always_is_remembered_for_next_turn() {
 
     let kinds = kinds_of(&runtime, &run2.id);
     assert!(
-        kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
-            if *auto && o == "mock-allow-always")),
+        kinds.iter().any(
+            |k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
+            if *auto && o == "mock-allow-always")
+        ),
         "the remembered decision must auto-resolve in workspace A; got {kinds:?}"
     );
     assert!(
-        !sink_events(&sink).iter().any(|(e, payload)| e == "permission:request"
-            && payload["runId"].as_str() == Some(run2.id.as_str())),
+        !sink_events(&sink)
+            .iter()
+            .any(|(e, payload)| e == "permission:request"
+                && payload["runId"].as_str() == Some(run2.id.as_str())),
         "turn 2 in workspace A must not surface the request again"
     );
 
@@ -686,12 +965,22 @@ async fn allow_always_is_remembered_for_next_turn() {
         .set_permission_mode(&thread_b.id, PermissionMode::Supervised)
         .expect("mode B supervised");
     let third = runtime
-        .send(&thread_b, "turn in B", &[], "mock", None, &Default::default())
+        .send(
+            &thread_b,
+            "turn in B",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send B");
     let run_b = third.run.expect("immediate run B");
     let (b_run_id, b_request_id) =
         wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
-    assert_eq!(b_run_id, run_b.id, "workspace B must surface permission request (Ask)");
+    assert_eq!(
+        b_run_id, run_b.id,
+        "workspace B must surface permission request (Ask)"
+    );
     runtime
         .respond_permission(&b_run_id, &b_request_id, Some("mock-allow".to_string()))
         .expect("allow in B");
@@ -706,8 +995,10 @@ async fn allow_always_is_remembered_for_next_turn() {
 
     let b_kinds = kinds_of(&runtime, &run_b.id);
     assert!(
-        b_kinds.iter().any(|k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
-            if !*auto && o == "mock-allow")),
+        b_kinds.iter().any(
+            |k| matches!(k, EventKind::ApprovalResponse { option_id: Some(o), auto, .. }
+            if !*auto && o == "mock-allow")
+        ),
         "workspace B must ask instead of applying workspace A's remembered allow; got {b_kinds:?}"
     );
 
@@ -751,10 +1042,8 @@ fn sandbox_rejects_parent_directory_escapes() {
 #[test]
 fn sandbox_rejects_absolute_paths_outside_root() {
     use crate::protocol::jsonrpc::ERR_RESOURCE_NOT_FOUND;
-    let root = std::env::temp_dir().join(format!(
-        "pult-sandbox-abs-{}",
-        crate::events::now_millis()
-    ));
+    let root =
+        std::env::temp_dir().join(format!("pult-sandbox-abs-{}", crate::events::now_millis()));
     std::fs::create_dir_all(&root).unwrap();
     let outside = std::env::temp_dir().join("pult-outside-write.txt");
     let _ = std::fs::remove_file(&outside);
@@ -797,13 +1086,21 @@ async fn set_mode_before_run_persists_and_applies_on_next_mock_run() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-mode");
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
         runtime
             .set_mode("th-mode", "architect")
             .expect("idle mode pick must be accepted");
-        assert_eq!(runtime.desired_mode("th-mode").as_deref(), Some("architect"));
+        assert_eq!(
+            runtime.desired_mode("th-mode").as_deref(),
+            Some("architect")
+        );
 
-        let run = runtime.dispatch(&thread, "plan it", &[], "mock").expect("dispatch");
+        let run = runtime
+            .dispatch(&thread, "plan it", &[], "mock")
+            .expect("dispatch");
         assert_eq!(run.mode.as_deref(), Some("architect"));
         (runtime, sink, run.id)
     };
@@ -841,14 +1138,25 @@ async fn deleting_a_thread_mid_run_releases_runtime_state() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-delete");
-        runtime.store().create_thread(&thread).expect("create thread");
-        runtime.dispatch(&thread, "slow", &[], "mock").expect("dispatch");
-        runtime.store().delete_thread("th-delete").expect("delete thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
+        runtime
+            .dispatch(&thread, "slow", &[], "mock")
+            .expect("dispatch");
+        runtime
+            .store()
+            .delete_thread("th-delete")
+            .expect("delete thread");
         (runtime, sink)
     };
     let pump = spawn_permission_pump(&runtime, &sink);
 
-    wait_for(Duration::from_secs(8), || runtime.active_run_for("th-delete").is_none()).await;
+    wait_for(Duration::from_secs(8), || {
+        runtime.active_run_for("th-delete").is_none()
+    })
+    .await;
     pump.abort();
 }
 
@@ -886,9 +1194,16 @@ async fn set_config_option_before_run_persists_and_applies_on_next_mock_run() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-config");
-        runtime.store().create_thread(&thread).expect("create thread");
         runtime
-            .set_config_option("th-config", "model", ConfigOptionValue::String("mock-pro".into()))
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
+        runtime
+            .set_config_option(
+                "th-config",
+                "model",
+                ConfigOptionValue::String("mock-pro".into()),
+            )
             .await
             .expect("idle model pick");
         runtime
@@ -904,7 +1219,9 @@ async fn set_config_option_before_run_persists_and_applies_on_next_mock_run() {
             2,
             "both picks must persist"
         );
-        let run = runtime.dispatch(&thread, "configured", &[], "mock").expect("dispatch");
+        let run = runtime
+            .dispatch(&thread, "configured", &[], "mock")
+            .expect("dispatch");
         assert_eq!(run.model.as_deref(), Some("mock-pro"));
         assert_eq!(run.effort.as_deref(), Some("high"));
         (runtime, sink, run.id)
@@ -921,25 +1238,29 @@ async fn set_config_option_before_run_persists_and_applies_on_next_mock_run() {
     pump.abort();
 
     let kinds = kinds_of(&runtime, &run_id);
-    let applied = kinds.iter().any(|k| match k {
-        EventKind::ConfigOptions { options } => {
-            let model = options.iter().find(|o| o.id == "model");
-            let thought = options.iter().find(|o| o.id == "thought_level");
-            let model_ok = model.is_some_and(|o| matches!(
+    let applied =
+        kinds.iter().any(|k| match k {
+            EventKind::ConfigOptions { options } => {
+                let model = options.iter().find(|o| o.id == "model");
+                let thought = options.iter().find(|o| o.id == "thought_level");
+                let model_ok = model.is_some_and(|o| matches!(
                 &o.kind,
                 crate::protocol::types::SessionConfigOptionKind::Select { current_value, .. }
                     if current_value == "mock-pro"
             ));
-            let thought_ok = thought.is_some_and(|o| matches!(
+                let thought_ok = thought.is_some_and(|o| matches!(
                 &o.kind,
                 crate::protocol::types::SessionConfigOptionKind::Select { current_value, .. }
                     if current_value == "high"
             ));
-            model_ok && thought_ok
-        }
-        _ => false,
-    });
-    assert!(applied, "applied picks must be echoed as config options; got {kinds:?}");
+                model_ok && thought_ok
+            }
+            _ => false,
+        });
+    assert!(
+        applied,
+        "applied picks must be echoed as config options; got {kinds:?}"
+    );
 }
 
 /// A stale/unknown pick must be ignored: the prompt still runs to end_turn.
@@ -955,7 +1276,10 @@ async fn invalid_desired_config_does_not_fail_prompt() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-bad-config");
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
         runtime
             .set_config_option(
                 "th-bad-config",
@@ -964,7 +1288,9 @@ async fn invalid_desired_config_does_not_fail_prompt() {
             )
             .await
             .expect("persist stale pick");
-        let run = runtime.dispatch(&thread, "still works", &[], "mock").expect("dispatch");
+        let run = runtime
+            .dispatch(&thread, "still works", &[], "mock")
+            .expect("dispatch");
         (runtime, sink, run.id)
     };
     let pump = spawn_permission_pump(&runtime, &sink);
@@ -997,8 +1323,13 @@ async fn set_config_option_during_a_live_run_keeps_the_run_healthy() {
 
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-live-config");
-        runtime.store().create_thread(&thread).expect("create thread");
-        let run = runtime.dispatch(&thread, "slow turn", &[], "mock").expect("dispatch");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
+        let run = runtime
+            .dispatch(&thread, "slow turn", &[], "mock")
+            .expect("dispatch");
         runtime
             .set_config_option(
                 "th-live-config",
@@ -1022,7 +1353,10 @@ async fn set_config_option_during_a_live_run_keeps_the_run_healthy() {
 
     let runs = runtime.store().list_runs("th-live-config").unwrap();
     let run = runs.iter().find(|r| r.id == run_id).expect("run");
-    assert_eq!(run.status, "finished", "live config pick must not fail the run");
+    assert_eq!(
+        run.status, "finished",
+        "live config pick must not fail the run"
+    );
     let kinds = kinds_of(&runtime, &run_id);
     assert!(kinds.iter().any(|k| matches!(
         k,
@@ -1040,7 +1374,6 @@ fn config_apply_order_puts_model_before_dependent_options() {
     ids.sort_by_key(|id| super::config_apply_order(id));
     assert_eq!(ids, vec!["model", "thought_level", "web_search"]);
 }
-
 
 /// Auth scenarios are per-instance env (no process-env races with other tests).
 fn auth_runtime(env: &[(&str, &str)]) -> (Arc<AgentRuntime>, Arc<TestSink>) {
@@ -1104,15 +1437,15 @@ async fn authenticate_succeeds_clears_needs_auth_and_warms_config() {
         .expect("mock instance");
     assert_eq!(info.status, "stopped");
 
-    let sandbox = std::env::temp_dir().join(format!(
-        "pult-m11-auth-ws-{}",
-        crate::events::now_millis()
-    ));
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-m11-auth-ws-{}", crate::events::now_millis()));
     let _ = std::fs::create_dir_all(&sandbox);
     let mut thread = thread_record("th-authed");
     thread.workspace = Some(sandbox.to_string_lossy().into_owned());
     runtime.store().create_thread(&thread).expect("thread");
-    runtime.dispatch(&thread, "hello", &[], "mock").expect("dispatch");
+    runtime
+        .dispatch(&thread, "hello", &[], "mock")
+        .expect("dispatch");
     let pump = spawn_permission_pump(&runtime, &sink);
     wait_for(Duration::from_secs(8), || {
         runtime
@@ -1154,10 +1487,8 @@ async fn authenticate_still_needs_sign_in_when_probe_keeps_failing() {
 #[tokio::test]
 async fn authenticate_failure_errors_and_terminal_methods_are_rejected() {
     {
-        let (runtime, _sink) = auth_runtime(&[
-            ("MOCK_AUTH_REQUIRED", "1"),
-            ("MOCK_AUTH_FAIL", "1"),
-        ]);
+        let (runtime, _sink) =
+            auth_runtime(&[("MOCK_AUTH_REQUIRED", "1"), ("MOCK_AUTH_FAIL", "1")]);
         runtime.preflight("mock").await.expect("preflight");
         assert!(runtime.authenticate("mock", "mock-token").await.is_err());
     }
@@ -1188,7 +1519,9 @@ async fn mock_run_emits_timing_with_first_delta() {
         let (runtime, sink) = mock_runtime();
         let thread = thread_record("th-timing");
         runtime.store().create_thread(&thread).expect("thread");
-        let run = runtime.dispatch(&thread, "time it", &[], "mock").expect("dispatch");
+        let run = runtime
+            .dispatch(&thread, "time it", &[], "mock")
+            .expect("dispatch");
         (runtime, sink, run.id)
     };
     let pump = spawn_permission_pump(&runtime, &sink);
@@ -1206,7 +1539,10 @@ async fn mock_run_emits_timing_with_first_delta() {
     assert_eq!(timings[0].run_id, run_id);
     assert!(!timings[0].pooled);
     assert!(timings[0].handshake_ms > 0, "handshake is measured");
-    assert!(timings[0].first_delta_ms.is_some(), "first delta is measured");
+    assert!(
+        timings[0].first_delta_ms.is_some(),
+        "first delta is measured"
+    );
 }
 
 fn mock_spec_with_env(env: &[(&str, &str)]) -> crate::config::InstanceSpec {
@@ -1286,7 +1622,14 @@ async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
     let pump = spawn_permission_pump(&runtime, &sink);
 
     let first = runtime
-        .send(&thread, "first turn", &[], "mock", None, &Default::default())
+        .send(
+            &thread,
+            "first turn",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 1");
     let run1 = first.run.expect("run 1");
     wait_for(Duration::from_secs(8), || {
@@ -1302,7 +1645,14 @@ async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
     .await;
 
     let second = runtime
-        .send(&thread, "second turn", &[], "mock", None, &Default::default())
+        .send(
+            &thread,
+            "second turn",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 2");
     let run2 = second.run.expect("run 2");
     wait_for(Duration::from_secs(8), || {
@@ -1421,7 +1771,14 @@ async fn two_threads_keep_independent_sessions() {
     let pump = spawn_permission_pump(&runtime, &sink);
 
     let run_a1 = runtime
-        .send(&thread_a, "alpha-one", &[], "mock", None, &Default::default())
+        .send(
+            &thread_a,
+            "alpha-one",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .unwrap()
         .run
         .unwrap();
@@ -1438,7 +1795,14 @@ async fn two_threads_keep_independent_sessions() {
     .await;
 
     let run_b1 = runtime
-        .send(&thread_b, "beta-one", &[], "mock", None, &Default::default())
+        .send(
+            &thread_b,
+            "beta-one",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .unwrap()
         .run
         .unwrap();
@@ -1456,7 +1820,14 @@ async fn two_threads_keep_independent_sessions() {
 
     // Resume each thread on its own pooled process without spawning extra PIDs.
     let run_a2 = runtime
-        .send(&thread_a, "alpha-two", &[], "mock", None, &Default::default())
+        .send(
+            &thread_a,
+            "alpha-two",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .unwrap()
         .run
         .unwrap();
@@ -1470,7 +1841,14 @@ async fn two_threads_keep_independent_sessions() {
     .await;
 
     let run_b2 = runtime
-        .send(&thread_b, "beta-two", &[], "mock", None, &Default::default())
+        .send(
+            &thread_b,
+            "beta-two",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .unwrap()
         .run
         .unwrap();
@@ -1555,7 +1933,9 @@ async fn set_instances_invalidates_pooled_entries_for_instance() {
         .expect("create thread");
 
     let pump = spawn_permission_pump(&runtime, &sink);
-    let sent = runtime.send(&thread, "park me", &[], "mock", None, &Default::default()).expect("send");
+    let sent = runtime
+        .send(&thread, "park me", &[], "mock", None, &Default::default())
+        .expect("send");
     let run = sent.run.expect("run");
 
     wait_for(Duration::from_secs(8), || {
@@ -1592,10 +1972,8 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
     use crate::protocol::types::ConfigOptionValue;
 
     let _env = env_lock();
-    let sandbox = std::env::temp_dir().join(format!(
-        "pult-pool-reapply-{}",
-        crate::events::now_millis()
-    ));
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-pool-reapply-{}", crate::events::now_millis()));
     let _ = std::fs::remove_dir_all(&sandbox);
     std::fs::create_dir_all(&sandbox).unwrap();
     let spawn_log = sandbox.join("spawns.log");
@@ -1636,7 +2014,14 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
         .expect("set thought_level high");
 
     let first = runtime
-        .send(&thread, "first turn", &[], "mock", None, &Default::default())
+        .send(
+            &thread,
+            "first turn",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 1");
     let run1 = first.run.expect("run 1");
     wait_for(Duration::from_secs(8), || {
@@ -1662,7 +2047,14 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
         .expect("set model mock-v1");
 
     let second = runtime
-        .send(&thread, "second turn", &[], "mock", None, &Default::default())
+        .send(
+            &thread,
+            "second turn",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
         .expect("send 2");
     let run2 = second.run.expect("run 2");
     wait_for(Duration::from_secs(8), || {
@@ -1764,7 +2156,10 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
     // Case 1: Thread with explicit workspace pointing to a deleted directory.
     let mut thread_ws = thread_record("th-ws-missing");
     thread_ws.workspace = Some(deleted_ws.to_string_lossy().into_owned());
-    runtime.store().create_thread(&thread_ws).expect("create thread_ws");
+    runtime
+        .store()
+        .create_thread(&thread_ws)
+        .expect("create thread_ws");
     std::fs::remove_dir_all(&deleted_ws).unwrap();
 
     match runtime.dispatch(&thread_ws, "hello", &[], "mock") {
@@ -1785,7 +2180,10 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
             .await;
             let runs = runtime.store().list_runs(&thread_ws.id).unwrap();
             let finished = runs.iter().find(|r| r.id == run.id).expect("run");
-            assert_eq!(finished.status, "failed", "missing workspace must fail run, not succeed in global root");
+            assert_eq!(
+                finished.status, "failed",
+                "missing workspace must fail run, not succeed in global root"
+            );
             let err_text = finished.error.as_deref().unwrap_or("");
             assert!(
                 err_text.contains("workspace.missing") || err_text.contains("not found"),
@@ -1814,7 +2212,10 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
     let mut thread_proj = thread_record("th-proj-ws-missing");
     thread_proj.project_id = Some("proj-deleted-dir".to_string());
     thread_proj.workspace = None;
-    runtime.store().create_thread(&thread_proj).expect("create thread_proj");
+    runtime
+        .store()
+        .create_thread(&thread_proj)
+        .expect("create thread_proj");
     std::fs::remove_dir_all(&deleted_proj_dir).unwrap();
 
     match runtime.dispatch(&thread_proj, "hello", &[], "mock") {
@@ -1835,7 +2236,10 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
             .await;
             let runs = runtime.store().list_runs(&thread_proj.id).unwrap();
             let finished = runs.iter().find(|r| r.id == run.id).expect("run");
-            assert_eq!(finished.status, "failed", "missing project root_path must fail run, not succeed in global root");
+            assert_eq!(
+                finished.status, "failed",
+                "missing project root_path must fail run, not succeed in global root"
+            );
             let err_text = finished.error.as_deref().unwrap_or("");
             assert!(
                 err_text.contains("workspace.missing") || err_text.contains("not found"),
@@ -1854,8 +2258,8 @@ async fn workspace_missing_fails_dispatch_without_fallback() {
 #[test]
 fn session_config_value_valid_accepts_only_advertised_values() {
     use crate::protocol::types::{
-        ConfigOptionValue, SessionConfigOption, SessionConfigOptionKind,
-        SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions,
+        ConfigOptionValue, SessionConfigOption, SessionConfigOptionKind, SessionConfigSelectGroup,
+        SessionConfigSelectOption, SessionConfigSelectOptions,
     };
 
     let options = vec![
@@ -1988,15 +2392,24 @@ fn clear_stale_provider_config_keeps_only_values_the_new_instance_advertises() {
 
     let (runtime, _sink) = mock_runtime();
     let thread = thread_record("th");
-    runtime.store().create_thread(&thread).expect("create thread");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
 
     let mut seed = super::DesiredConfigMap::new();
-    seed.insert("model".to_string(), ConfigOptionValue::String("gpt-5".into()));
+    seed.insert(
+        "model".to_string(),
+        ConfigOptionValue::String("gpt-5".into()),
+    );
     seed.insert(
         "thinking_level".to_string(),
         ConfigOptionValue::String("high".into()),
     );
-    seed.insert("effort".to_string(), ConfigOptionValue::String("max".into()));
+    seed.insert(
+        "effort".to_string(),
+        ConfigOptionValue::String("max".into()),
+    );
     seed.insert("web_search".to_string(), ConfigOptionValue::Bool(true));
     runtime
         .merge_desired_config("th", &seed)
@@ -2107,7 +2520,10 @@ async fn invalid_model_value_is_not_sent_to_the_mock_agent() {
         let (runtime, sink) = mock_runtime();
         let mut thread = thread_record("th-invalid-model");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
 
         runtime
             .set_config_option(
@@ -2170,10 +2586,8 @@ async fn dispatch_records_effort_for_thinking_level_and_effort_ids() {
 
     let (runtime, sink, sandbox, run1, run2) = {
         let _env = env_lock();
-        let sandbox = std::env::temp_dir().join(format!(
-            "pult-effort-ids-{}",
-            crate::events::now_millis()
-        ));
+        let sandbox =
+            std::env::temp_dir().join(format!("pult-effort-ids-{}", crate::events::now_millis()));
         let _ = std::fs::remove_dir_all(&sandbox);
         std::fs::create_dir_all(&sandbox).unwrap();
         std::env::set_var("PULT_MOCK_AGENT", fixture_path());
@@ -2247,10 +2661,8 @@ async fn dispatch_records_effort_for_thinking_level_and_effort_ids() {
 async fn steer_queue_item_cancels_active_run_and_starts_next() {
     let (runtime, sink, sandbox, run1, q2_id) = {
         let _env = env_lock();
-        let sandbox = std::env::temp_dir().join(format!(
-            "pult-queue-steer-{}",
-            crate::events::now_millis()
-        ));
+        let sandbox =
+            std::env::temp_dir().join(format!("pult-queue-steer-{}", crate::events::now_millis()));
         let _ = std::fs::remove_dir_all(&sandbox);
         std::fs::create_dir_all(&sandbox).unwrap();
         std::env::set_var("PULT_MOCK_AGENT", fixture_path());
@@ -2261,12 +2673,42 @@ async fn steer_queue_item_cancels_active_run_and_starts_next() {
 
         let mut thread = thread_record("th-steer");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
 
-        let first = runtime.send(&thread, "active run", &[], "mock", None, &Default::default()).expect("send 1");
+        let first = runtime
+            .send(
+                &thread,
+                "active run",
+                &[],
+                "mock",
+                None,
+                &Default::default(),
+            )
+            .expect("send 1");
         let run1 = first.run.expect("immediate run 1");
-        let second = runtime.send(&thread, "queued first", &[], "mock", None, &Default::default()).expect("send 2");
-        let third = runtime.send(&thread, "steered item", &[], "mock", None, &Default::default()).expect("send 3");
+        let second = runtime
+            .send(
+                &thread,
+                "queued first",
+                &[],
+                "mock",
+                None,
+                &Default::default(),
+            )
+            .expect("send 2");
+        let third = runtime
+            .send(
+                &thread,
+                "steered item",
+                &[],
+                "mock",
+                None,
+                &Default::default(),
+            )
+            .expect("send 3");
         assert!(second.queued);
         assert!(third.queued);
         let q2_id = third.queue_id.expect("q2 id");
@@ -2394,7 +2836,10 @@ async fn resolve_session_emits_notice_on_load_failure() {
 
         let mut thread = thread_record("th-load-fail-notice");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
         runtime
             .store()
             .upsert_session_ref(&thread.id, "mock", "stale-session-ref")
@@ -2611,10 +3056,8 @@ fn corrupt_config_toml_populates_config_error() {
 #[test]
 fn empty_config_starts_with_zero_instances_without_mock_fallback() {
     let _env = env_lock();
-    let sandbox = std::env::temp_dir().join(format!(
-        "pult-empty-config-{}",
-        crate::events::now_millis()
-    ));
+    let sandbox =
+        std::env::temp_dir().join(format!("pult-empty-config-{}", crate::events::now_millis()));
     let _ = std::fs::remove_dir_all(&sandbox);
     std::fs::create_dir_all(sandbox.join(".pult")).unwrap();
 
@@ -2636,10 +3079,8 @@ fn empty_config_starts_with_zero_instances_without_mock_fallback() {
 async fn deleting_thread_prevents_finalize_run_from_dispatching_queued_message() {
     let (runtime, sink, sandbox, thread, run_a) = {
         let _env = env_lock();
-        let sandbox = std::env::temp_dir().join(format!(
-            "pult-delete-guard-{}",
-            crate::events::now_millis()
-        ));
+        let sandbox =
+            std::env::temp_dir().join(format!("pult-delete-guard-{}", crate::events::now_millis()));
         let _ = std::fs::remove_dir_all(&sandbox);
         std::fs::create_dir_all(&sandbox).unwrap();
         std::env::set_var("PULT_MOCK_AGENT", fixture_path());
@@ -2648,7 +3089,10 @@ async fn deleting_thread_prevents_finalize_run_from_dispatching_queued_message()
         let (runtime, sink) = mock_runtime();
         let mut thread = thread_record("th-del-guard");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
 
         let first = runtime
             .send(&thread, "run A", &[], "mock", None, &Default::default())
@@ -2717,10 +3161,16 @@ async fn queued_messages_keep_per_message_model_and_mode_without_mutating_active
         let (runtime, sink) = mock_runtime();
         let mut thread = thread_record("th-queue-snap");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
 
         let mut cfg_a = DesiredConfigMap::new();
-        cfg_a.insert("model".to_string(), ConfigOptionValue::String("mock-fast".into()));
+        cfg_a.insert(
+            "model".to_string(),
+            ConfigOptionValue::String("mock-fast".into()),
+        );
         let first = runtime
             .send(&thread, "msg A", &[], "mock", Some("code"), &cfg_a)
             .expect("send A");
@@ -2733,14 +3183,20 @@ async fn queued_messages_keep_per_message_model_and_mode_without_mutating_active
     assert_eq!(req_run, run_a.id);
 
     let mut cfg_b = DesiredConfigMap::new();
-    cfg_b.insert("model".to_string(), ConfigOptionValue::String("mock-pro".into()));
+    cfg_b.insert(
+        "model".to_string(),
+        ConfigOptionValue::String("mock-pro".into()),
+    );
     let out_b = runtime
         .send(&thread, "msg B", &[], "mock", Some("architect"), &cfg_b)
         .expect("send B");
     assert!(out_b.queued);
 
     let mut cfg_c = DesiredConfigMap::new();
-    cfg_c.insert("model".to_string(), ConfigOptionValue::String("mock-v1".into()));
+    cfg_c.insert(
+        "model".to_string(),
+        ConfigOptionValue::String("mock-v1".into()),
+    );
     let out_c = runtime
         .send(&thread, "msg C", &[], "mock", Some("code"), &cfg_c)
         .expect("send C");
@@ -2833,7 +3289,10 @@ async fn cancel_escalates_to_kill_when_agent_ignores_cancel() {
     runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_HANG", "1")])]);
     let mut thread = thread_record("th-cancel-escalate");
     thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-    runtime.store().create_thread(&thread).expect("create thread");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
 
     let run = runtime
         .dispatch(&thread, "hang forever", &[], "mock")
@@ -2856,7 +3315,10 @@ async fn cancel_escalates_to_kill_when_agent_ignores_cancel() {
             && runtime
                 .store()
                 .list_runs(&thread.id)
-                .map(|runs| runs.iter().any(|r| r.id == run.id && r.status == "cancelled"))
+                .map(|runs| {
+                    runs.iter()
+                        .any(|r| r.id == run.id && r.status == "cancelled")
+                })
                 .unwrap_or(false)
     })
     .await;
@@ -2945,7 +3407,10 @@ async fn provider_switch_emits_context_reset_notice() {
 
         let mut thread = thread_record("th-provider-switch");
         thread.workspace = Some(sandbox.to_string_lossy().into_owned());
-        runtime.store().create_thread(&thread).expect("create thread");
+        runtime
+            .store()
+            .create_thread(&thread)
+            .expect("create thread");
 
         let _run1 = runtime
             .dispatch(&thread, "hello mock A", &[], "mock-a")
@@ -2979,7 +3444,10 @@ async fn provider_switch_emits_context_reset_notice() {
     .await;
     pump.abort();
 
-    let events = runtime.store().load_events(&run2.id).expect("load run2 events");
+    let events = runtime
+        .store()
+        .load_events(&run2.id)
+        .expect("load run2 events");
     let notice_idx = events.iter().position(|e| {
         matches!(
             &e.kind,
@@ -3005,4 +3473,3 @@ async fn provider_switch_emits_context_reset_notice() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
-

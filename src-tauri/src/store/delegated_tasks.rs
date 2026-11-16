@@ -78,6 +78,31 @@ impl Store {
         })
     }
 
+    /// Re-arms a finished task for a follow-up run in the same child thread.
+    pub fn restart_delegated_task(
+        &self,
+        id: &str,
+        child_run_id: &str,
+        started_at: i64,
+    ) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let updated = conn
+                .execute(
+                    "UPDATE delegated_tasks SET status = 'running', child_run_id = ?1,
+                        summary = NULL, error = NULL, finished_at = NULL, started_at = ?2
+                     WHERE id = ?3",
+                    params![child_run_id, started_at, id],
+                )
+                .map_err(|e| sql("delegated_tasks restart", e))?;
+            if updated == 0 {
+                return Err(PultError::store(format!(
+                    "restart_delegated_task: not found: {id}"
+                )));
+            }
+            Ok(())
+        })
+    }
+
     pub fn get_delegated_task(&self, id: &str) -> Result<DelegatedTaskRecord, PultError> {
         self.with_conn(|conn| {
             conn.query_row(
@@ -114,6 +139,59 @@ impl Store {
             }
             Ok(tasks)
         })
+    }
+
+    /// Task owning a live child run (used by the runtime finalizer).
+    pub fn find_delegated_task_by_child_run(
+        &self,
+        child_run_id: &str,
+    ) -> Result<Option<DelegatedTaskRecord>, PultError> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {TASK_COLUMNS} FROM delegated_tasks WHERE child_run_id = ?1
+                     ORDER BY started_at DESC LIMIT 1"
+                ),
+                [child_run_id],
+                task_from_row,
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(sql("delegated_tasks by child run", other)),
+            })
+        })
+    }
+
+    /// Task owning a child thread (used when a run finishes before the
+    /// engine could persist its run id).
+    pub fn find_delegated_task_by_child_thread(
+        &self,
+        child_thread_id: &str,
+    ) -> Result<Option<DelegatedTaskRecord>, PultError> {
+        self.with_conn(|conn| {
+            conn.query_row(
+                &format!(
+                    "SELECT {TASK_COLUMNS} FROM delegated_tasks WHERE child_thread_id = ?1
+                     ORDER BY started_at DESC LIMIT 1"
+                ),
+                [child_thread_id],
+                task_from_row,
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(sql("delegated_tasks by child thread", other)),
+            })
+        })
+    }
+
+    /// Tasks delegated directly from one parent thread.
+    pub fn list_child_delegated_tasks(
+        &self,
+        parent_thread_id: &str,
+    ) -> Result<Vec<DelegatedTaskRecord>, PultError> {
+        self.list_delegated_tasks(parent_thread_id)
     }
 
     /// Status/finish patch used by the runtime finalizer and the orphan sweep.

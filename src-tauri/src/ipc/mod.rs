@@ -477,6 +477,7 @@ async fn threads_delete_inner(
 ) -> Result<(), PultError> {
     // Stop a live run and let it release the process before touching the
     // worktree: Windows refuses to remove directories still held open.
+    runtime.orchestrator.cancel_subtree(thread_id, true);
     if let Some(run_id) = runtime.active_run_for(thread_id) {
         let _ = runtime.cancel(&run_id);
         for _ in 0..40 {
@@ -1906,6 +1907,50 @@ pub async fn read_image_data_url(
     })
     .await
     .map_err(|e| PultError::internal(format!("image read task failed: {e}")))?
+}
+
+#[tauri::command]
+pub fn orchestrator_tasks_list(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+) -> Result<Vec<crate::store::records::DelegatedTaskRecord>, PultError> {
+    runtime.store().list_delegated_tasks(&thread_id)
+}
+
+#[tauri::command]
+pub fn orchestrator_cancel_task(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    task_id: String,
+    force: Option<bool>,
+) -> Result<serde_json::Value, PultError> {
+    runtime
+        .orchestrator
+        .cancel_task_admin(&task_id, force.unwrap_or(false))
+        .map_err(PultError::internal)
+}
+
+/// Stop button on the parent chat: children and grandchildren go first.
+#[tauri::command]
+pub fn orchestrator_cancel_all(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    force: Option<bool>,
+) -> Result<(), PultError> {
+    runtime
+        .orchestrator
+        .cancel_subtree(&thread_id, force.unwrap_or(false));
+    Ok(())
+}
+
+#[tauri::command]
+pub fn orchestrator_retry_task(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    task_id: String,
+) -> Result<serde_json::Value, PultError> {
+    runtime
+        .orchestrator
+        .retry_task(&task_id)
+        .map_err(PultError::internal)
 }
 
 #[cfg(test)]

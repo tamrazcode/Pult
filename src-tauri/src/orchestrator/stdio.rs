@@ -48,7 +48,10 @@ fn run(args: &[String]) -> i32 {
         }
         match proxy_line(&url, &token, &line) {
             Ok(Some(response)) => {
-                if writeln!(stdout, "{response}").and_then(|_| stdout.flush()).is_err() {
+                if writeln!(stdout, "{response}")
+                    .and_then(|_| stdout.flush())
+                    .is_err()
+                {
                     return 1;
                 }
             }
@@ -89,7 +92,9 @@ fn proxy_line(url: &str, token: &str, line: &str) -> io::Result<Option<String>> 
         return Ok(None);
     }
     if status != 200 {
-        return Err(io::Error::other(format!("orchestrator answered HTTP {status}")));
+        return Err(io::Error::other(format!(
+            "orchestrator answered HTTP {status}"
+        )));
     }
     Ok(Some(body.to_string()))
 }
@@ -111,9 +116,9 @@ fn parse_http_url(url: &str) -> io::Result<(String, u16, String)> {
             "PULT_MCP_URL must include a port",
         )
     })?;
-    let port = port.parse::<u16>().map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "PULT_MCP_URL has a bad port")
-    })?;
+    let port = port
+        .parse::<u16>()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "PULT_MCP_URL has a bad port"))?;
     if host != "127.0.0.1" && host != "localhost" {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -172,18 +177,25 @@ mod tests {
 
     #[test]
     fn proxy_line_forwards_json_and_returns_the_reply() {
-        let port = serve_once("200 OK", r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, |request| {
-            assert!(request.starts_with("POST /mcp HTTP/1.1"));
-            assert!(request.contains("Authorization: Bearer tok-123"));
-            assert!(request.contains(r#""method":"ping""#));
-        });
+        let port = serve_once(
+            "200 OK",
+            r#"{"jsonrpc":"2.0","id":1,"result":{}}"#,
+            |request| {
+                assert!(request.starts_with("POST /mcp HTTP/1.1"));
+                assert!(request.contains("Authorization: Bearer tok-123"));
+                assert!(request.contains(r#""method":"ping""#));
+            },
+        );
         let reply = proxy_line(
             &format!("http://127.0.0.1:{port}/mcp"),
             "tok-123",
             r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
         )
         .unwrap();
-        assert_eq!(reply.as_deref(), Some(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#));
+        assert_eq!(
+            reply.as_deref(),
+            Some(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+        );
     }
 
     #[test]
