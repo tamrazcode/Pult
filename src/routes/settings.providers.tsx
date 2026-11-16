@@ -18,6 +18,7 @@ import {
   providersDetectInstalled,
   providersInstancesList,
   providersInstancesSave,
+  providersLogin,
   providersPreflight,
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
@@ -178,6 +179,7 @@ function ProvidersSettings() {
   const [runtimeDraft, setRuntimeDraft] = useState<DraftRuntime | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [envDraft, setEnvDraft] = useState<Array<{ key: string; value: string }>>([]);
   const favoriteModels = useSettingsStore((s) => s.favoriteModels);
   const disabledModels = useSettingsStore((s) => s.disabledModels);
@@ -201,7 +203,13 @@ function ProvidersSettings() {
     // The composer's agent picker reads the ui store — keep it in sync.
     await useUiStore.getState().loadInstances();
     setLoaded(true);
-    setSelectedId((sel) => (sel && list.some((i) => i.id === sel) ? sel : (list[0]?.id ?? null)));
+    setSelectedId((sel) =>
+      sel && list.some((i) => i.id === sel)
+        ? sel
+        : list.some((i) => i.id === useUiStore.getState().selectedInstanceId)
+          ? useUiStore.getState().selectedInstanceId
+          : (list[0]?.id ?? null),
+    );
   };
 
   useEffect(() => {
@@ -252,6 +260,7 @@ function ProvidersSettings() {
     setEnvDraft(
       selected ? Object.entries(selected.env).map(([key, value]) => ({ key, value })) : [],
     );
+    setApiKeyDraft(selected?.env?.ANTHROPIC_API_KEY ?? "");
   }, [selectedId, selected?.env]);
 
   const saveEnv = () => {
@@ -263,6 +272,35 @@ function ProvidersSettings() {
     void saveSpecs(specList(instances, selected.id, { env })).catch((err) =>
       setSaveError(localizeIpcError(err)),
     );
+  };
+
+  const isClaude = selected
+    ? selected.id.startsWith("claude") || /claude/i.test(selected.command)
+    : false;
+
+  const saveClaudeKey = async () => {
+    if (!selected) return;
+    const key = apiKeyDraft.trim();
+    if (!key) {
+      setSaveError("Enter an Anthropic API key.");
+      return;
+    }
+    setSaveError(null);
+    try {
+      await saveSpecs(
+        specList(instances, selected.id, {
+          env: { ...selected.env, ANTHROPIC_API_KEY: key },
+        }),
+      );
+      await check(selected.id);
+    } catch (err) {
+      setSaveError(localizeIpcError(err));
+    }
+  };
+
+  const startClaudeLogin = () => {
+    if (!selected) return;
+    void providersLogin(selected.id).catch((err) => setSaveError(localizeIpcError(err)));
   };
 
   const modelOption = selected?.configOptions.find(isModelOption) as
@@ -595,6 +633,40 @@ function ProvidersSettings() {
                   </div>
                 );
               })()}
+
+              {isClaude && (
+                <div className="mt-3 rounded-(--radius-md) border border-border-subtle bg-surface p-3">
+                  <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                    Claude account
+                  </p>
+                  <p className="mt-1 text-xs text-text-tertiary">
+                    Claude Code needs a Claude Pro/Max/Ultra plan or an Anthropic API key.
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <input
+                      type="password"
+                      value={apiKeyDraft}
+                      onChange={(event) => setApiKeyDraft(event.target.value)}
+                      placeholder="ANTHROPIC_API_KEY"
+                      className="h-8 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void saveClaudeKey()}
+                      className="flex h-8 shrink-0 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                    >
+                      Save &amp; connect
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={startClaudeLogin}
+                    className="mt-2 flex h-8 items-center gap-1.5 rounded-(--radius-sm) border border-border-strong px-3 text-xs text-text-secondary transition hover:bg-hover"
+                  >
+                    Sign in with Claude
+                  </button>
+                </div>
+              )}
 
               <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
                 {t("settings.providers.displayName")}

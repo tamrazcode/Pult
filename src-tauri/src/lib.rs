@@ -232,6 +232,7 @@ pub fn run() {
             ipc::terminal_pty_list,
             ipc::providers_detect_installed,
             ipc::providers_install,
+            ipc::providers_login,
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::workspace_tree,

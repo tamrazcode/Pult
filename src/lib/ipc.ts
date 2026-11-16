@@ -486,6 +486,11 @@ export function providersInstall(provider: string): Promise<string> {
   return invokeRequired<string>("providers_install", { provider });
 }
 
+/** Opens an interactive provider login in a visible terminal. */
+export function providersLogin(provider: string): Promise<void> {
+  return invokeRequired<void>("providers_login", { provider });
+}
+
 /** One-click connect check: spawn → handshake → cache caps → shut down. */
 export function providersPreflight(instanceId: string): Promise<PreflightReport> {
   return invokeRequired<PreflightReport>("providers_preflight", { instanceId });

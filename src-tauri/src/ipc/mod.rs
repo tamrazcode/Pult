@@ -760,6 +760,40 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
     Ok(format!("{stdout}\n{stderr}").trim().to_string())
 }
 
+/// Opens the provider's interactive login in a visible terminal (Claude now).
+#[tauri::command]
+pub fn providers_login(provider: String) -> Result<(), PultError> {
+    if provider != "claude" && provider != "claude-code" {
+        return Err(PultError::with_code(
+            "provider.login_unsupported",
+            format!("no interactive login helper for {provider}"),
+        ));
+    }
+    #[cfg(windows)]
+    {
+        std::process::Command::new("cmd.exe")
+            .args([
+                "/d",
+                "/s",
+                "/c",
+                "start",
+                "cmd.exe",
+                "/k",
+                "claude auth login",
+            ])
+            .spawn()
+            .map_err(|e| PultError::internal(format!("could not open Claude login: {e}")))?;
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        Err(PultError::with_code(
+            "provider.login_terminal",
+            "run `claude auth login` in a terminal",
+        ))
+    }
+}
+
 /// Rewrites the agent matrix (settings UI): validates, persists to
 /// config.toml, and swaps the live registry.
 #[tauri::command]
