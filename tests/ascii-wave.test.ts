@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import { cellBrightness, cellGlyph, pulseValue, rippleValue } from "../src/lib/asciiWave";
+import {
+  cellBrightness,
+  cellGlyph,
+  pulseValue,
+  rippleValue,
+  trailValue,
+} from "../src/lib/asciiWave";
 
 describe("asciiWave", () => {
   it("makes cellBrightness at a ripple crest brighter than a far point", () => {
     const pointer = { x: 100, y: 100, startedAt: 0, strength: 1 };
-    const crestDistance = Math.PI / (2 * 0.085);
+    const crestDistance = 35;
     const crestBrightness = cellBrightness(100 + crestDistance, 100, 0, pointer, []);
     const farBrightness = cellBrightness(2000, 2000, 0, pointer, []);
 
@@ -12,24 +18,44 @@ describe("asciiWave", () => {
   });
 
   it("falls off rippleValue with distance", () => {
-    const nearCrestDist = Math.PI / (2 * 0.085);
-    const farCrestDist = nearCrestDist + (6 * Math.PI) / 0.085;
+    const near = rippleValue(20, 0, 0, 0, 0, 1);
+    const far = rippleValue(900, 0, 0, 0, 0, 1);
 
-    const nearValue = rippleValue(nearCrestDist, 0, 0, 0, 0, 1);
-    const farValue = rippleValue(farCrestDist, 0, 0, 0, 0, 1);
-
-    expect(nearValue).toBeGreaterThan(farValue);
-    expect(farValue).toBeGreaterThan(0);
+    expect(near).toBeGreaterThan(far);
+    expect(far).toBeGreaterThanOrEqual(0);
   });
 
-  it("decays pulseValue to 0 after 1400ms", () => {
+  it("keeps the still-pointer pulse slow: a short interval changes it only slightly", () => {
+    const a = rippleValue(40, 20, 0, 0, 1_000, 1);
+    const b = rippleValue(40, 20, 0, 0, 1_200, 1);
+    const c = rippleValue(40, 20, 0, 0, 3_000, 1);
+
+    expect(Math.abs(a - b)).toBeLessThan(Math.abs(a - c) + 0.05);
+  });
+
+  it("blooms a click gradually instead of drawing an instant disk", () => {
     const pulse = { x: 50, y: 50, startedAt: 1000, strength: 1 };
 
-    const active = pulseValue(50 + 84, 50, pulse, 1200);
-    expect(active).toBeGreaterThan(0);
+    expect(pulseValue(50, 50, pulse, 1000)).toBe(0);
+    expect(pulseValue(50, 50, pulse, 1600)).toBeGreaterThan(0);
+    expect(pulseValue(50, 50, pulse, 3601)).toBe(0);
+  });
 
-    expect(pulseValue(50 + 348, 50, pulse, 2400)).toBe(0);
-    expect(pulseValue(50 + 350, 50, pulse, 2401)).toBe(0);
+  it("fades a pointer trail spot with age and distance", () => {
+    const point = { x: 50, y: 50, startedAt: 1000, strength: 1 };
+
+    expect(trailValue(50, 50, point, 1000)).toBeGreaterThan(0);
+    expect(trailValue(50, 50, point, 1800)).toBeLessThan(trailValue(50, 50, point, 1200));
+    expect(trailValue(50, 50, point, 1900)).toBe(0);
+    expect(trailValue(500, 500, point, 1000)).toBe(0);
+  });
+
+  it("lifts cellBrightness where the trail passes", () => {
+    const point = { x: 100, y: 100, startedAt: 0, strength: 1 };
+    const lit = cellBrightness(100, 100, 0, null, [], [point]);
+    const plain = cellBrightness(100, 100, 0, null, [], []);
+
+    expect(lit).toBeGreaterThan(plain);
   });
 
   it("returns a space for dim cells and a non-space glyph for bright cells", () => {

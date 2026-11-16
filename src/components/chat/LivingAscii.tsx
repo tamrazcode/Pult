@@ -17,6 +17,7 @@ export function LivingAscii() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<Ripple | null>(null);
+  const trailRef = useRef<Ripple[]>([]);
   const pulsesRef = useRef<Ripple[]>([]);
 
   useEffect(() => {
@@ -64,7 +65,14 @@ export function LivingAscii() {
         for (let col = 0; col < cols; col += 1) {
           const x = col * CELL_W + CELL_W / 2;
           const y = row * CELL_H;
-          const brightness = cellBrightness(x, y, now, pointerRef.current, pulsesRef.current);
+          const brightness = cellBrightness(
+            x,
+            y,
+            now,
+            pointerRef.current,
+            pulsesRef.current,
+            trailRef.current,
+          );
           const glyph = cellGlyph(col, row, brightness);
           if (glyph === " ") continue;
           ctx.globalAlpha = Math.min(0.9, 0.12 + brightness * 1.25);
@@ -77,10 +85,12 @@ export function LivingAscii() {
     const loop = (now: number) => {
       if (stopped) return;
       frame = requestAnimationFrame(loop);
-      const active = pointerRef.current !== null || pulsesRef.current.length > 0;
+      const active =
+        pointerRef.current !== null || trailRef.current.length > 0 || pulsesRef.current.length > 0;
       if (now - last < (active ? FRAME_MS : IDLE_FRAME_MS)) return;
       last = now;
-      pulsesRef.current = pulsesRef.current.filter((pulse) => now - pulse.startedAt < 1400);
+      pulsesRef.current = pulsesRef.current.filter((pulse) => now - pulse.startedAt < 2600);
+      trailRef.current = trailRef.current.filter((point) => now - point.startedAt < 900);
       draw(now);
     };
 
@@ -101,8 +111,18 @@ export function LivingAscii() {
         x,
         y,
         startedAt: event.timeStamp,
-        strength: Math.min(1, (previous?.strength ?? 0.6) + 0.25),
+        strength: Math.min(0.9, (previous?.strength ?? 0.45) + 0.12),
       };
+      const trail = trailRef.current;
+      const tail = trail[trail.length - 1];
+      if (
+        !tail ||
+        Math.hypot(x - tail.x, y - tail.y) > 6 ||
+        event.timeStamp - tail.startedAt > 35
+      ) {
+        trail.push({ x, y, startedAt: event.timeStamp, strength: 0.8 });
+        if (trail.length > 16) trail.splice(0, trail.length - 16);
+      }
     };
     const onLeave = () => {
       pointerRef.current = null;
@@ -114,7 +134,7 @@ export function LivingAscii() {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
         startedAt: performance.now(),
-        strength: 1,
+        strength: 0.9,
       });
     };
     const onVisibility = () => {

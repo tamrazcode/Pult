@@ -44,6 +44,14 @@ import type {
 } from "../../stores/runs";
 import type { PlanEntry } from "../../lib/types";
 import { runsRespondPermission } from "../../lib/ipc";
+import {
+  numberedExcerpt,
+  toolCommand,
+  toolLineRange,
+  toolOutputText,
+  toolPath,
+  toolQuery,
+} from "../../lib/toolDetails";
 import { Button } from "../ui/button";
 import Markdown from "./Markdown";
 import { HistoryTicks, type HistoryTick } from "./HistoryTicks";
@@ -293,10 +301,6 @@ const ChatItemRow = memo(
         return (
           <TextRow text={item.text} streaming={item.streaming} showCaret={showCaret} ts={item.ts} />
         );
-      case "thought":
-        return <ThoughtGroup item={item} streaming={item.streaming && showCaret} />;
-      case "tool":
-        return <ToolRow item={item} />;
       case "trace":
         return <TraceRow optionId={item.optionId} />;
       case "compaction":
@@ -411,16 +415,15 @@ function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
         group.push(candidate);
         next += 1;
       }
-      // A single action keeps its rich row; two or more collapse.
-      if (group.length > 1) {
-        rows.push(
-          <div key={entry.key} data-history-key={entry.key}>
-            <ActionGroupRow entries={group} />
-          </div>,
-        );
-        index = next - 1;
-        continue;
-      }
+      // A single action now lives inside the same smart activity row as a run;
+      // the row itself auto-expands while the agent works.
+      rows.push(
+        <div key={entry.key} data-history-key={entry.key}>
+          <ActionGroupRow entries={group} />
+        </div>,
+      );
+      index = next - 1;
+      continue;
     }
     rows.push(
       <div
@@ -435,9 +438,20 @@ function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
   return <>{rows}</>;
 }
 
+const ACTION_LABEL_KEYS: Record<string, string> = {
+  read: "chat.action.reading",
+  edit: "chat.action.editing",
+  write: "chat.action.editing",
+  move: "chat.action.editing",
+  delete: "chat.action.editing",
+  execute: "chat.action.running",
+  search: "chat.action.searching",
+  fetch: "chat.action.fetching",
+  think: "chat.thinking",
+};
+
 function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
   const t = useT();
-  const [open, setOpen] = useState(false);
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
   const activeItem = [...items]
@@ -448,24 +462,43 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
         (item.type === "thought" && item.streaming),
     );
   const active = activeItem !== undefined;
+  // Open while the agent works, fold away when the run goes quiet; a manual
+  // toggle stays until the next active/idle transition.
+  const [open, setOpen] = useState(active);
+  const previousActive = useRef(active);
+  useEffect(() => {
+    if (previousActive.current === active) return;
+    previousActive.current = active;
+    setOpen(active);
+  }, [active]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (activeItem?.type !== "thought") return;
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [activeItem]);
-  const shown = activeItem ?? last;
-  const Icon =
-    shown.type === "tool" ? toolIcon(shown.kind) : shown.type === "thought" ? Brain : ShieldCheck;
-  const label = activeItem
-    ? activeItem.type === "thought"
-      ? t("chat.thinkingWithDuration", {
-          duration: formatDuration(activeItem.startedAt, now),
-        })
-      : activeItem.type === "tool"
-        ? activeItem.title
-        : t("chat.tool.working")
-    : summarizeActionGroup(items);
+
+  let label: string;
+  if (activeItem?.type === "thought") {
+    label = t("chat.thinkingWithDuration", {
+      duration: formatDuration(activeItem.startedAt, now),
+    });
+  } else if (activeItem?.type === "tool") {
+    label = t(ACTION_LABEL_KEYS[activeItem.kind] ?? "chat.tool.working");
+  } else if (items.length === 1 && last.type === "thought") {
+    label = t("chat.thoughtFor", { duration: formatDuration(last.startedAt, last.endedAt) });
+  } else if (items.length === 1 && last.type === "trace") {
+    label = t("chat.trace.autoAllowed", { optionId: last.optionId });
+  } else if (items.length === 1 && last.type === "tool" && last.kind === "other") {
+    label = last.title;
+  } else {
+    label = summarizeActionGroup(items);
+  }
+
+  const SingleIcon =
+    last.type === "tool" ? toolIcon(last.kind) : last.type === "thought" ? Brain : ShieldCheck;
+  const Icon = items.length > 1 ? Eye : SingleIcon;
+
   return (
     <div>
       <button
@@ -474,14 +507,10 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
         aria-expanded={open}
         className="flex w-full items-center gap-2 py-0.5 text-left"
       >
-        {activeItem?.type === "thought" ? (
-          <ThinkingAscii />
-        ) : (
-          <Icon size={13} className="shrink-0 text-text-secondary" />
-        )}
+        {active ? <ThinkingAscii /> : <Icon size={13} className="shrink-0 text-text-secondary" />}
         <span
           className={`min-w-0 flex-1 truncate text-sm ${
-            active ? "text-text-tertiary" : "text-text-secondary"
+            active ? "activity-shimmer" : "text-text-secondary"
           }`}
         >
           {label}
@@ -493,12 +522,12 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
         />
       </button>
       {open && (
-        <div className="space-y-0.5 py-1 pl-5">
+        <div className="space-y-2 py-1 pl-5">
           {entries.map((entry) =>
             entry.item.type === "tool" ? (
-              <ToolRow key={entry.key} item={entry.item} />
+              <ActionDetail key={entry.key} item={entry.item} />
             ) : entry.item.type === "thought" ? (
-              <ThoughtGroup key={entry.key} item={entry.item} streaming={false} />
+              <ThoughtDetail key={entry.key} item={entry.item} />
             ) : entry.item.type === "trace" ? (
               <TraceRow key={entry.key} optionId={entry.item.optionId} />
             ) : null,
@@ -508,6 +537,125 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
     </div>
   );
 }
+
+function ThoughtDetail({ item }: { item: ThoughtChatItem }) {
+  const t = useT();
+  return (
+    <div className="py-0.5">
+      <div className="flex items-center gap-1.5 text-xs text-text-tertiary">
+        <Brain size={11} className="shrink-0" />
+        {t("chat.thoughtFor", { duration: formatDuration(item.startedAt, item.endedAt) })}
+      </div>
+      {item.text.trim() && (
+        <p className="mt-0.5 text-sm whitespace-pre-wrap text-text-tertiary italic">{item.text}</p>
+      )}
+    </div>
+  );
+}
+
+const DIFF_KINDS = new Set(["edit", "write", "move", "delete"]);
+
+const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }) {
+  const t = useT();
+  const [raw, setRaw] = useState(false);
+  const Icon = toolIcon(item.kind);
+  const path = toolPath(item);
+  const range = toolLineRange(item);
+  const output = toolOutputText(item);
+  const image = findImageCandidate(item.rawOutput ?? item.content ?? item.rawInput);
+  const excerpt =
+    item.kind === "read" && output ? numberedExcerpt(output, range?.start ?? 1) : null;
+  const canDiff = DIFF_KINDS.has(item.kind) && path !== null;
+  const title =
+    path === null
+      ? item.title
+      : item.kind === "read"
+        ? t("chat.action.readFile", { path })
+        : canDiff
+          ? t("chat.action.editedFile", { path })
+          : item.title;
+  const command = item.kind === "execute" ? toolCommand(item) : null;
+  const query = item.kind === "search" ? toolQuery(item) : null;
+  const hasRaw =
+    item.rawInput !== undefined || item.rawOutput !== undefined || item.content !== undefined;
+
+  return (
+    <div className="py-0.5">
+      <div className="flex items-center gap-1.5 text-sm text-text-secondary">
+        <Icon size={12} className="shrink-0 text-text-tertiary" />
+        <span className="min-w-0 truncate">{title}</span>
+        {range && (
+          <span className="shrink-0 text-xs text-text-tertiary">
+            {range.start}–{range.end}
+          </span>
+        )}
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(item.status)}`} />
+        {canDiff && (
+          <button
+            type="button"
+            onClick={() => useUiStore.getState().setRightPanelTab("diff")}
+            className="ml-auto shrink-0 rounded-(--radius-sm) border border-border-subtle px-1.5 py-0.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          >
+            {t("chat.action.openDiff")}
+          </button>
+        )}
+      </div>
+      {command && command !== title && (
+        <pre className="mt-1 overflow-x-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs text-text-secondary">
+          $ {command}
+        </pre>
+      )}
+      {query && query !== title && (
+        <div className="mt-1 font-mono text-xs text-text-tertiary">{query}</div>
+      )}
+      {excerpt ? (
+        <div className="mt-1 max-h-64 overflow-auto rounded-(--radius-sm) bg-code-bg py-1 font-mono text-xs">
+          {excerpt.lines.map((line) => (
+            <div key={line.n} className="flex px-2">
+              <span className="w-10 shrink-0 pr-2 text-right text-text-tertiary/70 select-none">
+                {line.n}
+              </span>
+              <span className="whitespace-pre text-text-secondary">{line.text}</span>
+            </div>
+          ))}
+          {excerpt.truncated > 0 && (
+            <div className="px-2 pl-12 text-text-tertiary">
+              {plural("chat.action.moreLines", excerpt.truncated)}
+            </div>
+          )}
+        </div>
+      ) : output ? (
+        <pre className="mt-1 max-h-48 overflow-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs whitespace-pre-wrap text-text-secondary">
+          {output}
+        </pre>
+      ) : null}
+      {image && (
+        <div className="mt-1">
+          <ToolImage candidate={image} />
+        </div>
+      )}
+      {hasRaw && (
+        <button
+          type="button"
+          onClick={() => setRaw((value) => !value)}
+          aria-expanded={raw}
+          className="mt-1 text-xs text-text-tertiary transition hover:text-text-secondary"
+        >
+          {t("chat.tool.raw")}
+        </button>
+      )}
+      {raw && (
+        <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
+          {JSON.stringify(
+            { input: item.rawInput, output: item.rawOutput ?? item.content },
+            null,
+            2,
+          )}
+        </pre>
+      )}
+    </div>
+  );
+});
 
 /** Live elapsed-time line under a streaming run ("Working for 4s"). */
 function WorkingTimer({ startedAt }: { startedAt: number }) {
@@ -700,51 +848,6 @@ function formatDuration(startedAt: number, endedAt: number): string {
   return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function ThoughtGroup({ item, streaming }: { item: ThoughtChatItem; streaming: boolean }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!streaming) return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [streaming]);
-  const duration = formatDuration(item.startedAt, streaming ? now : item.endedAt);
-  return (
-    <div>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 py-0.5 text-left"
-      >
-        {streaming ? (
-          <ThinkingAscii />
-        ) : (
-          <Brain size={13} className="shrink-0 text-text-tertiary" />
-        )}
-        <span
-          className={`text-sm ${streaming ? "text-text-tertiary italic" : "text-text-tertiary"}`}
-        >
-          {streaming
-            ? t("chat.thinkingWithDuration", { duration })
-            : t("chat.thoughtFor", { duration })}
-        </span>
-        {streaming && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />}
-        <div className="flex-1" />
-        <ChevronRight
-          size={12}
-          className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
-        />
-      </button>
-      {open && (
-        <div className="py-1 pl-5 text-sm whitespace-pre-wrap text-text-tertiary italic">
-          {item.text}
-        </div>
-      )}
-    </div>
-  );
-}
-
 /** Policy trace row: the mode auto-resolved a permission (never silent). */
 function TraceRow({ optionId }: { optionId: string }) {
   const t = useT();
@@ -790,67 +893,6 @@ function NoticeRow({ level, message }: { level: string; message: string }) {
   return (
     <div className={`text-sm ${NOTICE_LEVEL_CLASSES[level] ?? "text-text-tertiary"}`}>
       {message}
-    </div>
-  );
-}
-
-function ToolRow({ item }: { item: ToolChatItem }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const [raw, setRaw] = useState(false);
-  const Icon = toolIcon(item.kind);
-  const detail = item.rawOutput ?? item.content;
-  const hasDetail = item.rawInput !== undefined || detail !== undefined;
-  const image = findImageCandidate(item.rawOutput ?? item.content ?? item.rawInput);
-  return (
-    <div>
-      <button
-        onClick={() => hasDetail && setOpen((o) => !o)}
-        disabled={!hasDetail}
-        aria-expanded={open}
-        className={`flex w-full items-center gap-2 py-0.5 text-left ${hasDetail ? "" : "cursor-default"}`}
-      >
-        <Icon size={13} className="shrink-0 text-text-secondary" />
-        <span className="truncate text-sm text-text-secondary">{item.title}</span>
-        {item.locations.length > 0 && (
-          <span className="truncate font-mono text-xs text-text-tertiary">{item.locations[0]}</span>
-        )}
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(item.status)}`} />
-        {hasDetail && (
-          <ChevronRight
-            size={12}
-            className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
-          />
-        )}
-      </button>
-      {image && (
-        <div className="py-1 pl-5">
-          <ToolImage candidate={image} />
-        </div>
-      )}
-      {open && hasDetail && (
-        <div className="space-y-1.5 py-1 pl-5">
-          <ToolReadable label={t("chat.tool.input")} value={item.rawInput} />
-          <ToolReadable label={t("chat.tool.output")} value={detail} />
-          <button
-            type="button"
-            onClick={() => setRaw((value) => !value)}
-            aria-expanded={raw}
-            className="text-xs text-text-tertiary transition hover:text-text-secondary"
-          >
-            {t("chat.tool.raw")}
-          </button>
-          {raw && (
-            <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
-              {JSON.stringify(
-                { input: item.rawInput, output: item.rawOutput ?? item.content },
-                null,
-                2,
-              )}
-            </pre>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -939,33 +981,6 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
         className="max-h-64 rounded-(--radius-md) border border-border-subtle"
       />
     </button>
-  );
-}
-
-/// Human-readable tool payload: prefer the command/stdout, never opaque exec ids.
-function readableToolValue(value: unknown): string {
-  if (value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    for (const key of ["stdout", "stderr", "output", "result", "text", "content", "command"]) {
-      const candidate = record[key];
-      if (typeof candidate === "string" && candidate.trim()) return candidate;
-    }
-  }
-  return JSON.stringify(value, null, 2);
-}
-
-function ToolReadable({ label, value }: { label: string; value: unknown }) {
-  const text = readableToolValue(value);
-  if (!text) return null;
-  return (
-    <div>
-      <div className="text-xs font-medium tracking-wide text-text-tertiary uppercase">{label}</div>
-      <pre className="overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-secondary">
-        {text}
-      </pre>
-    </div>
   );
 }
 

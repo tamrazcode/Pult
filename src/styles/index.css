@@ -56,6 +56,41 @@
   font-feature-settings: "tnum";
 }
 
+/* Slow, uneven glow that sweeps the active activity label. The gradient keeps
+   enough contrast at both ends; reduced motion falls back to plain text. */
+@keyframes activity-shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+.activity-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--text-tertiary) 30%,
+    var(--text-primary) 45%,
+    var(--accent) 50%,
+    var(--text-primary) 55%,
+    var(--text-tertiary) 70%
+  );
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  animation: activity-shimmer 5.5s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .activity-shimmer {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    color: var(--text-secondary);
+  }
+}
+
 @layer base {
   html,
   body,

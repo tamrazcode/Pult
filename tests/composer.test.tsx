@@ -433,7 +433,7 @@ describe("composer", () => {
     expect(attach.querySelector("svg.lucide-plus")).toBeNull();
 
     expect(screen.getByRole("button", { name: /Claude Code/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Composer options" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Composer options" })).toBeNull();
 
     const sendBtn = screen.getByRole("button", { name: "Send message" });
     expect(sendBtn.className).toContain("rounded-full");
@@ -547,16 +547,64 @@ describe("composer", () => {
     expect(screen.queryByRole("button", { name: /^Mode:/i })).toBeNull();
     expect(screen.getByRole("button", { name: /Pro/ })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
-    const dialog = screen.getByRole("dialog", { name: "Composer options" });
+    fireEvent.click(screen.getByRole("button", { name: /Pro/ }));
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
 
-    expect(within(dialog).queryByText(/^(Full access|Supervised|Auto edit|Auto)$/)).toBeNull();
+    expect(within(dialog).queryByRole("button", { name: /Permission mode/i })).toBeNull();
     expect(within(dialog).getAllByText("Architect")).toHaveLength(1);
     expect(within(dialog).queryByRole("button", { name: /^Mode:/i })).toBeNull();
     expect(within(dialog).getByText("Web search")).toBeTruthy();
-    expect(within(dialog).queryByText(/^(Reasoning|Effort|Agent)$/i)).toBeNull();
-    expect(within(dialog).queryByText(/High/i)).toBeNull();
+    expect(within(dialog).getByText("High")).toBeTruthy();
     expect(within(dialog).queryByText(/thought_level/i)).toBeNull();
+  });
+
+  it("tints Full access orange and highlights the selected row in the menu", () => {
+    useRunsStore.setState({ runsByThread: {} });
+    useSettingsStore.setState({ permissionMode: "full_access" });
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance({ displayName: "Claude Code" })],
+    });
+
+    render(<Composer threadId="th" />);
+    const pill = screen.getByRole("button", { name: "Permission mode" });
+    expect(pill.className).toContain("text-warning");
+    expect(pill.querySelector("svg")?.getAttribute("class")).toContain("text-warning");
+
+    fireEvent.click(pill);
+    const option = screen.getByRole("button", { name: /Full access/ });
+    expect(option.className).toContain("bg-warning/10");
+    expect(within(option).getByText("Full access").className).toContain("text-warning");
+  });
+
+  it("shows a fast-mode bolt only when the provider exposes it and toggles it", () => {
+    useRunsStore.setState({ runsByThread: {} });
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [
+        makeInstance({
+          displayName: "Codex",
+          configOptions: [
+            {
+              type: "boolean",
+              id: "fast_mode",
+              name: "Fast mode",
+              category: "other",
+              currentValue: false,
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<Composer threadId="th" />);
+    const bolt = screen.getByRole("button", { name: "Fast mode" });
+    expect(bolt.getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.click(bolt);
+    expect(runsSetConfigOption).toHaveBeenCalledWith("th", "fast_mode", true);
+    expect(bolt.getAttribute("aria-pressed")).toBe("true");
+    expect(bolt.className).toContain("text-warning");
   });
 
   it("keeps permission inline in the composer bar and opens overflow with Session mode and extra options", async () => {
@@ -598,20 +646,19 @@ describe("composer", () => {
 
     render(<Composer threadId="th" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Composer options" }));
-    const dialog = screen.getByRole("dialog", { name: "Composer options" });
-    expect(within(dialog).getByText(/Session mode/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Claude Code/ }));
+    const dialog = screen.getByRole("dialog", { name: "Provider, model, and reasoning" });
+    expect(within(dialog).getByText("Options")).toBeTruthy();
+    expect(within(dialog).getByText("Architect")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Permission mode/i })).toBeTruthy();
     expect(within(dialog).getByText("Web search")).toBeTruthy();
-    expect(within(dialog).queryByText(/Effort/i)).toBeNull();
-    expect(within(dialog).queryByText(/Reasoning/i)).toBeNull();
-    expect(within(dialog).queryByText(/Medium/i)).toBeNull();
+    expect(within(dialog).getByText("Medium")).toBeTruthy();
     expect(within(dialog).queryByText(/^Agent$/i)).toBeNull();
     expect(within(dialog).queryByText("Codex")).toBeNull();
 
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() =>
-      expect(screen.queryByRole("dialog", { name: "Composer options" })).toBeNull(),
+      expect(screen.queryByRole("dialog", { name: "Provider, model, and reasoning" })).toBeNull(),
     );
     expect(runsCancel).not.toHaveBeenCalled();
 
@@ -1187,7 +1234,7 @@ describe("composer", () => {
 
     expect(screen.getByLabelText("Attach files")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Claude Code/ })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Composer options" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Composer options" })).toBeNull();
     expect(screen.getByRole("button", { name: "Send message" })).toBeTruthy();
   });
 
@@ -1244,6 +1291,9 @@ describe("composer", () => {
     render(<Composer threadId="th" />);
 
     expect(screen.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Stop run" }).querySelector("span.bg-white"),
+    ).not.toBeNull();
     expect(screen.queryByRole("button", { name: "Queue message" })).toBeNull();
 
     const textarea = screen.getByRole("textbox") as HTMLTextAreaElement;

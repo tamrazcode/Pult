@@ -8,20 +8,12 @@ import {
   FileText,
   GripVertical,
   ListPlus,
-  MoreHorizontal,
   Paperclip,
   Pencil,
-  Square,
   X,
 } from "lucide-react";
 import { Button } from "../ui/button";
-import {
-  AgentModePicker,
-  ConfigOptionPickers,
-  ModePill,
-  ProviderModelPicker,
-  configValueValid,
-} from "./ComposerControls";
+import { ModePill, ProviderModelPicker, configValueValid } from "./ComposerControls";
 import {
   runsCancel,
   runsDispatch,
@@ -168,76 +160,6 @@ function withFileAttachments(text: string, files: FileChip[]): string {
     })
     .join("\n\n");
   return [text, blocks].filter(Boolean).join("\n\n");
-}
-
-/** One overflow menu for every secondary control; one permission control inside. */
-function ComposerOverflowMenu({ threadId }: { threadId?: string }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const modes =
-    useUiStore(
-      (s) => s.instances.find((instance) => instance.id === s.selectedInstanceId)?.modes,
-    ) ?? [];
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      // A nested picker owns this Escape; close it first, then the menu.
-      if (dialogRef.current?.querySelector("[data-composer-submenu]")) return;
-      event.preventDefault();
-      setOpen(false);
-    };
-    const onPointer = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("mousedown", onPointer);
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("mousedown", onPointer);
-    };
-  }, [open]);
-
-  return (
-    <div ref={rootRef} className="relative">
-      <button
-        type="button"
-        aria-label={t("composer.optionsMenu")}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title={t("composer.optionsMenu")}
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-      >
-        <MoreHorizontal size={15} />
-      </button>
-      {open && (
-        <div
-          ref={dialogRef}
-          role="dialog"
-          aria-label={t("composer.optionsMenu")}
-          data-escape-layer
-          className="absolute right-0 bottom-full z-50 mb-2 w-72 space-y-3 rounded-(--radius-md) border border-border-strong bg-surface-raised p-3 shadow-(--shadow-composer)"
-        >
-          {modes.length > 0 && (
-            <section>
-              <p className="mb-1.5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                {t("composer.sessionMode")}
-              </p>
-              <AgentModePicker threadId={threadId} />
-            </section>
-          )}
-          <ConfigOptionPickers
-            threadId={threadId}
-            heading={t("composer.options")}
-            excludeModelAndReasoning
-          />
-        </div>
-      )}
-    </div>
-  );
 }
 
 export function Composer({ threadId }: { threadId?: string }) {
@@ -1109,7 +1031,6 @@ export function Composer({ threadId }: { threadId?: string }) {
             <ModePill threadId={threadId} />
             <div className="flex-1" />
             <ProviderModelPicker threadId={threadId} />
-            <ComposerOverflowMenu threadId={threadId} />
             {runActive ? (
               value.trim() || chips.length > 0 || fileChips.length > 0 ? (
                 <button
@@ -1118,7 +1039,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   aria-label={t("composer.queue")}
                   title={t("composer.queue")}
                   disabled={awaitingDecision || busy}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
                   <ListPlus size={15} />
                 </button>
@@ -1128,9 +1049,9 @@ export function Composer({ threadId }: { threadId?: string }) {
                   onClick={handleStop}
                   aria-label={cancelling ? t("composer.forceStop") : t("composer.stop")}
                   title={cancelling ? t("composer.forceStop") : t("composer.stop")}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-danger bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-white transition hover:brightness-110"
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-danger bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-white transition hover:brightness-110"
                 >
-                  <Square size={12} strokeWidth={3.5} />
+                  <span aria-hidden className="h-2.5 w-2.5 rounded-[2px] bg-white" />
                 </button>
               )
             ) : (
@@ -1144,7 +1065,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   awaitingDecision ||
                   busy
                 }
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/15 via-white/5 to-black/10 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
               >
                 <ArrowUp size={14} />
               </button>

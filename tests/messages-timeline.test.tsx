@@ -401,15 +401,16 @@ describe("MessagesTimeline", () => {
 
     const summary = screen.getByRole("button", { name: "read 1 file" });
     expect(summary).toHaveAttribute("aria-expanded", "false");
-    expect(screen.queryByRole("button", { name: /Thought for/i })).toBeNull();
-    expect(screen.queryByText("Read main.ts")).toBeNull();
+    expect(screen.queryByText(/Thought for/i)).toBeNull();
+    expect(screen.queryByText("Read src/main.ts")).toBeNull();
     fireEvent.click(summary);
     expect(summary).toHaveAttribute("aria-expanded", "true");
-    const thoughtContainer = screen.getByRole("button", { name: /Thought for/i }).parentElement!;
+    const thoughtText = screen.getByText(/Thought for/i);
+    const thoughtContainer = thoughtText.closest("div")!;
     expect(thoughtContainer).not.toHaveClass("border-border-subtle");
     expect(thoughtContainer).not.toHaveClass("bg-surface");
 
-    const toolContainer = screen.getByText("Read main.ts").closest("button")!.parentElement!;
+    const toolContainer = screen.getByText("Read src/main.ts").closest("div")!;
     expect(toolContainer).not.toHaveClass("border-border-subtle");
     expect(toolContainer).not.toHaveClass("bg-surface");
   });
@@ -453,7 +454,7 @@ describe("MessagesTimeline", () => {
         expect(screen.getByText("First tool")).toBeVisible();
         expect(screen.getByText("Second tool")).toBeVisible();
       } else if (kind === "thoughts") {
-        expect(screen.getAllByRole("button", { name: "Thought for 2s" })).toHaveLength(2);
+        expect(screen.getAllByText("Thought for 2s")).toHaveLength(2);
       } else {
         expect(screen.getByText("Auto-allowed by permission mode (first)")).toBeVisible();
         expect(screen.getByText("Auto-allowed by permission mode (second)")).toBeVisible();
@@ -509,7 +510,7 @@ describe("MessagesTimeline", () => {
     fireEvent.click(summary);
     const chronological = [
       screen.getByText("Read source"),
-      screen.getByRole("button", { name: "Thought for 2s" }),
+      screen.getByText("Thought for 2s"),
       screen.getByText("Auto-allowed by permission mode (allow_once)"),
       screen.getByText("Edit source"),
       screen.getByText("Run tests"),
@@ -522,14 +523,13 @@ describe("MessagesTimeline", () => {
             Node.DOCUMENT_POSITION_FOLLOWING,
         ).toBeTruthy();
     });
-    fireEvent.click(chronological[1]);
     expect(screen.getByText("Consider the result")).toBeVisible();
     fireEvent.click(summary);
     expect(screen.queryByText("Read source")).toBeNull();
     expect(screen.queryByText("Consider the result")).toBeNull();
   });
 
-  it("shows the newest action title while active and replaces it with counts on completion", () => {
+  it("keeps the smart active label and auto-expands until the actions complete", () => {
     const first: ChatItem = {
       type: "tool",
       toolCallId: "read",
@@ -552,11 +552,10 @@ describe("MessagesTimeline", () => {
     });
     const { container } = render(<MessagesTimeline threadId="th" />);
     expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "Run newest checks" })).toHaveAttribute(
-      "aria-expanded",
-      "false",
-    );
-    expect(screen.queryByText("Read source")).toBeNull();
+    const summary = screen.getByRole("button", { name: "Running command" });
+    expect(summary).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("Read source")).toBeVisible();
+    expect(screen.getByText("Run newest checks")).toBeVisible();
     const newest: ChatItem = { ...latest, toolCallId: "exec2", title: "Build latest revision" };
     act(() =>
       useRunsStore.setState({
@@ -565,11 +564,11 @@ describe("MessagesTimeline", () => {
         },
       }),
     );
-    expect(screen.getByRole("button", { name: "Build latest revision" })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: "Running command" })).toHaveAttribute(
       "aria-expanded",
-      "false",
+      "true",
     );
-    expect(screen.queryByText("Run newest checks")).toBeNull();
+    expect(screen.getByText("Build latest revision")).toBeVisible();
     act(() =>
       useRunsStore.setState({
         runsByThread: { th: [run("r1", "finished", 0)] },
@@ -581,7 +580,8 @@ describe("MessagesTimeline", () => {
         },
       }),
     );
-    expect(screen.getByRole("button", { name: "ran 2 commands and read 1 file" })).toBeVisible();
+    const done = screen.getByRole("button", { name: "ran 2 commands and read 1 file" });
+    expect(done).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("Build latest revision")).toBeNull();
   });
 
@@ -658,8 +658,10 @@ describe("MessagesTimeline", () => {
     expect(screen.queryByRole("button", { name: /Thought/ })).toBeNull();
     expect(screen.queryByText("Instant thought")).toBeNull();
     expect(screen.queryByText("Zero thought")).toBeNull();
-    expect(screen.queryByRole("button", { name: "read 1 file" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Read source/ })).toBeVisible();
+    const summary = screen.getByRole("button", { name: "read 1 file" });
+    expect(summary).toBeVisible();
+    fireEvent.click(summary);
+    expect(screen.getByText("Read source")).toBeVisible();
   });
 
   it("shows Thinking with a changing character spinner and a live duration across one minute", () => {
@@ -692,7 +694,7 @@ describe("MessagesTimeline", () => {
       expect(spinner.textContent).not.toBe(initial);
       act(() => vi.advanceTimersByTime(5_910));
       expect(screen.getByRole("button", { name: "Thinking · 1m 5s" })).toBeVisible();
-      expect(screen.queryByText("Still reasoning")).toBeNull();
+      expect(screen.getByText("Still reasoning")).toBeVisible();
     } finally {
       vi.useRealTimers();
     }
@@ -872,7 +874,7 @@ describe("MessagesTimeline", () => {
 
     const { container } = render(<MessagesTimeline threadId="th" />);
 
-    fireEvent.click(screen.getByText("Run echo").closest("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "ran 1 command" }));
 
     expect(screen.getAllByText(/hello/).length).toBeGreaterThan(0);
     expect(container.textContent).not.toContain("exec-");
@@ -927,6 +929,7 @@ describe("MessagesTimeline", () => {
 
     render(<TimelineWithLightbox />);
 
+    fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
     const openButtons = screen.getAllByRole("button", { name: "Open image" });
     expect(openButtons).toHaveLength(2);
 

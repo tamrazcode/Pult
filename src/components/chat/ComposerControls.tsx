@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Star,
+  Zap,
 } from "lucide-react";
 import { runsSetConfigOption, runsSetMode, runsSetPermissionMode } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
@@ -424,27 +425,76 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const visibleModels = modelItems.filter((item) =>
     item.name.toLowerCase().includes(modelQuery.trim().toLowerCase()),
   );
+  // Codex exposes a boolean "fast" switch; surface it as a lightning bolt
+  // beside the picker instead of hiding it in an overflow menu.
+  const fastOption = options.find(
+    (option) =>
+      option.type === "boolean" &&
+      /fast/i.test(`${option.id} ${option.name} ${option.category ?? ""}`),
+  );
+  const fastOn = fastOption
+    ? pickerConfigValue(fastOption, activeRun, liveOptions, desired) === true
+    : false;
+  const extraOptions = options.filter(
+    (option) =>
+      option.id !== "mode" &&
+      option.category !== "mode" &&
+      !isModelOption(option) &&
+      !isReasoningOption(option),
+  );
+  const modes = selected?.modes ?? [];
+  const activeRunId = activeRun?.id;
+  const liveModeId = useRunsStore((s) =>
+    activeRunId ? s.viewsByRun[activeRunId]?.modeId : undefined,
+  );
+  const desiredModeId = useRunsStore((s) =>
+    threadId ? s.desiredModeByThread[threadId] : s.desiredModeByThread[""],
+  );
+  const currentModeId = pickerModeId(activeRun, liveModeId, desiredModeId);
+  const hasExtraOptions = extraOptions.length > 0 || modes.length > 0;
+  const pickMode = (modeId: string) => {
+    useRunsStore.getState().setDesiredMode(threadId ?? "", modeId);
+    if (threadId && isTauri()) {
+      runsSetMode(threadId, modeId).catch((err) => console.error("runs_set_mode failed", err));
+    }
+  };
 
   return (
     <div ref={rootRef} className="relative min-w-0">
-      <button
-        type="button"
-        title={t("composer.providerModelReasoning")}
-        aria-label={ariaLabel}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-8 min-w-0 max-w-[320px] items-center gap-1.5 rounded-full border border-border-subtle bg-surface px-2.5 text-xs text-text-secondary transition hover:bg-hover"
-      >
-        <ProviderLogo instance={selected} />
-        <span className="min-w-0 max-w-[150px] truncate text-text-primary">{modelLabel}</span>
-        {reasoningLabel && (
-          <span data-reasoning className="shrink-0 text-text-tertiary">
-            {reasoningLabel}
-          </span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <button
+          type="button"
+          title={t("composer.providerModelReasoning")}
+          aria-label={ariaLabel}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+          className="flex h-8 min-w-0 max-w-[320px] items-center gap-1.5 rounded-full border border-border-subtle bg-surface px-2.5 text-xs text-text-secondary transition hover:bg-hover"
+        >
+          <ProviderLogo instance={selected} />
+          <span className="min-w-0 max-w-[150px] truncate text-text-primary">{modelLabel}</span>
+          {reasoningLabel && (
+            <span data-reasoning className="shrink-0 text-text-tertiary">
+              {reasoningLabel}
+            </span>
+          )}
+          <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
+        </button>
+        {fastOption && (
+          <button
+            type="button"
+            aria-pressed={fastOn}
+            aria-label={t("composer.fastMode")}
+            title={t("composer.fastMode")}
+            onClick={() => pickConfig(fastOption.id, !fastOn)}
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border-subtle transition hover:bg-hover ${
+              fastOn ? "bg-warning/10 text-warning" : "bg-surface text-text-tertiary"
+            }`}
+          >
+            <Zap size={13} fill={fastOn ? "currentColor" : "none"} />
+          </button>
         )}
-        <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
-      </button>
+      </div>
 
       {open && (
         <>
@@ -638,6 +688,75 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
               </section>
             )}
 
+            {hasExtraOptions && (
+              <section className="space-y-2 border-t border-border-subtle px-3 py-2">
+                <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                  {t("composer.options")}
+                </p>
+                {modes.length > 0 && (
+                  <label className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-text-secondary">{t("composer.sessionMode")}</span>
+                    <select
+                      aria-label={t("composer.sessionMode")}
+                      value={currentModeId ?? modes[0]?.id ?? ""}
+                      onChange={(event) => pickMode(event.target.value)}
+                      className="h-6 max-w-[150px] rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 text-xs text-text-secondary focus:border-border-strong focus:outline-none"
+                    >
+                      {modes.map((mode) => (
+                        <option key={mode.id} value={mode.id}>
+                          {mode.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                {extraOptions.map((option) => {
+                  const value = pickerConfigValue(option, activeRun, liveOptions, desired);
+                  if (option.type === "boolean") {
+                    const on = value === true;
+                    return (
+                      <div key={option.id} className="flex items-center justify-between gap-3">
+                        <span className="text-xs text-text-secondary">{option.name}</span>
+                        <button
+                          type="button"
+                          role="switch"
+                          aria-checked={on}
+                          aria-label={option.name}
+                          onClick={() => pickConfig(option.id, !on)}
+                          className={`relative h-4 w-7 shrink-0 rounded-full transition ${
+                            on ? "bg-accent" : "bg-active"
+                          }`}
+                        >
+                          <span
+                            className={`absolute top-0.5 h-3 w-3 rounded-full bg-white transition-all ${
+                              on ? "left-3.5" : "left-0.5"
+                            }`}
+                          />
+                        </button>
+                      </div>
+                    );
+                  }
+                  return (
+                    <label key={option.id} className="flex items-center justify-between gap-3">
+                      <span className="text-xs text-text-secondary">{option.name}</span>
+                      <select
+                        aria-label={option.name}
+                        value={String(value)}
+                        onChange={(event) => pickConfig(option.id, event.target.value)}
+                        className="h-6 max-w-[150px] rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 text-xs text-text-secondary focus:border-border-strong focus:outline-none"
+                      >
+                        {flattenSelectOptions(option.options).map((item) => (
+                          <option key={item.value} value={item.value}>
+                            {item.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  );
+                })}
+              </section>
+            )}
+
             <button
               type="button"
               onClick={() => {
@@ -785,19 +904,28 @@ export function ModePill({ threadId }: { threadId?: string }) {
     }
   };
 
+  const fullAccess = permissionMode === "full_access";
   return (
     <div className="relative">
       <button
         title={t("composer.permissionModeTitle")}
         aria-label={t("composer.permission")}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 text-xs text-text-secondary transition hover:bg-hover"
+        className={`flex min-w-0 items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-0.5 text-xs transition hover:bg-hover ${
+          fullAccess ? "text-warning" : "text-text-secondary"
+        }`}
       >
-        <ShieldCheck size={12} className="shrink-0 text-text-tertiary" />
+        <ShieldCheck
+          size={12}
+          className={`shrink-0 ${fullAccess ? "text-warning" : "text-text-tertiary"}`}
+        />
         <span className="max-w-[140px] truncate">
           {t(PERMISSION_MODE_LABEL_KEYS[permissionMode])}
         </span>
-        <ChevronDown size={12} className="shrink-0 text-text-tertiary" />
+        <ChevronDown
+          size={12}
+          className={`shrink-0 ${fullAccess ? "text-warning" : "text-text-tertiary"}`}
+        />
       </button>
       {open && (
         <>
@@ -813,13 +941,32 @@ export function ModePill({ threadId }: { threadId?: string }) {
               <button
                 key={mode}
                 onClick={() => pick(mode)}
-                className="flex w-full items-start gap-2 px-3 py-1.5 text-left transition hover:bg-hover"
+                className={`flex w-full items-start gap-2 px-3 py-1.5 text-left transition hover:bg-hover ${
+                  mode === permissionMode
+                    ? mode === "full_access"
+                      ? "bg-warning/10"
+                      : "bg-active"
+                    : ""
+                }`}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-2 text-sm text-text-secondary">
+                  <span
+                    className={`flex items-center gap-2 text-sm ${
+                      mode === permissionMode
+                        ? mode === "full_access"
+                          ? "text-warning"
+                          : "text-text-primary"
+                        : "text-text-secondary"
+                    }`}
+                  >
                     {t(PERMISSION_MODE_LABEL_KEYS[mode])}
                     {mode === permissionMode && (
-                      <Check size={12} className="shrink-0 text-accent" />
+                      <Check
+                        size={12}
+                        className={`shrink-0 ${
+                          mode === "full_access" ? "text-warning" : "text-accent"
+                        }`}
+                      />
                     )}
                   </span>
                   <span className="mt-0.5 block text-xs leading-snug text-text-tertiary">

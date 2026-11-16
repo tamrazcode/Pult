@@ -85,4 +85,5 @@ export const composer = {
   "composer.queue.save": "Save",
   "composer.queue.cancel": "Cancel",
   "composer.queue.keepTyping": "Keep typing to queue another message",
+  "composer.fastMode": "Fast mode",
 } as const;
