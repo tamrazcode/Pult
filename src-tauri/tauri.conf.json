@@ -38,7 +38,7 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": ["https://releases.pult.local/{{target}}/{{arch}}/{{current_version}}"],
+      "endpoints": ["https://github.com/OWNER/pult/releases/latest/download/latest.json"],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEIyMTk3MzVEOTZDOTY1QTgKUldTb1pjbVdYWE1ac251OG9nclh5T2hLRHUxeVcraXRMdzVMbWlJWG9CY1ptcHVEbGhURGVPYWgK"
     }
   }

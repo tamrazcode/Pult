@@ -28,6 +28,7 @@ import type { PermissionMode } from "../../stores/settings";
 import { useT } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
 import { ProviderLogo } from "./ProviderLogo";
+import { FadeText } from "../ui/FadeText";
 
 const MODES: PermissionMode[] = ["supervised", "auto_edit", "auto", "full_access"];
 
@@ -435,6 +436,9 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const fastOn = fastOption
     ? pickerConfigValue(fastOption, activeRun, liveOptions, desired) === true
     : false;
+  // opencode model ids are long and meaningful; show them in full instead of
+  // fading or ellipsizing the only part that distinguishes the model.
+  const fullModelName = selected?.driver === "opencode" || selected?.id === "opencode";
   const extraOptions = options.filter(
     (option) =>
       option.id !== "mode" &&
@@ -473,10 +477,16 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
           aria-haspopup="dialog"
           aria-expanded={open}
           onClick={() => setOpen((current) => !current)}
-          className="flex h-8 min-w-0 max-w-[320px] items-center gap-1.5 rounded-full px-2.5 text-xs text-text-secondary transition hover:bg-hover"
+          className={`flex h-8 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-xs text-text-secondary transition hover:bg-hover ${
+            fullModelName ? "" : "max-w-[320px]"
+          }`}
         >
           <ProviderLogo instance={selected} />
-          <span className="min-w-0 max-w-[150px] truncate text-text-primary">{modelLabel}</span>
+          {fullModelName ? (
+            <span className="shrink-0 whitespace-nowrap text-text-primary">{modelLabel}</span>
+          ) : (
+            <FadeText text={modelLabel} className="max-w-[150px] text-text-primary" />
+          )}
           {reasoningLabel && (
             <span data-reasoning className="shrink-0 text-text-tertiary">
               {reasoningLabel}

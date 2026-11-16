@@ -80,6 +80,22 @@ export function pulseValue(x: number, y: number, pulse: Ripple, nowMs: number): 
   return band * grow * life * pulse.strength * uneven * 0.75;
 }
 
+/** Effects-only brightness (pointer, trail, click), 0..1. */
+export function effectValue(
+  x: number,
+  y: number,
+  nowMs: number,
+  pointer: Ripple | null,
+  pulses: Ripple[],
+  trail: Ripple[] = [],
+): number {
+  let value = 0;
+  if (pointer) value += rippleValue(x, y, pointer.x, pointer.y, nowMs, pointer.strength) * 0.55;
+  for (const pulse of pulses) value += pulseValue(x, y, pulse, nowMs) * 0.8;
+  for (const point of trail) value += trailValue(x, y, point, nowMs) * 0.35;
+  return Math.min(1, value);
+}
+
 /** Combined 0..1 brightness for one character cell. */
 export function cellBrightness(
   x: number,
@@ -89,11 +105,8 @@ export function cellBrightness(
   pulses: Ripple[],
   trail: Ripple[] = [],
 ): number {
-  let value = 0.2 + ambientValue(x, y, nowMs) * 0.3;
-  if (pointer) value += rippleValue(x, y, pointer.x, pointer.y, nowMs, pointer.strength) * 0.55;
-  for (const pulse of pulses) value += pulseValue(x, y, pulse, nowMs) * 0.8;
-  for (const point of trail) value += trailValue(x, y, point, nowMs) * 0.35;
-  return Math.min(1, value);
+  const base = 0.2 + ambientValue(x, y, nowMs) * 0.3;
+  return Math.min(1, base + effectValue(x, y, nowMs, pointer, pulses, trail));
 }
 
 /** Character for a cell: sparse noise, denser where the field is bright. */

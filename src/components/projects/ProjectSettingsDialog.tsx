@@ -200,6 +200,7 @@ export function ProjectSettingsDialog({
                   variant="danger"
                   size="sm"
                   type="button"
+                  className="shrink-0 whitespace-nowrap"
                   onClick={() => void remove()}
                   disabled={busy}
                 >
@@ -215,6 +216,7 @@ export function ProjectSettingsDialog({
                   variant="danger_outline"
                   size="sm"
                   type="button"
+                  className="shrink-0 whitespace-nowrap"
                   onClick={() => setConfirmDelete(true)}
                   disabled={busy}
                 >

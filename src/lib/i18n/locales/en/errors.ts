@@ -51,4 +51,5 @@ export const errors = {
   "errors.browser.navigate_failed": "That page could not be opened.",
   "errors.browser.local_file": "That local file could not be previewed.",
   "errors.browser.history_failed": "The browser history action failed.",
+  "errors.updater.unconfigured": "Update feed is not configured yet.",
 } as const;

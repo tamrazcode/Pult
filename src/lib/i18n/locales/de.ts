@@ -778,4 +778,11 @@ export const de: Record<string, string> = {
   "composer.fastMode": "Schneller Modus",
   "composer.queue.editing": "Nachricht in der Warteschlange bearbeiten",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "Pult-Updates prüfen",
+  "sidebar.checkingUpdate": "Suche nach Updates…",
+  "sidebar.updateAvailable": "Pult auf {{version}} aktualisieren",
+  "sidebar.upToDate": "Pult ist aktuell",
+  "sidebar.installingUpdate": "Update wird installiert · {{percent}} %",
+  "sidebar.installingUpdateIndeterminate": "Update wird installiert…",
+  "errors.updater.unconfigured": "Der Update-Kanal ist noch nicht konfiguriert.",
 };

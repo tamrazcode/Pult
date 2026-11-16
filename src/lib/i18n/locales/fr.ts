@@ -783,4 +783,11 @@ export const fr: Record<string, string> = {
   "composer.fastMode": "Mode rapide",
   "composer.queue.editing": "Modification du message en attente",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "Rechercher des mises à jour de Pult",
+  "sidebar.checkingUpdate": "Recherche de mises à jour…",
+  "sidebar.updateAvailable": "Mettre Pult à jour vers {{version}}",
+  "sidebar.upToDate": "Pult est à jour",
+  "sidebar.installingUpdate": "Installation de la mise à jour · {{percent}} %",
+  "sidebar.installingUpdateIndeterminate": "Installation de la mise à jour…",
+  "errors.updater.unconfigured": "Le canal de mises à jour n’est pas encore configuré.",
 };

@@ -778,4 +778,11 @@ export const ja: Record<string, string> = {
   "composer.fastMode": "高速モード",
   "composer.queue.editing": "キューのメッセージを編集中",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "Pult の更新を確認",
+  "sidebar.checkingUpdate": "更新を確認中…",
+  "sidebar.updateAvailable": "Pult を {{version}} に更新",
+  "sidebar.upToDate": "Pult は最新です",
+  "sidebar.installingUpdate": "更新をインストール中 · {{percent}}%",
+  "sidebar.installingUpdateIndeterminate": "更新をインストール中…",
+  "errors.updater.unconfigured": "更新フィードがまだ設定されていません。",
 };

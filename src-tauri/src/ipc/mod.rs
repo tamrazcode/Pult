@@ -1638,6 +1638,101 @@ pub async fn workspace_read_html(
     workspace_read_text(runtime, thread_id, path).await
 }
 
+/// Pult's own update, distinct from provider/agent updates.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppUpdateInfo {
+    pub current_version: String,
+    pub version: String,
+    pub body: Option<String>,
+}
+
+fn updater_for(
+    app: &tauri::AppHandle,
+) -> Result<tauri_plugin_updater::Updater, PultError> {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let mut builder = app.updater_builder();
+    if let Ok(endpoint) = std::env::var("PULT_UPDATE_ENDPOINT") {
+        let endpoint = endpoint.trim();
+        if !endpoint.is_empty() {
+            let url = endpoint
+                .parse()
+                .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
+            builder = builder
+                .endpoints(vec![url])
+                .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
+        }
+    } else if let Ok(config) = serde_json::to_value(&app.config().plugins) {
+        let endpoint = config
+            .get("updater")
+            .and_then(|value| value.get("endpoints"))
+            .and_then(|value| value.get(0))
+            .and_then(|value| value.as_str())
+            .unwrap_or("");
+        if endpoint.contains("OWNER") || endpoint.contains("releases.pult.local") {
+            return Err(PultError::with_code(
+                "updater.unconfigured",
+                "set the GitHub releases endpoint or PULT_UPDATE_ENDPOINT",
+            ));
+        }
+    }
+    builder
+        .build()
+        .map_err(|e| PultError::internal(format!("updater unavailable: {e}")))
+}
+
+#[tauri::command]
+pub async fn app_update_check(
+    app: tauri::AppHandle,
+) -> Result<Option<AppUpdateInfo>, PultError> {
+    let updater = updater_for(&app)?;
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| PultError::internal(format!("update check failed: {e}")))?;
+    Ok(update.map(|update| AppUpdateInfo {
+        current_version: update.current_version,
+        version: update.version,
+        body: update.body,
+    }))
+}
+
+#[tauri::command]
+pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), PultError> {
+    use tauri::Emitter;
+
+    let updater = updater_for(&app)?;
+    let Some(update) = updater
+        .check()
+        .await
+        .map_err(|e| PultError::internal(format!("update check failed: {e}")))?
+    else {
+        return Ok(());
+    };
+    let mut downloaded: u64 = 0;
+    let mut last_emit = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    let progress_app = app.clone();
+    update
+        .download_and_install(
+            move |chunk, total| {
+                downloaded += chunk as u64;
+                if last_emit.elapsed() >= std::time::Duration::from_millis(50) {
+                    last_emit = std::time::Instant::now();
+                    let _ = progress_app.emit(
+                        "app:updateProgress",
+                        serde_json::json!({ "downloaded": downloaded, "total": total }),
+                    );
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| PultError::internal(format!("update install failed: {e}")))?;
+    app.restart();
+}
+
+
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
 #[tauri::command]

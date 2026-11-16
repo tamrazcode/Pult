@@ -562,6 +562,126 @@ describe("composer", () => {
     expect(within(dialog).queryByText(/thought_level/i)).toBeNull();
   });
 
+  it("shows the full opencode model name without fading or ellipsis", () => {
+    useRunsStore.setState({ runsByThread: {} });
+    useUiStore.setState({
+      selectedInstanceId: "opencode",
+      instances: [
+        makeInstance({
+          id: "opencode",
+          displayName: "opencode",
+          driver: "opencode",
+          configOptions: [
+            {
+              type: "select",
+              id: "model",
+              name: "Model",
+              category: "model",
+              currentValue: "opencode-go/deepseek-v4.1-flash",
+              options: [
+                {
+                  value: "opencode-go/deepseek-v4.1-flash",
+                  name: "opencode-go/deepseek-v4.1-flash",
+                },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+
+    render(<Composer threadId="th" />);
+
+    const label = screen.getByText("opencode-go/deepseek-v4.1-flash");
+    expect(label.className).not.toContain("max-w-[150px]");
+    expect(label.className).not.toContain("truncate");
+    expect(label.className).not.toContain("fade-truncate");
+    const trigger = label.closest("button")!;
+    expect(trigger.className).not.toContain("max-w-[320px]");
+  });
+
+  it("uses FadeText for non-opencode providers and omits fade/truncation for opencode matched by driver", () => {
+    const scrollSpy = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(220);
+    const clientSpy = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(120);
+
+    try {
+      useRunsStore.setState({ runsByThread: {} });
+      useUiStore.setState({
+        selectedInstanceId: "claude",
+        instances: [
+          makeInstance({
+            id: "claude",
+            displayName: "Claude Code",
+            driver: "claude",
+            configOptions: [
+              {
+                type: "select",
+                id: "model",
+                name: "Model",
+                category: "model",
+                currentValue: "claude-sonnet-4-very-long-model-name",
+                options: [
+                  {
+                    value: "claude-sonnet-4-very-long-model-name",
+                    name: "claude-sonnet-4-very-long-model-name",
+                  },
+                ],
+              },
+            ],
+          }),
+          makeInstance({
+            id: "custom-oc",
+            displayName: "OpenCode Custom",
+            driver: "opencode",
+            configOptions: [
+              {
+                type: "select",
+                id: "model",
+                name: "Model",
+                category: "model",
+                currentValue: "opencode-go/qwen-3-coder-480b",
+                options: [
+                  {
+                    value: "opencode-go/qwen-3-coder-480b",
+                    name: "opencode-go/qwen-3-coder-480b",
+                  },
+                ],
+              },
+            ],
+          }),
+        ],
+      });
+
+      const firstRender = render(<Composer threadId="th" />);
+      const claudeLabel = screen.getByText("claude-sonnet-4-very-long-model-name");
+      expect(claudeLabel).toHaveClass(
+        "max-w-[150px]",
+        "overflow-hidden",
+        "whitespace-nowrap",
+        "fade-truncate",
+      );
+      expect(claudeLabel).not.toHaveClass("shrink-0");
+      expect(claudeLabel.closest("button")).toHaveClass("max-w-[320px]");
+      firstRender.unmount();
+
+      // Switch to opencode matched by driver (non-"opencode" id): still renders full model name.
+      useUiStore.setState({ selectedInstanceId: "custom-oc" });
+      render(<Composer threadId="th" />);
+      const ocLabel = screen.getByText("opencode-go/qwen-3-coder-480b");
+      expect(ocLabel).toHaveClass("shrink-0", "whitespace-nowrap");
+      expect(ocLabel).not.toHaveClass(
+        "max-w-[150px]",
+        "overflow-hidden",
+        "truncate",
+        "fade-truncate",
+      );
+      expect(ocLabel.closest("button")).not.toHaveClass("max-w-[320px]");
+    } finally {
+      scrollSpy.mockRestore();
+      clientSpy.mockRestore();
+    }
+  });
+
   it("tints Full access orange and highlights the selected row in the menu", () => {
     useRunsStore.setState({ runsByThread: {} });
     useSettingsStore.setState({ permissionMode: "full_access" });

@@ -89,6 +89,28 @@ export async function appVersion(): Promise<string> {
   return invokeWithFallback<string>("app_version", "");
 }
 
+export interface AppUpdateInfo {
+  version: string;
+  currentVersion: string;
+  body: string | null;
+}
+
+/** Null means the app is up to date (or no release feed is configured yet). */
+export function appUpdateCheck(): Promise<AppUpdateInfo | null> {
+  return invokeRequired<AppUpdateInfo | null>("app_update_check", {});
+}
+
+/** Downloads, installs silently, and restarts the app. */
+export function appUpdateInstall(): Promise<void> {
+  return invokeRequired<void>("app_update_install", {});
+}
+
+export function onAppUpdateProgress(
+  handler: (payload: { downloaded: number; total: number | null }) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<{ downloaded: number; total: number | null }>("app:updateProgress", handler);
+}
+
 // ---- threads ----
 
 /**

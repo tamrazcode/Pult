@@ -797,4 +797,11 @@ export const ru: Record<string, string> = {
   "composer.fastMode": "Быстрый режим",
   "composer.queue.editing": "Редактирование сообщения в очереди",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "Проверить обновления Pult",
+  "sidebar.checkingUpdate": "Проверка обновлений…",
+  "sidebar.updateAvailable": "Обновить Pult до {{version}}",
+  "sidebar.upToDate": "Pult обновлён",
+  "sidebar.installingUpdate": "Установка обновления · {{percent}}%",
+  "sidebar.installingUpdateIndeterminate": "Установка обновления…",
+  "errors.updater.unconfigured": "Канал обновлений ещё не настроен.",
 };

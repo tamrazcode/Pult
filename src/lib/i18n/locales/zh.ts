@@ -753,4 +753,11 @@ export const zh: Record<string, string> = {
   "composer.fastMode": "快速模式",
   "composer.queue.editing": "正在编辑排队消息",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "检查 Pult 更新",
+  "sidebar.checkingUpdate": "正在检查更新…",
+  "sidebar.updateAvailable": "将 Pult 更新到 {{version}}",
+  "sidebar.upToDate": "Pult 已是最新版本",
+  "sidebar.installingUpdate": "正在安装更新 · {{percent}}%",
+  "sidebar.installingUpdateIndeterminate": "正在安装更新…",
+  "errors.updater.unconfigured": "更新源尚未配置。",
 };

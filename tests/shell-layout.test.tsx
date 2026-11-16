@@ -320,7 +320,7 @@ describe("shell layout polish", () => {
     expect(header).toHaveClass("pr-[136px]");
   });
 
-  it("puts the sidebar toggle before the logo and refresh last after the footer spacer", () => {
+  it("puts the sidebar toggle before the logo and the Pult update check last after the footer spacer", () => {
     const { container } = render(<Sidebar width={288} />);
     const top = container.querySelector("aside")!.firstElementChild!;
     const toggle = within(top as HTMLElement).getByRole("button", { name: "Toggle sidebar" });
@@ -331,7 +331,7 @@ describe("shell layout polish", () => {
     expect(top).not.toHaveClass("border-b");
     const footer = container.querySelector("footer")!;
     expect(footer).not.toHaveClass("border-b", "border-t");
-    const refresh = within(footer).getByRole("button", { name: "Refresh" });
+    const refresh = within(footer).getByRole("button", { name: "Check for Pult updates" });
     const row = footer.firstElementChild!;
     expect(row.lastElementChild).toBe(refresh.parentElement);
     expect(refresh.parentElement!.previousElementSibling).toHaveClass("flex-1");

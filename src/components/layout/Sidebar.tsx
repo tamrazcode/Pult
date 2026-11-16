@@ -20,13 +20,14 @@ import {
 } from "lucide-react";
 import { useRouter, useRouterState } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
-import { localizeIpcError, plural, translate, useT } from "../../lib/i18n";
+import { localizeIpcError, translate, useT } from "../../lib/i18n";
 import {
-  providersUpdateCheck,
-  providersUpdateInstall,
+  appUpdateCheck,
+  appUpdateInstall,
+  onAppUpdateProgress,
   runsCancel,
   threadsWorktreeStatus,
-  type ProviderUpdate,
+  type AppUpdateInfo,
 } from "../../lib/ipc";
 import { useUiStore } from "../../stores/ui";
 import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../stores/threads";
@@ -38,9 +39,12 @@ import { PultLogo } from "../ui/PultLogo";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { Tooltip } from "../ui/Tooltip";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
+import { FadeText } from "../ui/FadeText";
 import { CreateProjectDialog } from "../projects/CreateProjectDialog";
 import { ProjectSettingsDialog } from "../projects/ProjectSettingsDialog";
 import { SidebarToggleButton } from "./WindowChrome";
+
+const UPDATE_RING = 2 * Math.PI * 13;
 
 const FILTERS: Array<{ id: SidebarFilter; labelKey: string }> = [
   { id: "all", labelKey: "sidebar.filter.all" },
@@ -140,7 +144,7 @@ function ThreadRow({
               }`}
             />
           ) : null}
-          <span className="min-w-0 fade-truncate">{thread.title || t("sidebar.untitled")}</span>
+          <FadeText text={thread.title || t("sidebar.untitled")} className="min-w-0" />
           <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
             {relativeTime(thread.updatedAt)}
           </span>
@@ -204,9 +208,7 @@ function ProjectRow({
         >
           {initials}
         </span>
-        <span className="min-w-0 fade-truncate text-sm font-medium text-text-primary">
-          {project.name}
-        </span>
+        <FadeText text={project.name} className="min-w-0 text-sm font-medium text-text-primary" />
       </button>
       <button
         type="button"
@@ -243,23 +245,8 @@ function ProjectRow({
   );
 }
 
-/** One line naming the provider and version transition being installed. */
-export function formatUpdateProgress(update: ProviderUpdate): string {
-  if (update.current && update.latest) {
-    return translate("sidebar.updateProgress.from", {
-      name: update.displayName,
-      current: update.current,
-      latest: update.latest,
-    });
-  }
-  if (update.latest) {
-    return translate("sidebar.updateProgress.to", {
-      name: update.displayName,
-      latest: update.latest,
-    });
-  }
-  return translate("sidebar.updateProgress.generic", { name: update.displayName });
-}
+/** Pult app update: idle, checking, available, installing or failed. */
+type AppUpdateState = "idle" | "checking" | "available" | "installing" | "error";
 
 export function Sidebar({ width }: { width: number }) {
   const t = useT();
@@ -276,10 +263,17 @@ export function Sidebar({ width }: { width: number }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [settingsProjectId, setSettingsProjectId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [updates, setUpdates] = useState<ProviderUpdate[]>([]);
-  const [installing, setInstalling] = useState(false);
-  const [activeUpdate, setActiveUpdate] = useState<ProviderUpdate | null>(null);
-  const [updateErrors, setUpdateErrors] = useState<Record<string, string>>({});
+  const [appUpdate, setAppUpdate] = useState<AppUpdateInfo | null>(null);
+  const [updateState, setUpdateState] = useState<AppUpdateState>("idle");
+  const [updateProgress, setUpdateProgress] = useState<{
+    downloaded: number;
+    total: number | null;
+  }>({
+    downloaded: 0,
+    total: null,
+  });
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateNotice, setUpdateNotice] = useState<string | null>(null);
   const [menu, setMenu] = useState<{
     x: number;
     y: number;
@@ -291,25 +285,49 @@ export function Sidebar({ width }: { width: number }) {
     status: WorktreeDirtyStatus;
   } | null>(null);
   const filterRef = useRef<HTMLDivElement>(null);
-  const failedUpdates = updates.filter((update) => updateErrors[update.instanceId]);
-  const updateErrorText = failedUpdates
-    .map((update) => `${update.displayName}: ${updateErrors[update.instanceId]}`)
-    .join("\n");
-  const updateLabel = installing
-    ? activeUpdate
-      ? formatUpdateProgress(activeUpdate)
-      : t("sidebar.updating")
-    : failedUpdates.length > 0
-      ? updateErrorText
-      : updates.length > 0
-        ? plural("sidebar.updateProviders", updates.length)
-        : t("sidebar.checkUpdates");
+  const progressPercent =
+    updateProgress.total && updateProgress.total > 0
+      ? Math.min(100, (updateProgress.downloaded / updateProgress.total) * 100)
+      : 0;
+  const updateLabel =
+    updateState === "installing"
+      ? updateProgress.total
+        ? t("sidebar.installingUpdate", { percent: Math.round(progressPercent) })
+        : t("sidebar.installingUpdateIndeterminate")
+      : updateState === "checking"
+        ? t("sidebar.checkingUpdate")
+        : updateState === "available" && appUpdate
+          ? t("sidebar.updateAvailable", { version: appUpdate.version })
+          : updateState === "error" && updateError
+            ? updateError
+            : (updateNotice ?? t("sidebar.checkAppUpdate"));
 
   useEffect(() => {
     if (!isTauri()) return;
     void useProjectsStore.getState().loadProjects();
     void useThreadsStore.getState().loadThreads();
   }, []);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | null = null;
+    void onAppUpdateProgress((payload) => {
+      setUpdateProgress({ downloaded: payload.downloaded, total: payload.total });
+    })
+      .then((off) => {
+        unlisten = off;
+      })
+      .catch(() => {
+        // Event bridge unavailable in plain-browser/test environments.
+      });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    if (!updateNotice) return;
+    const timer = window.setTimeout(() => setUpdateNotice(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [updateNotice]);
 
   useEffect(() => {
     if (!filterOpen) return;
@@ -383,59 +401,42 @@ export function Sidebar({ width }: { width: number }) {
     void router.navigate({ to: "/chat" });
   };
 
-  const refresh = () => {
-    void useProjectsStore.getState().loadProjects();
-    void useThreadsStore.getState().loadThreads();
-    void useUiStore.getState().loadInstances();
-    if (!isTauri()) return;
-    void providersUpdateCheck()
-      .then((next) => {
-        setUpdates(next);
-        if (next.length === 0) setUpdateErrors({});
+  const checkAppUpdate = () => {
+    if (!isTauri() || updateState === "checking" || updateState === "installing") return;
+    setUpdateState("checking");
+    setUpdateError(null);
+    setUpdateNotice(null);
+    void appUpdateCheck()
+      .then((info) => {
+        if (info) {
+          setAppUpdate(info);
+          setUpdateState("available");
+        } else {
+          setAppUpdate(null);
+          setUpdateState("idle");
+          setUpdateNotice(t("sidebar.upToDate"));
+        }
       })
-      .catch(() => setUpdates([]));
+      .catch((err) => {
+        setUpdateState("error");
+        setUpdateError(localizeIpcError(err));
+      });
   };
 
-  const installUpdates = () => {
-    if (installing) return;
-    const pending = [...updates];
-    setInstalling(true);
-    void (async () => {
-      const failed: Array<{ update: ProviderUpdate; message: string }> = [];
-      for (const update of pending) {
-        setActiveUpdate(update);
-        try {
-          await providersUpdateInstall(update.instanceId);
-          setUpdateErrors((prev) => {
-            if (!(update.instanceId in prev)) return prev;
-            const next = { ...prev };
-            delete next[update.instanceId];
-            return next;
-          });
-        } catch (err) {
-          const message = localizeIpcError(err);
-          failed.push({ update, message });
-          setUpdateErrors((prev) => ({ ...prev, [update.instanceId]: message }));
-        }
-      }
-      setActiveUpdate(null);
+  const installAppUpdate = () => {
+    if (!isTauri() || updateState === "installing") return;
+    setUpdateState("installing");
+    setUpdateProgress({ downloaded: 0, total: null });
+    setUpdateError(null);
+    void appUpdateInstall().catch((err) => {
+      setUpdateState("error");
+      setUpdateError(localizeIpcError(err));
+    });
+  };
 
-      let fresh: ProviderUpdate[] = [];
-      try {
-        fresh = await providersUpdateCheck();
-      } catch (err) {
-        console.error("provider update check failed", err);
-      }
-      const merged = [...fresh];
-      for (const { update } of failed) {
-        if (!merged.some((candidate) => candidate.instanceId === update.instanceId)) {
-          merged.push(update);
-        }
-      }
-      setUpdates(merged);
-      if (merged.length === 0) setUpdateErrors({});
-      setInstalling(false);
-    })();
+  const onUpdateButton = () => {
+    if (updateState === "available") installAppUpdate();
+    else if (updateState !== "installing") checkAppUpdate();
   };
 
   const copyPath = (path: string) => {
@@ -735,42 +736,76 @@ export function Sidebar({ width }: { width: number }) {
           <Tooltip label={updateLabel}>
             <button
               type="button"
-              aria-label={t("sidebar.refresh")}
+              aria-label={updateLabel}
               title={updateLabel}
-              onClick={updates.length > 0 ? installUpdates : refresh}
+              onClick={onUpdateButton}
               className="relative flex h-8 w-8 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              {installing ? (
+              {updateState === "installing" ? (
+                <>
+                  <svg
+                    aria-hidden
+                    viewBox="0 0 32 32"
+                    className="absolute inset-0 m-auto h-8 w-8 -rotate-90"
+                  >
+                    <circle
+                      cx="16"
+                      cy="16"
+                      r="13"
+                      fill="none"
+                      stroke="var(--border-strong)"
+                      strokeWidth="2"
+                    />
+                    <circle
+                      cx="16"
+                      cy="16"
+                      r="13"
+                      fill="none"
+                      stroke="var(--accent)"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeDasharray={UPDATE_RING}
+                      strokeDashoffset={
+                        updateProgress.total
+                          ? UPDATE_RING * (1 - progressPercent / 100)
+                          : UPDATE_RING * 0.75
+                      }
+                      className={updateProgress.total ? undefined : "animate-spin origin-center"}
+                    />
+                  </svg>
+                  <Download size={12} className="text-accent" />
+                </>
+              ) : updateState === "checking" ? (
                 <Loader2 size={15} className="animate-spin" />
-              ) : updates.length > 0 ? (
+              ) : updateState === "available" ? (
                 <Download size={15} className="text-accent" />
               ) : (
                 <RefreshCw size={15} />
               )}
-              {updates.length > 0 && !installing && (
+              {updateState === "available" && (
                 <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-accent" />
               )}
             </button>
           </Tooltip>
         </div>
-        {installing && activeUpdate && (
+        {updateState === "installing" && (
           <p
             role="status"
             data-update-progress
             className="truncate px-1 pt-1 text-xs text-text-secondary"
-            title={formatUpdateProgress(activeUpdate)}
+            title={updateLabel}
           >
-            {formatUpdateProgress(activeUpdate)}
+            {updateLabel}
           </p>
         )}
-        {!installing && failedUpdates.length > 0 && (
+        {updateState === "error" && updateError && (
           <p
             role="alert"
             data-update-error
             className="truncate px-1 pt-1 text-xs text-danger"
-            title={updateErrorText}
+            title={updateError}
           >
-            {failedUpdates[0].displayName}: {updateErrors[failedUpdates[0].instanceId]}
+            {updateError}
           </p>
         )}
       </footer>

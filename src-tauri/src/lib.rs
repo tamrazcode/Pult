@@ -145,6 +145,8 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             app_version,
+            ipc::app_update_check,
+            ipc::app_update_install,
             ipc::threads_create,
             ipc::threads_list,
             ipc::projects_list,

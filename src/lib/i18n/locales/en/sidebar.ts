@@ -75,4 +75,10 @@ export const sidebar = {
   "sidebar.time.minutes": "{{count}}m",
   "sidebar.time.hours": "{{count}}h",
   "sidebar.time.days": "{{count}}d",
+  "sidebar.checkAppUpdate": "Check for Pult updates",
+  "sidebar.checkingUpdate": "Checking for updates…",
+  "sidebar.updateAvailable": "Update Pult to {{version}}",
+  "sidebar.upToDate": "Pult is up to date",
+  "sidebar.installingUpdate": "Installing update · {{percent}}%",
+  "sidebar.installingUpdateIndeterminate": "Installing update…",
 } as const;

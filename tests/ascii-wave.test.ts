@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  ambientValue,
   cellBrightness,
   cellGlyph,
+  effectValue,
   pulseValue,
   rippleValue,
   trailValue,
@@ -56,6 +58,50 @@ describe("asciiWave", () => {
     const plain = cellBrightness(100, 100, 0, null, [], []);
 
     expect(lit).toBeGreaterThan(plain);
+  });
+
+  it("separates effectValue from ambient base brightness and keeps idle effectValue at zero", () => {
+    for (let x = 0; x <= 300; x += 75) {
+      for (let y = 0; y <= 300; y += 75) {
+        const effect = effectValue(x, y, 5000, null, [], []);
+        const base = 0.2 + ambientValue(x, y, 5000) * 0.3;
+        const total = cellBrightness(x, y, 5000, null, [], []);
+        expect(effect).toBe(0);
+        expect(base).toBeGreaterThanOrEqual(0.2);
+        expect(base).toBeLessThanOrEqual(0.5);
+        expect(total).toBeCloseTo(base, 10);
+      }
+    }
+  });
+
+  it("combines pointer, pulse, and trail in effectValue independently of ambient and clamps to 1", () => {
+    const pointer = { x: 100, y: 100, startedAt: 0, strength: 0.9 };
+    const pulse = { x: 100, y: 100, startedAt: 0, strength: 0.9 };
+    const trail = [{ x: 100, y: 100, startedAt: 500, strength: 0.8 }];
+
+    const onlyPointer = effectValue(100, 100, 600, pointer, [], []);
+    const onlyPulse = effectValue(100, 100, 600, null, [pulse], []);
+    const onlyTrail = effectValue(100, 100, 600, null, [], trail);
+    const combined = effectValue(100, 100, 600, pointer, [pulse], trail);
+
+    expect(onlyPointer).toBeCloseTo(rippleValue(100, 100, 100, 100, 600, 0.9) * 0.55, 10);
+    expect(onlyPulse).toBeCloseTo(pulseValue(100, 100, pulse, 600) * 0.8, 10);
+    expect(onlyTrail).toBeCloseTo(trailValue(100, 100, trail[0]!, 600) * 0.35, 10);
+    expect(combined).toBeCloseTo(Math.min(1, onlyPointer + onlyPulse + onlyTrail), 10);
+
+    // Extremely strong stacked pulses still clamp effectValue and cellBrightness to 1.
+    const overloaded = Array.from({ length: 6 }, () => ({
+      x: 100,
+      y: 100,
+      startedAt: 0,
+      strength: 2,
+    }));
+    expect(effectValue(100, 100, 600, pointer, overloaded, trail)).toBe(1);
+    expect(cellBrightness(100, 100, 600, pointer, overloaded, trail)).toBe(1);
+
+    // Far from active effects, effectValue drops to ~0 while ambient cellBrightness remains >= 0.2.
+    expect(effectValue(5000, 5000, 600, pointer, [pulse], trail)).toBeLessThan(1e-6);
+    expect(cellBrightness(5000, 5000, 600, pointer, [pulse], trail)).toBeGreaterThanOrEqual(0.2);
   });
 
   it("returns a space for dim cells and a non-space glyph for bright cells", () => {

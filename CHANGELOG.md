@@ -34,6 +34,17 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
   popover, and a provider fast-mode option becomes a lightning toggle.
 - **Welcome:** the living ASCII backdrop leaves a fading trail behind the pointer, breathes
   slowly while idle, and a click blooms gradually instead of drawing an instant disk.
+- **Queue & activity:** queued messages form one glass cap above the composer with equal
+  padding, physical pointer drag and composer-based editing that restores the draft.
+  Activity rows stay collapsed by default and merge action + elapsed time into one label
+  (`Running command · 12s`); the shimmer loops without a jump.
+- **Details:** long sidebar names fade out on the right instead of an ellipsis; the project
+  widget header opens Explorer; the app icon mark is slightly smaller inside its tile.
+  Screenshots the agent writes outside the workspace render in Full access.
+- **Updates:** the sidebar footer checks Pult itself through GitHub Releases: a badge when
+  an update exists, a determinate download ring, silent install and automatic restart.
+- **Backdrop:** ASCII glyphs rest in neutral gray (independent of the theme) at slightly
+  lower brightness; pointer trails and click blooms take the theme color, white on Graphite.
 - **i18n:** zero-dependency typed catalogs, language picker (English default, Russian,
   German, Spanish, Japanese, Chinese, French), persisted per install, `Intl` date/number
   formatting and localized IPC error codes.

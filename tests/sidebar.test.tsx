@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as IpcModule from "../src/lib/ipc";
 import type { Project, Run, Thread } from "../src/lib/types";
@@ -523,13 +523,13 @@ describe("Sidebar", () => {
     expect(readRow!.querySelector(unreadDotSelector)).toBeNull();
   });
 
-  it("renders footer navigation and a footer refresh action", async () => {
+  it("renders footer navigation and a Pult update action", async () => {
     render(<Sidebar width={288} />);
 
     const settingsBtn = screen.getByRole("button", { name: /^settings$/i });
     const prsBtn = screen.getByRole("button", { name: /^pull requests$/i });
     const usageBtn = screen.getByRole("button", { name: /^usage$/i });
-    const refreshBtn = screen.getByRole("button", { name: /^refresh$/i });
+    const updateBtn = screen.getByRole("button", { name: /check for pult updates/i });
 
     await userEvent.click(settingsBtn);
     expect(navigate).toHaveBeenCalledWith(
@@ -542,16 +542,7 @@ describe("Sidebar", () => {
     await userEvent.click(usageBtn);
     expect(navigate).toHaveBeenCalledWith({ to: "/usage" });
 
-    projectsList.mockClear();
-    threadsList.mockClear();
-    providersInstancesList.mockClear();
-
-    await userEvent.click(refreshBtn);
-
-    await waitFor(() => {
-      expect(projectsList).toHaveBeenCalled();
-      expect(threadsList).toHaveBeenCalled();
-    });
+    expect(updateBtn).toHaveAttribute("title", "Check for Pult updates");
   });
 
   it("renders Search placeholder and icon-only footer buttons with tooltips", async () => {
@@ -569,7 +560,7 @@ describe("Sidebar", () => {
       { name: /^settings$/i, label: /settings/i },
       { name: /^pull requests$/i, label: /pull requests/i },
       { name: /^usage$/i, label: /usage/i },
-      { name: /^refresh$/i, label: /check provider updates/i },
+      { name: /check for pult updates/i, label: /check for pult updates/i },
     ];
 
     for (const entry of footerButtons) {
@@ -718,17 +709,82 @@ describe("Sidebar", () => {
 
     const projectSpan = screen.getByText(longProjectName);
     expect(projectSpan.tagName).toBe("SPAN");
-    expect(projectSpan).toHaveClass("fade-truncate");
+    expect(projectSpan).toHaveClass("overflow-hidden");
+    expect(projectSpan).toHaveClass("whitespace-nowrap");
     expect(projectSpan).not.toHaveClass("truncate");
     expect(projectSpan).not.toHaveAttribute("title");
     expect(screen.getByRole("button", { name: new RegExp(longProjectName) })).toBeInTheDocument();
 
     const threadSpan = screen.getByText(longThreadTitle);
     expect(threadSpan.tagName).toBe("SPAN");
-    expect(threadSpan).toHaveClass("fade-truncate");
+    expect(threadSpan).toHaveClass("overflow-hidden");
+    expect(threadSpan).toHaveClass("whitespace-nowrap");
     expect(threadSpan).not.toHaveClass("truncate");
+    expect(threadSpan).not.toHaveClass("fade-truncate");
     expect(threadSpan).not.toHaveAttribute("title");
     expect(screen.getByRole("link", { name: new RegExp(longThreadTitle) })).toBeInTheDocument();
+  });
+
+  it("applies fade-truncate in sidebar rows only when the label overflows its box", () => {
+    const callbacks: ResizeObserverCallback[] = [];
+    const OriginalRO = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(cb: ResizeObserverCallback) {
+        callbacks.push(cb);
+      }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    } as never;
+
+    try {
+      useProjectsStore.setState({
+        projects: [
+          makeProject("p-short", "Short"),
+          makeProject("p-long", "Very Long Project Workspace Name Alpha"),
+        ],
+      });
+      useThreadsStore.setState({
+        threads: [
+          makeThread("t-short", "Brief", { projectId: "p-short" }),
+          makeThread("t-long", "Investigate long sidebar truncation behavior", {
+            projectId: "p-long",
+          }),
+        ],
+      });
+
+      render(<Sidebar width={288} />);
+
+      const shortProject = screen.getByText("Short");
+      const longProject = screen.getByText("Very Long Project Workspace Name Alpha");
+      const shortThread = screen.getByText("Brief");
+      const longThread = screen.getByText("Investigate long sidebar truncation behavior");
+
+      for (const el of [shortProject, longProject, shortThread, longThread]) {
+        expect(el).toHaveClass("overflow-hidden", "whitespace-nowrap");
+        expect(el).not.toHaveClass("fade-truncate");
+      }
+
+      Object.defineProperty(shortProject, "clientWidth", { value: 120, configurable: true });
+      Object.defineProperty(shortProject, "scrollWidth", { value: 40, configurable: true });
+      Object.defineProperty(longProject, "clientWidth", { value: 120, configurable: true });
+      Object.defineProperty(longProject, "scrollWidth", { value: 240, configurable: true });
+      Object.defineProperty(shortThread, "clientWidth", { value: 120, configurable: true });
+      Object.defineProperty(shortThread, "scrollWidth", { value: 50, configurable: true });
+      Object.defineProperty(longThread, "clientWidth", { value: 120, configurable: true });
+      Object.defineProperty(longThread, "scrollWidth", { value: 260, configurable: true });
+
+      act(() => {
+        for (const cb of callbacks) cb([], {} as ResizeObserver);
+      });
+
+      expect(shortProject).not.toHaveClass("fade-truncate");
+      expect(shortThread).not.toHaveClass("fade-truncate");
+      expect(longProject).toHaveClass("fade-truncate", "overflow-hidden", "whitespace-nowrap");
+      expect(longThread).toHaveClass("fade-truncate", "overflow-hidden", "whitespace-nowrap");
+    } finally {
+      globalThis.ResizeObserver = OriginalRO;
+    }
   });
 });
 

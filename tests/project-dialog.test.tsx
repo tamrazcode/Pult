@@ -212,10 +212,16 @@ describe("ProjectSettingsDialog", () => {
 
     render(<ProjectSettingsDialog open={true} projectId={SEEDED_PROJECT.id} onClose={onClose} />);
 
-    await userEvent.click(screen.getByRole("button", { name: /delete/i }));
+    const deleteBtn = screen.getByRole("button", { name: /delete/i });
+    expect(deleteBtn.className).toContain("whitespace-nowrap");
+    expect(deleteBtn.className).toContain("shrink-0");
+    await userEvent.click(deleteBtn);
     expect(projectsDelete).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: /confirm/i }));
+    const confirmBtn = screen.getByRole("button", { name: /confirm/i });
+    expect(confirmBtn.className).toContain("whitespace-nowrap");
+    expect(confirmBtn.className).toContain("shrink-0");
+    await userEvent.click(confirmBtn);
     await waitFor(() => expect(projectsDelete).toHaveBeenCalledWith(SEEDED_PROJECT.id));
     expect(useProjectsStore.getState().projects).toHaveLength(0);
     expect(onClose).toHaveBeenCalledOnce();

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { cellBrightness, cellGlyph, type Ripple } from "../../lib/asciiWave";
+import { effectValue, ambientValue, cellGlyph, type Ripple } from "../../lib/asciiWave";
 
 const CELL_W = 10;
 const CELL_H = 16;
@@ -31,14 +31,28 @@ export function LivingAscii() {
     let height = 0;
     let cols = 0;
     let rows = 0;
-    let accent = "#346bf1";
+    let baseGray: [number, number, number] = [168, 168, 168];
+    let effectColor: [number, number, number] = [52, 107, 241];
     let frame = 0;
     let last = 0;
     let stopped = false;
 
+    const parseHex = (hex: string): [number, number, number] | null => {
+      const match = /^#([0-9a-f]{6})$/i.exec(hex);
+      if (!match) return null;
+      const value = Number.parseInt(match[1], 16);
+      return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+    };
+
     const readAccent = () => {
       const value = getComputedStyle(document.documentElement).getPropertyValue("--accent").trim();
-      if (value) accent = value;
+      const theme = document.documentElement.dataset.theme ?? "";
+      baseGray = theme === "light" ? [110, 110, 110] : [168, 168, 168];
+      if (theme === "graphite") {
+        effectColor = [245, 245, 245];
+      } else {
+        effectColor = parseHex(value) ?? [52, 107, 241];
+      }
     };
 
     const resize = () => {
@@ -60,12 +74,12 @@ export function LivingAscii() {
       ctx.clearRect(0, 0, width, height);
       ctx.font = `11px "JetBrains Mono", ui-monospace, monospace`;
       ctx.textBaseline = "top";
-      ctx.fillStyle = accent;
       for (let row = 0; row < rows; row += 1) {
         for (let col = 0; col < cols; col += 1) {
           const x = col * CELL_W + CELL_W / 2;
           const y = row * CELL_H;
-          const brightness = cellBrightness(
+          const base = 0.2 + ambientValue(x, y, now) * 0.3;
+          const glow = effectValue(
             x,
             y,
             now,
@@ -73,9 +87,15 @@ export function LivingAscii() {
             pulsesRef.current,
             trailRef.current,
           );
+          const brightness = Math.min(1, base + glow);
           const glyph = cellGlyph(col, row, brightness);
           if (glyph === " ") continue;
-          ctx.globalAlpha = Math.min(0.9, 0.12 + brightness * 1.25);
+          const mix = Math.min(1, glow * 1.8);
+          const r = Math.round(baseGray[0] + (effectColor[0] - baseGray[0]) * mix);
+          const g = Math.round(baseGray[1] + (effectColor[1] - baseGray[1]) * mix);
+          const b = Math.round(baseGray[2] + (effectColor[2] - baseGray[2]) * mix);
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          ctx.globalAlpha = Math.min(0.78, 0.05 + brightness * 0.92);
           ctx.fillText(glyph, x - CELL_W / 2, y);
         }
       }

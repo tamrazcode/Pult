@@ -781,4 +781,11 @@ export const es: Record<string, string> = {
   "composer.fastMode": "Modo rápido",
   "composer.queue.editing": "Editando mensaje en cola",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "sidebar.checkAppUpdate": "Buscar actualizaciones de Pult",
+  "sidebar.checkingUpdate": "Buscando actualizaciones…",
+  "sidebar.updateAvailable": "Actualizar Pult a {{version}}",
+  "sidebar.upToDate": "Pult está actualizado",
+  "sidebar.installingUpdate": "Instalando actualización · {{percent}} %",
+  "sidebar.installingUpdateIndeterminate": "Instalando actualización…",
+  "errors.updater.unconfigured": "El canal de actualizaciones aún no está configurado.",
 };
