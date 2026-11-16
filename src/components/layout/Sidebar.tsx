@@ -740,7 +740,7 @@ export function Sidebar({ width }: { width: number }) {
 
       <footer className="p-3">
         <div className="flex items-center gap-1">
-          <Tooltip label={t("sidebar.settings")}>
+          <Tooltip label={t("sidebar.settings")} align="left">
             <button
               type="button"
               aria-label={t("sidebar.settings")}

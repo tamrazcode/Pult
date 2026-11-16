@@ -234,6 +234,7 @@ pub fn run() {
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::workspace_tree,
+            ipc::workspace_global_root,
             ipc::workspace_read_text,
             ipc::workspace_read_html,
             browser::browser_navigate,

@@ -1679,7 +1679,7 @@ impl AgentRuntime {
     /// Global fallback root for callers that create threads before choosing
     /// a workspace (threads_create with worktree=true and no explicit dir).
     pub fn global_workspace_root(&self) -> Result<PathBuf, crate::PultError> {
-        self.workspace_root()
+        self.workspace_root().map(clean_verbatim)
     }
 
     /// Session cwd for a thread: its explicit workspace (worktree threads

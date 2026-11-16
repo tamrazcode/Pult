@@ -221,11 +221,26 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
 }
 
 /// The standalone Antigravity ACP server (`agy_acp_server`), installed by pult
-/// under `%LOCALAPPDATA%\\pult\\antigravity` or available on PATH.
+/// under `%LOCALAPPDATA%\\pult\\antigravity`, downloaded by T3 Code, or on PATH.
 fn antigravity_server_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let candidate = std::path::PathBuf::from(local)
+    if let Some(path) = antigravity_server_path_in(
+        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).as_deref(),
+        Some(crate::runtime::home_dir_pub().as_path()),
+    ) {
+        return Some(path);
+    }
+    which("agy_acp_server")
+}
+
+/// Pult's own copy wins; T3 Code's downloaded artifact is reused when the
+/// install folder was wiped by a reinstall, so the provider still appears.
+fn antigravity_server_path_in(
+    local_app_data: Option<&Path>,
+    home: Option<&Path>,
+) -> Option<std::path::PathBuf> {
+    if let Some(local) = local_app_data {
+        let candidate = local
             .join("pult")
             .join("antigravity")
             .join("agy_acp_server.exe");
@@ -233,7 +248,44 @@ fn antigravity_server_path() -> Option<std::path::PathBuf> {
             return Some(candidate);
         }
     }
-    which("agy_acp_server")
+    if let Some(home) = home {
+        let versions = home
+            .join(".t3")
+            .join("tools")
+            .join("antigravity-acp")
+            .join("win32-x64")
+            .join("versions");
+        if let Some(candidate) = newest_antigravity_server(&versions) {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+/// Newest `<sha>/agy_acp_server.exe` under T3's versions folder.
+fn newest_antigravity_server(versions: &Path) -> Option<std::path::PathBuf> {
+    let mut best: Option<(std::time::SystemTime, String, std::path::PathBuf)> = None;
+    for entry in std::fs::read_dir(versions).ok()?.flatten() {
+        let server = entry.path().join("agy_acp_server.exe");
+        if !server.is_file() {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let newer = match &best {
+            None => true,
+            Some((best_time, best_name, _)) => {
+                modified > *best_time || (modified == *best_time && name > *best_name)
+            }
+        };
+        if newer {
+            best = Some((modified, name, server));
+        }
+    }
+    best.map(|(_, _, server)| server)
 }
 
 /// PATH lookup honoring PATHEXT (Windows) — a poor man's `which`.
@@ -331,6 +383,73 @@ mod tests {
                 agent.id
             );
         }
+    }
+
+    #[test]
+    fn antigravity_prefers_pult_install_over_t3_fallback() {
+        let root = temp_config_home("antigravity-pult");
+        let local = root.join("local");
+        let home = root.join("home");
+        let pult_server = local
+            .join("pult")
+            .join("antigravity")
+            .join("agy_acp_server.exe");
+        std::fs::create_dir_all(pult_server.parent().unwrap()).unwrap();
+        std::fs::write(&pult_server, b"pult").unwrap();
+        let t3_server = home
+            .join(".t3")
+            .join("tools")
+            .join("antigravity-acp")
+            .join("win32-x64")
+            .join("versions")
+            .join("t3")
+            .join("agy_acp_server.exe");
+        std::fs::create_dir_all(t3_server.parent().unwrap()).unwrap();
+        std::fs::write(&t3_server, b"t3").unwrap();
+
+        assert_eq!(
+            antigravity_server_path_in(Some(&local), Some(&home)),
+            Some(pult_server)
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn antigravity_falls_back_to_newest_t3_version() {
+        let root = temp_config_home("antigravity-t3");
+        let local = root.join("local");
+        let versions = root
+            .join("home")
+            .join(".t3")
+            .join("tools")
+            .join("antigravity-acp")
+            .join("win32-x64")
+            .join("versions");
+        let older = versions.join("a").join("agy_acp_server.exe");
+        std::fs::create_dir_all(older.parent().unwrap()).unwrap();
+        std::fs::write(&older, b"older").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let newer = versions.join("b").join("agy_acp_server.exe");
+        std::fs::create_dir_all(newer.parent().unwrap()).unwrap();
+        std::fs::write(&newer, b"newer").unwrap();
+        std::fs::create_dir_all(versions.join("empty")).unwrap();
+
+        assert_eq!(
+            antigravity_server_path_in(Some(&local), Some(&root.join("home"))),
+            Some(newer)
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn antigravity_missing_everywhere_is_none() {
+        let root = temp_config_home("antigravity-none");
+        let local = root.join("local");
+        let home = root.join("home");
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        assert_eq!(antigravity_server_path_in(Some(&local), Some(&home)), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn temp_config_home(label: &str) -> std::path::PathBuf {

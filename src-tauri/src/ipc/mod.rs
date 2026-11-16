@@ -1298,6 +1298,16 @@ pub async fn workspace_tree(
     .map_err(|e| PultError::internal(format!("workspace tree failed: {e}")))?
 }
 
+/// Absolute root used for threads without a project (`PULT_WORKSPACE` or `~/pult-workspace`).
+#[tauri::command]
+pub fn workspace_global_root(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<String, PultError> {
+    runtime
+        .global_workspace_root()
+        .map(|root| root.to_string_lossy().into_owned())
+}
+
 /// Reads a UTF-8 text file from the thread workspace for the Files preview.
 #[tauri::command]
 pub async fn workspace_read_text(
@@ -1769,6 +1779,9 @@ pub async fn read_image_data_url(
     }
     if let Ok(projects) = runtime.store().list_projects() {
         roots.extend(projects.into_iter().map(|project| project.root_path.into()));
+    }
+    if let Ok(global) = runtime.global_workspace_root() {
+        roots.push(global);
     }
     roots.push(crate::pult_home());
     tokio::task::spawn_blocking(move || {

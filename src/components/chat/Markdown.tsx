@@ -21,7 +21,7 @@ import { Check, Copy } from "lucide-react";
 import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
 import { activeWorkspaceRoot } from "../../lib/activeWorkspace";
 import { useT } from "../../lib/i18n";
-import { classifyMarkdownHref } from "../../lib/links";
+import { classifyMarkdownHref, type ClassifiedLink } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
 import { useThreadsStore } from "../../stores/threads";
@@ -370,6 +370,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
       type="button"
       aria-label={t("chat.openImage")}
       title={alt || src}
+      data-local-path={fileUrlToPath(source)}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
@@ -390,8 +391,9 @@ const COMPONENTS: Components = {
   a: ({ href, children, node, ...props }) => {
     void node;
     const desktop = isTauri();
-    const link = classifyMarkdownHref(href, activeWorkspaceRoot());
-    const openWorkspace = () => {
+    // Classify at click time: the global workspace root hydrates after mount.
+    const classify = () => classifyMarkdownHref(href, activeWorkspaceRoot());
+    const openWorkspace = (link: ClassifiedLink) => {
       if (link.kind !== "workspace") return;
       if (link.isDir) {
         void openInEditor(link.fullPath, "explorer").catch((err) =>
@@ -403,7 +405,7 @@ const COMPONENTS: Components = {
         useUiStore.getState().openFilePreview(link.relativePath);
       }
     };
-    const openExternal = () => {
+    const openExternal = (link: ClassifiedLink) => {
       if (link.kind !== "external") return;
       void openExternalUrl(link.url).catch((err) =>
         useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
@@ -418,15 +420,16 @@ const COMPONENTS: Components = {
         rel="noreferrer noopener"
         onClick={(event) => {
           if (!href) return;
+          const link = classify();
           if (link.kind === "external") {
             if (!desktop) return;
             event.preventDefault();
-            openExternal();
+            openExternal(link);
             return;
           }
           if (link.kind === "workspace") {
             event.preventDefault();
-            openWorkspace();
+            openWorkspace(link);
             return;
           }
           if (link.kind === "unsupported") {
@@ -435,6 +438,7 @@ const COMPONENTS: Components = {
         }}
         onAuxClick={(event) => {
           if (!desktop) return;
+          const link = classify();
           if (link.kind === "unsupported") {
             event.preventDefault();
             return;
@@ -442,10 +446,10 @@ const COMPONENTS: Components = {
           if (event.button !== 1) return;
           if (link.kind === "external") {
             event.preventDefault();
-            openExternal();
+            openExternal(link);
           } else if (link.kind === "workspace") {
             event.preventDefault();
-            openWorkspace();
+            openWorkspace(link);
           }
         }}
       >

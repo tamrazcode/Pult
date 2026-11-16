@@ -268,6 +268,11 @@ export function workspaceTree(threadId: string): Promise<WorkspaceTree> {
   return invokeRequired<WorkspaceTree>("workspace_tree", { threadId });
 }
 
+/** Absolute root for threads without a project (`PULT_WORKSPACE` or `~/pult-workspace`). */
+export function workspaceGlobalRoot(): Promise<string | null> {
+  return invokeWithFallback<string | null>("workspace_global_root", null);
+}
+
 /** UTF-8 text preview from a thread workspace (max 512 KB). */
 export function workspaceReadText(threadId: string, path: string): Promise<string> {
   return invokeRequired<string>("workspace_read_text", { threadId, path });

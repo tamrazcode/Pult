@@ -15,6 +15,23 @@ function fileUrlToPath(raw: string): string {
   }
 }
 
+/** Absolute drive-qualified path from a raw href, or null. */
+export function localFilePath(rawHref: string | null | undefined): string | null {
+  const raw = (rawHref ?? "").trim();
+  if (!raw) return null;
+  let path = raw;
+  if (/^file:\/\//i.test(raw)) {
+    try {
+      path = decodeURIComponent(new URL(raw).pathname);
+      if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
+    } catch {
+      return null;
+    }
+  }
+  path = path.replace(/\\/g, "/").replace(/^([a-zA-Z]):\/+/, "$1:/");
+  return /^[a-zA-Z]:\//.test(path) ? path.replace(/\//g, "\\") : null;
+}
+
 /** Classifies a raw Markdown href without letting the browser resolve it. */
 export function classifyMarkdownHref(
   rawHref: string | null | undefined,
@@ -54,6 +71,8 @@ export function classifyMarkdownHref(
     path = fileUrlToPath(raw);
   }
   path = path.split("#")[0].split("?")[0].replace(/\\/g, "/");
+  // `file:///C:/%5CUsers` decodes to `C://Users`; collapse the drive slash.
+  path = path.replace(/^([a-zA-Z]):\/+/, "$1:/");
   if (!path) return { kind: "unsupported", raw };
   if (path.split("/").some((part) => part === "..")) {
     return { kind: "unsupported", raw };

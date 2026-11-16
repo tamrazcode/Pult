@@ -4,8 +4,10 @@ import claudeLogo from "../../assets/providers/claude.svg";
 import openaiLogo from "../../assets/providers/openai.svg";
 import geminiLogo from "../../assets/providers/gemini.svg";
 import opencodeLogo from "../../assets/providers/opencode.svg";
+import antigravityLogo from "../../assets/editors/antigravity.svg";
 
-export type ProviderBrand = "claude" | "codex" | "gemini" | "opencode" | "mock" | "custom";
+export type ProviderBrand =
+  "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "mock" | "custom";
 
 type ProviderIdentity = Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">;
 
@@ -29,7 +31,10 @@ export function detectProviderBrand(inst: ProviderIdentity): ProviderBrand {
   if (haystack.includes("codex") || haystack.includes("openai") || haystack.includes("gpt")) {
     return "codex";
   }
-  if (haystack.includes("gemini") || haystack.includes("antigravity")) return "gemini";
+  if (haystack.includes("antigravity") || haystack.includes("agy_acp_server")) {
+    return "antigravity";
+  }
+  if (haystack.includes("gemini")) return "gemini";
   if (haystack.includes("opencode")) return "opencode";
   if (inst.driver === "mock" || haystack.includes("mock")) return "mock";
   return "custom";
@@ -39,6 +44,7 @@ const BRAND_LOGOS: Partial<Record<ProviderBrand, string>> = {
   claude: claudeLogo,
   codex: openaiLogo,
   gemini: geminiLogo,
+  antigravity: antigravityLogo,
   opencode: opencodeLogo,
 };
 

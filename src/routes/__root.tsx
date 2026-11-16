@@ -19,9 +19,10 @@ import {
   settingsGet,
   settingsSet,
   threadsList,
+  workspaceGlobalRoot,
 } from "../lib/ipc";
 import { activeWorkspaceRoot } from "../lib/activeWorkspace";
-import { classifyMarkdownHref } from "../lib/links";
+import { classifyMarkdownHref, localFilePath } from "../lib/links";
 import { preflightInstances } from "../lib/providerChecks";
 import { isTauri } from "../lib/tauri";
 import { useT } from "../lib/i18n";
@@ -118,6 +119,10 @@ function RootLayout() {
   }, [selectedInstanceId]);
   useEffect(() => {
     void hydrateLayout();
+    if (!isTauri()) return;
+    void workspaceGlobalRoot()
+      .then((root) => useUiStore.getState().setGlobalWorkspaceRoot(root))
+      .catch(() => undefined);
   }, []);
 
   // Connection status is a startup chore, not a button: probe enabled providers
@@ -226,12 +231,55 @@ function RootLayout() {
         },
       );
     } else {
+      const fail = (err: unknown) =>
+        useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
       const link = target.closest<HTMLAnchorElement>("a[href]");
+      const localHost = target.closest<HTMLElement>("[data-local-path]");
+      const image =
+        target.closest<HTMLImageElement>("img") ??
+        localHost?.querySelector<HTMLImageElement>("img") ??
+        null;
+      if (image && !link) {
+        const localPath = (image.closest<HTMLElement>("[data-local-path]") ?? localHost)?.dataset
+          .localPath;
+        items.push({
+          id: "open-image",
+          label: t("chat.openImage"),
+          onSelect: () => useUiStore.getState().openImagePreview(image.src, image.alt),
+        });
+        if (localPath) {
+          items.push(
+            "separator",
+            {
+              id: "reveal",
+              label: t("common.revealInExplorer"),
+              onSelect: () => void openInEditor(localPath, "explorer").catch(fail),
+            },
+            {
+              id: "open-editor",
+              label: t("common.openInEditor"),
+              onSelect: () =>
+                void openInEditor(localPath, useSettingsStore.getState().preferredEditor).catch(
+                  fail,
+                ),
+            },
+            {
+              id: "copy-path",
+              label: t("common.copyPath"),
+              onSelect: () => void navigator.clipboard.writeText(localPath).catch(() => undefined),
+            },
+          );
+        } else if (/^https?:/i.test(image.src)) {
+          items.push({
+            id: "copy-image",
+            label: t("common.copyLink"),
+            onSelect: () => void navigator.clipboard.writeText(image.src).catch(() => undefined),
+          });
+        }
+      }
       const rawHref = link?.getAttribute("href") ?? "";
       const workspace = activeWorkspaceRoot();
       const classified = rawHref ? classifyMarkdownHref(rawHref, workspace) : null;
-      const fail = (err: unknown) =>
-        useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) });
 
       if (classified?.kind === "external") {
         items.push(
@@ -277,13 +325,37 @@ function RootLayout() {
               void navigator.clipboard.writeText(classified.fullPath).catch(() => undefined),
           },
         );
-      } else if (selection) {
-        items.push({
-          id: "copy-selection",
-          label: t("common.copy"),
-          shortcut: `${mod}C`,
-          onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
-        });
+      } else {
+        const absolute = localFilePath(rawHref);
+        if (absolute) {
+          items.push(
+            {
+              id: "reveal",
+              label: t("common.revealInExplorer"),
+              onSelect: () => void openInEditor(absolute, "explorer").catch(fail),
+            },
+            {
+              id: "open-editor",
+              label: t("common.openInEditor"),
+              onSelect: () =>
+                void openInEditor(absolute, useSettingsStore.getState().preferredEditor).catch(
+                  fail,
+                ),
+            },
+            {
+              id: "copy-path",
+              label: t("common.copyPath"),
+              onSelect: () => void navigator.clipboard.writeText(absolute).catch(() => undefined),
+            },
+          );
+        } else if (selection) {
+          items.push({
+            id: "copy-selection",
+            label: t("common.copy"),
+            shortcut: `${mod}C`,
+            onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
+          });
+        }
       }
     }
 

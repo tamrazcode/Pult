@@ -46,10 +46,11 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     threadId ? s.threads.find((candidate) => candidate.id === threadId) : undefined,
   );
   const project = useProjectsStore((s) => {
-    const id = thread?.projectId ?? s.selectedProjectId;
+    const id = thread ? thread.projectId : s.selectedProjectId;
     return id ? s.projects.find((candidate) => candidate.id === id) : undefined;
   });
-  const root = thread?.workspace ?? project?.rootPath ?? "";
+  const globalWorkspaceRoot = useUiStore((s) => s.globalWorkspaceRoot);
+  const root = thread?.workspace ?? project?.rootPath ?? globalWorkspaceRoot ?? "";
   const selected = filePreview;
   const gitStatus = useGitStore((s) => (threadId ? s.byThread[threadId]?.status : undefined));
   const gitByPath = useMemo(() => buildFileGitStatusMap(gitStatus), [gitStatus]);
@@ -89,7 +90,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
     setImage(null);
     setError(null);
     if (IMAGE_EXT.test(selected)) {
-      readImageDataUrl(relativeToFull(root, selected))
+      readImageDataUrl(relativeToFull(root, selected), threadId ?? undefined)
         .then((url) => {
           if (!cancelled) setImage(url);
         })
@@ -205,7 +206,7 @@ export function FilesPanel({ threadId }: { threadId?: string | null }) {
             aria-label={t("panels.files.search")}
             className="m-1.5 h-7 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
           />
-          <div className="min-h-0 flex-1 overflow-y-auto pb-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-2">
             {error && <p className="px-2 py-1 text-xs text-danger">{error}</p>}
             {visible.map((entry) => {
               const isCollapsed = collapsed.has(entry.path);

@@ -98,6 +98,9 @@ interface UiState {
   ) => void;
   setGlobalError: (error: GlobalError) => void;
   clearGlobalError: () => void;
+  /** Absolute root for projectless threads; hydrated from the Rust runtime. */
+  globalWorkspaceRoot: string | null;
+  setGlobalWorkspaceRoot: (root: string | null) => void;
   loadInstances: () => Promise<void>;
   applyProcessEvent: (instanceId: string, kind: string, detail?: string | null) => void;
 }
@@ -169,6 +172,7 @@ export const useUiStore = create<UiState>((set) => ({
   pendingThreadId: null,
   processEvents: {},
   globalError: null,
+  globalWorkspaceRoot: null,
   toggleSidebar: () =>
     set((s) => {
       const sidebarOpen = !s.sidebarOpen;
@@ -242,6 +246,7 @@ export const useUiStore = create<UiState>((set) => ({
     })),
   setGlobalError: (globalError) => set({ globalError }),
   clearGlobalError: () => set({ globalError: null }),
+  setGlobalWorkspaceRoot: (globalWorkspaceRoot) => set({ globalWorkspaceRoot }),
 
   loadInstances: async () => {
     await ensureProcessEventSubscription();

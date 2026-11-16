@@ -16,6 +16,7 @@ import { useUiStore } from "../stores/ui";
 import { localizeIpcError, translate, useT } from "../lib/i18n";
 import { ConnectRow } from "../components/settings/AgentConnect";
 import { SignInActions } from "../components/settings/SignInActions";
+import { ProviderLogo } from "../components/chat/ProviderLogo";
 import type { DetectedAgent, InstanceInfo, InstanceSpec, PreflightReport } from "../lib/types";
 
 export const Route = createFileRoute("/settings/providers")({ component: ProvidersSettings });
@@ -389,17 +390,20 @@ function ProvidersSettings() {
                         setDetailOpen(true);
                       }}
                       aria-pressed={selectedId === info.id}
-                      className="min-w-0 flex-1 text-left"
+                      className="flex min-w-0 flex-1 items-start gap-2 text-left"
                     >
-                      <span
-                        className={`block truncate text-sm ${
-                          info.enabled ? "text-text-primary" : "text-text-tertiary"
-                        }`}
-                      >
-                        {info.displayName}
-                      </span>
-                      <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
-                        {st.text}
+                      <ProviderLogo instance={info} className="mt-0.5 h-4 w-4 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span
+                          className={`block truncate text-sm ${
+                            info.enabled ? "text-text-primary" : "text-text-tertiary"
+                          }`}
+                        >
+                          {info.displayName}
+                        </span>
+                        <span className={`mt-0.5 block truncate text-xs ${TONE_CLASSES[st.tone]}`}>
+                          {st.text}
+                        </span>
                       </span>
                     </button>
                     <Toggle
@@ -468,7 +472,12 @@ function ProvidersSettings() {
           )}
           {selected && (
             <div className="max-w-xl">
-              <h2 className="text-lg font-medium text-text-primary">{selected.displayName}</h2>
+              <div className="flex items-center gap-2.5">
+                <ProviderLogo instance={selected} className="h-5 w-5 shrink-0" />
+                <h2 className="min-w-0 truncate text-lg font-medium text-text-primary">
+                  {selected.displayName}
+                </h2>
+              </div>
               {(() => {
                 const st = statusLine(
                   selected,

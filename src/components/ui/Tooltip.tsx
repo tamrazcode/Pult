@@ -14,7 +14,7 @@ export function Tooltip({
   label: string;
   children: ReactNode;
   /** Right-align for controls at the panel edge so the label is not clipped. */
-  align?: "center" | "right";
+  align?: "center" | "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const timer = useRef<number | null>(null);
@@ -42,7 +42,11 @@ export function Tooltip({
         <span
           role="tooltip"
           className={`pointer-events-none absolute bottom-full z-50 mb-1.5 rounded-(--radius-sm) border border-border-strong bg-surface-raised px-2 py-0.5 text-xs whitespace-nowrap text-text-secondary shadow-(--shadow-composer) ${
-            align === "right" ? "right-0" : "left-1/2 -translate-x-1/2"
+            align === "right"
+              ? "right-0"
+              : align === "left"
+                ? "left-0"
+                : "left-1/2 -translate-x-1/2"
           }`}
         >
           {label}
