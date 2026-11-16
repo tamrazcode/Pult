@@ -10,6 +10,7 @@ import type {
   ConfigOptionValue,
   DetectedAgent,
   DiffFile,
+  DelegatedTask,
   GitDiff,
   GitDiffSummary,
   GitStatus,
@@ -700,6 +701,48 @@ export function onQueueUpdate(
 /** Payload of the "run:started" Tauri event (backend-created runs). */
 export function onRunStarted(handler: (run: Run) => void): Promise<UnlistenFn> {
   return listenOrNoop<{ run: Run }>("run:started", (payload) => handler(payload.run));
+}
+
+export interface SubagentSpawnedPayload {
+  task: DelegatedTask;
+  parentThreadId: string;
+  parentRunId: string;
+}
+
+export interface SubagentFinishedPayload {
+  taskId: string;
+  status: string;
+  summary?: string | null;
+  error?: string | null;
+}
+
+export function onSubagentSpawned(
+  handler: (payload: SubagentSpawnedPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<SubagentSpawnedPayload>("subagent:spawned", handler);
+}
+
+export function onSubagentFinished(
+  handler: (payload: SubagentFinishedPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<SubagentFinishedPayload>("subagent:finished", handler);
+}
+
+/** Delegated tasks of one parent thread (inline subagent cards). */
+export function orchestratorTasksList(threadId: string): Promise<DelegatedTask[]> {
+  return invokeRequired<DelegatedTask[]>("orchestrator_tasks_list", { threadId });
+}
+
+export function orchestratorCancelTask(taskId: string, force = false): Promise<unknown> {
+  return invokeRequired<unknown>("orchestrator_cancel_task", { taskId, force });
+}
+
+export function orchestratorCancelAll(threadId: string, force = false): Promise<void> {
+  return invokeRequired<void>("orchestrator_cancel_all", { threadId, force });
+}
+
+export function orchestratorRetryTask(taskId: string): Promise<DelegatedTask> {
+  return invokeRequired<DelegatedTask>("orchestrator_retry_task", { taskId });
 }
 
 /** Stop was pressed: the UI may offer a force-stop escalation. */

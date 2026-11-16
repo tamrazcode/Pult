@@ -44,6 +44,8 @@ export function buildSidebarGroups(
 ): SidebarGroup[] {
   const query = opts.query.trim().toLowerCase();
   const passesFilter = (thread: Thread): boolean => {
+    // Child threads belong to the parent card, never the sidebar.
+    if (thread.parentThreadId) return false;
     if (opts.filter === "archived") {
       if (thread.status !== "archived") return false;
     } else if (thread.status === "archived") {

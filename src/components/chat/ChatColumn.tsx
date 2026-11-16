@@ -4,10 +4,16 @@ import { Composer } from "./Composer";
 import { NewChatEmptyState } from "./NewChatEmptyState";
 import { ProjectInfoWidget } from "../layout/ProjectInfoWidget";
 import { useUiStore } from "../../stores/ui";
+import { useThreadsStore } from "../../stores/threads";
+import { useT } from "../../lib/i18n";
 
 export function ChatColumn({ title, threadId }: { title?: string; threadId?: string }) {
+  const t = useT();
   const projectWidgetOpen = useUiStore((s) => s.projectWidgetOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
+  const isSubagent = useThreadsStore((s) =>
+    threadId ? Boolean(s.threads.find((thread) => thread.id === threadId)?.parentThreadId) : false,
+  );
 
   if (!threadId) {
     return (
@@ -26,7 +32,15 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
         {/* Streaming text fades out as it slides under the composer. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-24 bg-gradient-to-t from-canvas via-canvas/80 to-transparent" />
         <div className="absolute inset-x-0 bottom-0 z-20">
-          <Composer threadId={threadId} />
+          {isSubagent ? (
+            <div className="mx-auto mb-4 w-full max-w-3xl px-6">
+              <p className="rounded-(--radius-md) border border-border-subtle bg-surface px-4 py-3 text-center text-xs text-text-tertiary">
+                {t("subagents.readOnly")}
+              </p>
+            </div>
+          ) : (
+            <Composer threadId={threadId} />
+          )}
         </div>
       </div>
     </div>

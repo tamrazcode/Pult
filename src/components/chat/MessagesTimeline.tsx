@@ -34,6 +34,8 @@ import {
   useT,
 } from "../../lib/i18n";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
+import { useSubagentsStore, useThreadSubagents } from "../../stores/subagents";
+import { SubagentCard } from "./SubagentCard";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
@@ -111,6 +113,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
   const entries = useMemo(() => threadTimelineItems(runs, views), [runs, views]);
   const pendingUser = useRunsStore((s) => (threadId ? s.pendingUserByThread[threadId] : undefined));
+  const subagents = useThreadSubagents(threadId);
+  useEffect(() => {
+    if (threadId) void useSubagentsStore.getState().load(threadId);
+  }, [threadId]);
   const hasView = view !== undefined;
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -167,6 +173,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
             <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
             <ThinkingRow />
+            {subagents.map((task) => (
+              <SubagentCard key={task.taskId} task={task} />
+            ))}
           </div>
         </div>
       </div>
@@ -255,6 +264,14 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               activeRunId={activeRun?.id}
               streaming={view.streaming}
             />
+          )}
+
+          {subagents.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {subagents.map((task) => (
+                <SubagentCard key={task.taskId} task={task} />
+              ))}
+            </div>
           )}
 
           {pendingUser && (

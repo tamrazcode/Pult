@@ -8,6 +8,8 @@ import {
   onRunEvent,
   onRunEvents,
   onRunStarted,
+  onSubagentFinished,
+  onSubagentSpawned,
 } from "./ipc";
 import { isTauri } from "./tauri";
 import { scheduleGitRefresh } from "../stores/git";
@@ -16,6 +18,7 @@ import type { ElicitationSurface } from "../stores/runs";
 import { useTerminalsStore } from "../stores/terminals";
 import { useThreadsStore } from "../stores/threads";
 import { useUiStore } from "../stores/ui";
+import { useSubagentsStore } from "../stores/subagents";
 import type { AppEvent } from "./types";
 import { translate } from "./i18n";
 import { notifyRunFinished } from "./notifications";
@@ -41,22 +44,26 @@ function afterRunEvents(runId: string, events: AppEvent[]): void {
     }
     if (event.kind === "run_finished") {
       const threadId = useRunsStore.getState().runThreadId(runId);
-      if (threadId && useThreadsStore.getState().activeThreadId !== threadId) {
-        useThreadsStore.getState().markUnread(threadId, true);
-      }
       const thread = useThreadsStore.getState().threads.find((item) => item.id === threadId);
-      const title = thread?.title || translate("sidebar.untitled");
-      const kind =
-        event.payload.stopReason === "failed" || event.payload.error
-          ? "error"
-          : event.payload.stopReason === "cancelled"
-            ? "cancelled"
-            : "done";
-      notifyRunFinished(
-        kind,
-        translate(`notifications.${kind}Title`),
-        translate(`notifications.${kind}Body`, { title }),
-      );
+      // A child run is progress inside the parent card: no unread badge or OS
+      // notification, even when its thread happens to be open.
+      if (!thread?.parentThreadId) {
+        if (threadId && useThreadsStore.getState().activeThreadId !== threadId) {
+          useThreadsStore.getState().markUnread(threadId, true);
+        }
+        const title = thread?.title || translate("sidebar.untitled");
+        const kind =
+          event.payload.stopReason === "failed" || event.payload.error
+            ? "error"
+            : event.payload.stopReason === "cancelled"
+              ? "cancelled"
+              : "done";
+        notifyRunFinished(
+          kind,
+          translate(`notifications.${kind}Title`),
+          translate(`notifications.${kind}Body`, { title }),
+        );
+      }
     }
   }
   // Diff panel freshness: every write re-projects the git diff (debounced).
@@ -108,6 +115,15 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offQueue = await onQueueUpdate(({ threadId, items }) => {
     useRunsStore.getState().setQueue(threadId, items);
   });
+  const offSubagentSpawned = await onSubagentSpawned((payload) => {
+    useSubagentsStore.getState().applySpawned(payload);
+    // The child thread exists only in the backend until it is opened; keep
+    // the sidebar store honest without waiting for a reload.
+    void useThreadsStore.getState().loadThreads();
+  });
+  const offSubagentFinished = await onSubagentFinished((payload) => {
+    useSubagentsStore.getState().applyFinished(payload);
+  });
   const offElicitation = await onElicitationRequest(({ runId, requestId, message, detail }) => {
     const surface: ElicitationSurface = {
       runId,
@@ -132,6 +148,8 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
     offStarted,
     offCancelling,
     offQueue,
+    offSubagentSpawned,
+    offSubagentFinished,
     offElicitation,
     offPtyOutput,
     offPtyExit,

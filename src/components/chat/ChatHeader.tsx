@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Pencil, Pin, PinOff } from "lucide-react";
+import { GitBranch, Pencil, Pin, PinOff, ChevronLeft } from "lucide-react";
+import { useRouter } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
 import { useProjectsStore } from "../../stores/projects";
 import { useThreadsStore } from "../../stores/threads";
@@ -14,10 +15,17 @@ import { useT } from "../../lib/i18n";
  */
 export function ChatHeader({ title, threadId }: { title?: string; threadId?: string }) {
   const t = useT();
+  const router = useRouter();
   const fallbackTitle = title ?? t("sidebar.newThread");
   const thread = useThreadsStore((s) =>
     threadId ? s.threads.find((t) => t.id === threadId) : undefined,
   );
+  const parentThread = useThreadsStore((s) =>
+    thread?.parentThreadId
+      ? s.threads.find((item) => item.id === thread.parentThreadId)
+      : undefined,
+  );
+  const isSubagent = Boolean(thread?.parentThreadId);
   const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const projectId = thread?.projectId ?? (!threadId ? selectedProjectId : null);
   const project = useProjectsStore((s) =>
@@ -85,6 +93,24 @@ export function ChatHeader({ title, threadId }: { title?: string; threadId?: str
         />
       ) : (
         <>
+          {parentThread && (
+            <button
+              type="button"
+              onClick={() =>
+                void router.navigate({
+                  to: "/thread/$threadId",
+                  params: { threadId: parentThread.id },
+                })
+              }
+              title={t("subagents.breadcrumb", { title: parentThread.title })}
+              className="flex max-w-[240px] shrink-0 items-center gap-0.5 truncate rounded-(--radius-sm) px-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <ChevronLeft size={12} className="shrink-0" />
+              <span className="truncate">
+                {t("subagents.breadcrumb", { title: parentThread.title })}
+              </span>
+            </button>
+          )}
           {project && projectMonogramStyle && (
             <span className="flex shrink-0 items-center gap-1.5">
               <span
@@ -106,7 +132,7 @@ export function ChatHeader({ title, threadId }: { title?: string; threadId?: str
             </span>
           )}
           <h1 className="min-w-0 truncate text-sm font-medium text-text-primary">{heading}</h1>
-          {threadId && (
+          {threadId && !isSubagent && (
             <button
               aria-label={t("sidebar.renameThread")}
               title={t("sidebar.renameThread")}
@@ -131,7 +157,7 @@ export function ChatHeader({ title, threadId }: { title?: string; threadId?: str
         </span>
       )}
       <div data-tauri-drag-region className="min-w-2 flex-1" />
-      {threadId && (
+      {threadId && !isSubagent && (
         <button
           aria-label={thread?.pinned ? t("sidebar.unpin") : t("sidebar.pin")}
           title={thread?.pinned ? t("sidebar.unpinShort") : t("sidebar.pinShort")}

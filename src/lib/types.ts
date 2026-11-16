@@ -32,6 +32,34 @@ export interface Thread {
   /** Parent repo when the thread works in a git worktree (M4). */
   mainRepo?: string | null;
   worktreeName?: string | null;
+  /** Orchestration lineage: set for app-owned subagent threads. */
+  parentThreadId?: string | null;
+  parentRunId?: string | null;
+  depth?: number;
+  lineageKind?: string | null;
+  childRole?: string | null;
+}
+
+/** One app-owned delegated task (subagent) in the parent timeline. */
+export interface DelegatedTask {
+  taskId: string;
+  parentThreadId: string;
+  parentRunId: string;
+  childThreadId: string;
+  childRunId?: string | null;
+  title: string;
+  promptSummary: string;
+  role?: string | null;
+  targetInstanceId: string;
+  targetModel?: string | null;
+  isolation: string;
+  permissionMode: string;
+  status: string;
+  summary?: string | null;
+  error?: string | null;
+  startedAt: number;
+  finishedAt?: number | null;
+  durationMs?: number | null;
 }
 
 export interface Run {
