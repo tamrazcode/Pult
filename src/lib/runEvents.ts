@@ -10,6 +10,7 @@ import {
   onRunStarted,
   onSubagentFinished,
   onSubagentSpawned,
+  onSubagentUpdated,
 } from "./ipc";
 import { isTauri } from "./tauri";
 import { scheduleGitRefresh } from "../stores/git";
@@ -124,6 +125,9 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offSubagentFinished = await onSubagentFinished((payload) => {
     useSubagentsStore.getState().applyFinished(payload);
   });
+  const offSubagentUpdated = await onSubagentUpdated((payload) => {
+    useSubagentsStore.getState().applyUpdated(payload);
+  });
   const offElicitation = await onElicitationRequest(({ runId, requestId, message, detail }) => {
     const surface: ElicitationSurface = {
       runId,
@@ -150,6 +154,7 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
     offQueue,
     offSubagentSpawned,
     offSubagentFinished,
+    offSubagentUpdated,
     offElicitation,
     offPtyOutput,
     offPtyExit,

@@ -178,13 +178,15 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   if (!threadId) return <EmptyState />;
 
   if (!view) {
-    if (!pendingUser) return <EmptyState />;
+    if (!pendingUser && subagentGroups.length === 0) return <EmptyState />;
     return (
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
-            <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
-            <ThinkingRow />
+            {pendingUser && (
+              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
+            )}
+            {pendingUser && <ThinkingRow />}
             {subagentGroups.map((group) =>
               group.length > 1 ? (
                 <SubagentGroupCard key={group[0].parentRunId} tasks={group} />
@@ -201,6 +203,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const hasContent =
     pendingUser !== undefined ||
     entries.length > 0 ||
+    subagents.length > 0 ||
     (view.plan?.length ?? 0) > 0 ||
     view.pendingApproval !== undefined ||
     view.error !== undefined;

@@ -39,7 +39,10 @@ fn truncates_at_entry_cap_and_marks_truncated() {
     let tree = walk_workspace_with_limits(&dir, 3, 6).unwrap();
     assert_eq!(tree.entries.len(), 3);
     assert!(tree.truncated);
-    assert!(tree.entries.iter().all(|entry| entry.name != "node_modules"));
+    assert!(tree
+        .entries
+        .iter()
+        .all(|entry| entry.name != "node_modules"));
 
     let wide = temp_workspace("wide");
     for index in 0..2001 {
@@ -64,7 +67,10 @@ fn truncates_at_depth_limit_and_skips_empty_or_ignored_subtrees() {
     write_file(&dir.join("a/b/c/d/e/f/deep.txt"));
     let tree = walk_workspace(&dir).unwrap();
     assert!(tree.truncated);
-    assert!(tree.entries.iter().all(|entry| !entry.path.ends_with("deep.txt")));
+    assert!(tree
+        .entries
+        .iter()
+        .all(|entry| !entry.path.ends_with("deep.txt")));
 
     fs::remove_dir_all(&dir).unwrap();
 }

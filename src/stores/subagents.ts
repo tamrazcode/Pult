@@ -15,6 +15,7 @@ interface SubagentsState {
   upsert: (task: DelegatedTask) => void;
   applySpawned: (payload: SubagentSpawnedPayload) => void;
   applyFinished: (payload: SubagentFinishedPayload) => void;
+  applyUpdated: (payload: SubagentFinishedPayload) => void;
 }
 
 /** App-owned subagents, keyed by task id. Child runs are invisible here:
@@ -52,6 +53,11 @@ export const useSubagentsStore = create<SubagentsState>()((set, get) => ({
       error: error ?? current.error,
       finishedAt: Date.now(),
     });
+  },
+  applyUpdated: ({ taskId, status }) => {
+    const current = get().tasks[taskId];
+    if (!current) return;
+    get().upsert({ ...current, status });
   },
 }));
 

@@ -728,6 +728,12 @@ export function onSubagentFinished(
   return listenOrNoop<SubagentFinishedPayload>("subagent:finished", handler);
 }
 
+export function onSubagentUpdated(
+  handler: (payload: SubagentFinishedPayload) => void,
+): Promise<UnlistenFn> {
+  return listenOrNoop<SubagentFinishedPayload>("subagent:updated", handler);
+}
+
 /** Delegated tasks of one parent thread (inline subagent cards). */
 export function orchestratorTasksList(threadId: string): Promise<DelegatedTask[]> {
   return invokeRequired<DelegatedTask[]>("orchestrator_tasks_list", { threadId });

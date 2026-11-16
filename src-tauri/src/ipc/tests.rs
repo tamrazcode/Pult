@@ -93,7 +93,10 @@ fn seed_worktree_thread(
         lineage_kind: None,
         child_role: None,
     };
-    runtime.store().create_thread(&record).expect("create thread");
+    runtime
+        .store()
+        .create_thread(&record)
+        .expect("create thread");
 }
 
 #[tokio::test]
@@ -129,8 +132,14 @@ async fn threads_delete_refuses_dirty_worktree_without_force_and_preserves_threa
         runtime.store().get_thread("th-keep").is_err(),
         "thread row must be deleted in keep mode"
     );
-    assert!(wt_keep_dir.exists(), "worktree dir must still exist in keep mode");
-    assert!(untracked_keep.exists(), "untracked file must still exist in keep mode");
+    assert!(
+        wt_keep_dir.exists(),
+        "worktree dir must still exist in keep mode"
+    );
+    assert!(
+        untracked_keep.exists(),
+        "untracked file must still exist in keep mode"
+    );
 
     // force_remove deletes both the thread row and the dirty worktree directory.
     let wt_force_name = "wt-force";
@@ -181,7 +190,10 @@ fn cap_ui_event_payloads_enforces_total_history_budget() {
     );
     match &events[0].kind {
         EventKind::ToolCall { raw_input, .. } => {
-            assert_eq!(raw_input.as_ref().expect("truncated oldest")["truncated"], true);
+            assert_eq!(
+                raw_input.as_ref().expect("truncated oldest")["truncated"],
+                true
+            );
         }
         other => panic!("unexpected kind: {other:?}"),
     }
@@ -217,11 +229,17 @@ async fn refused_dirty_delete_keeps_thread_and_settles_status() {
 
     let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
     let sink = Arc::new(RecordingSink::default());
-    let runtime = Arc::new(AgentRuntime::new(store, Arc::clone(&sink) as Arc<dyn EventSink>));
+    let runtime = Arc::new(AgentRuntime::new(
+        store,
+        Arc::clone(&sink) as Arc<dyn EventSink>,
+    ));
     runtime.set_instances_in_memory(vec![crate::config::mock_spec()]);
 
     seed_worktree_thread(&runtime, "th-dirty-run", &repo.0, "wt-dirty-run", &wt_dir);
-    let thread = runtime.store().get_thread("th-dirty-run").expect("get thread");
+    let thread = runtime
+        .store()
+        .get_thread("th-dirty-run")
+        .expect("get thread");
 
     let run = runtime
         .dispatch(&thread, "hello mock", &[], "mock")
@@ -229,9 +247,14 @@ async fn refused_dirty_delete_keeps_thread_and_settles_status() {
 
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(8);
     loop {
-        let parked = sink.0.lock().expect("sink lock").iter().any(|(ev, payload)| {
-            ev == "permission:request" && payload["runId"].as_str() == Some(run.id.as_str())
-        });
+        let parked = sink
+            .0
+            .lock()
+            .expect("sink lock")
+            .iter()
+            .any(|(ev, payload)| {
+                ev == "permission:request" && payload["runId"].as_str() == Some(run.id.as_str())
+            });
         if parked {
             break;
         }
@@ -266,14 +289,18 @@ async fn refused_dirty_delete_keeps_thread_and_settles_status() {
     assert_eq!(after.status, "settled");
     assert!(untracked.exists(), "untracked file must still exist");
 
-    let settled_emitted = sink.0.lock().expect("sink lock").iter().any(|(ev, payload)| {
-        ev == "thread:update"
-            && payload["thread"]["id"].as_str() == Some("th-dirty-run")
-            && payload["thread"]["status"].as_str() == Some("settled")
-    });
+    let settled_emitted = sink
+        .0
+        .lock()
+        .expect("sink lock")
+        .iter()
+        .any(|(ev, payload)| {
+            ev == "thread:update"
+                && payload["thread"]["id"].as_str() == Some("th-dirty-run")
+                && payload["thread"]["status"].as_str() == Some("settled")
+        });
     assert!(
         settled_emitted,
         "finalize_run must emit thread:update with settled status even while deleting"
     );
 }
-

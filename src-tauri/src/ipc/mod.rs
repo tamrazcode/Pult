@@ -65,7 +65,11 @@ pub(crate) async fn create_thread_with_runtime(
     };
     let seq = THREAD_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let id = format!("th-{}-{seq}", crate::events::now_millis());
-    let mut workspace_value = match workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let mut workspace_value = match workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(ws) => {
             let path = std::path::PathBuf::from(ws);
             if !path.is_absolute() {
@@ -137,8 +141,7 @@ pub(crate) async fn create_thread_with_runtime(
     if let Some(pid) = &project_id {
         if runtime.store().get_project(pid).is_err() {
             if let (Some(repo), Some(name)) = (&main_repo, &worktree_name) {
-                let _ =
-                    crate::git::worktree_remove(std::path::Path::new(repo), name, true).await;
+                let _ = crate::git::worktree_remove(std::path::Path::new(repo), name, true).await;
             }
             return Err(PultError::with_code(
                 "workspace.missing",
@@ -185,7 +188,10 @@ pub fn projects_create(
 ) -> Result<ProjectRecord, PultError> {
     let name = name.trim();
     if name.is_empty() {
-        return Err(PultError::with_code("project.empty_name", "project name must not be empty"));
+        return Err(PultError::with_code(
+            "project.empty_name",
+            "project name must not be empty",
+        ));
     }
     let path = std::path::PathBuf::from(root_path.trim());
     if !path.is_absolute() || !path.is_dir() {
@@ -233,7 +239,10 @@ pub fn projects_update(
 ) -> Result<ProjectRecord, PultError> {
     if let Some(name) = name.as_deref() {
         if name.trim().is_empty() {
-            return Err(PultError::with_code("project.empty_name", "project name must not be empty"));
+            return Err(PultError::with_code(
+                "project.empty_name",
+                "project name must not be empty",
+            ));
         }
     }
     if let Some(strategy) = worktree_strategy.as_deref() {
@@ -268,9 +277,11 @@ pub fn projects_delete(
         .map(|thread| thread.id)
         .collect();
     runtime.store().delete_project(&id)?;
-    runtime.pool.invalidate_root(&crate::runtime::clean_verbatim(
-        std::path::PathBuf::from(&project.root_path),
-    ));
+    runtime
+        .pool
+        .invalidate_root(&crate::runtime::clean_verbatim(std::path::PathBuf::from(
+            &project.root_path,
+        )));
     emit_projects(runtime.inner());
     for thread_id in affected {
         runtime.emit_thread_updated(&thread_id);
@@ -306,7 +317,11 @@ fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
     }
     let mut sizes: Vec<usize> = events
         .iter()
-        .map(|event| serde_json::to_string(event).map(|text| text.len()).unwrap_or(0))
+        .map(|event| {
+            serde_json::to_string(event)
+                .map(|text| text.len())
+                .unwrap_or(0)
+        })
         .collect();
     let mut total: usize = sizes.iter().sum();
     if total > TOTAL_BUDGET {
@@ -315,7 +330,9 @@ fn cap_ui_event_payloads(events: &mut [crate::events::Event]) {
                 break;
             }
             cap_event_payloads(event, TRIM_BYTES);
-            let after = serde_json::to_string(event).map(|text| text.len()).unwrap_or(0);
+            let after = serde_json::to_string(event)
+                .map(|text| text.len())
+                .unwrap_or(0);
             total = total.saturating_sub(sizes[index].saturating_sub(after));
             sizes[index] = after;
         }
@@ -339,7 +356,9 @@ fn cap_event_payloads(event: &mut crate::events::Event, max: usize) {
     match &mut event.kind {
         crate::events::EventKind::ToolCall { raw_input, .. } => cap_value(raw_input, max),
         crate::events::EventKind::ToolCallUpdate {
-            content, raw_output, ..
+            content,
+            raw_output,
+            ..
         } => {
             cap_value(content, max);
             cap_value(raw_output, max);
@@ -479,8 +498,24 @@ async fn threads_delete_inner(
     // worktree: Windows refuses to remove directories still held open.
     runtime.orchestrator.cancel_subtree(thread_id, true);
     // Parked child sessions (and their bearers) belong to this tree too.
-    for child in runtime.orchestrator.descendant_thread_ids(thread_id) {
-        runtime.pool.invalidate_thread(&child);
+    let descendants = runtime.orchestrator.descendant_thread_ids(thread_id);
+    for child in &descendants {
+        runtime.pool.invalidate_thread(child);
+    }
+    // Child worktrees are separate checkouts: deleting the parent row would
+    // otherwise strand them on disk with no handle in the UI.
+    for child in &descendants {
+        let Ok(thread) = runtime.store().get_thread(child) else {
+            continue;
+        };
+        if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
+            crate::git::worktree_remove(
+                std::path::Path::new(main_repo),
+                name,
+                worktree_mode == Some("force_remove"),
+            )
+            .await?;
+        }
     }
     if let Some(run_id) = runtime.active_run_for(thread_id) {
         let _ = runtime.cancel(&run_id);
@@ -597,7 +632,10 @@ pub fn runs_queue_update(
 ) -> Result<(), PultError> {
     let text = text.trim().to_string();
     if text.is_empty() {
-        return Err(PultError::with_code("queue.empty_message", "queue message cannot be empty"));
+        return Err(PultError::with_code(
+            "queue.empty_message",
+            "queue message cannot be empty",
+        ));
     }
     runtime.store().update_queue_item_text(&queue_id, &text)?;
     runtime.emit_queue_updated(&thread_id);
@@ -610,7 +648,9 @@ pub fn runs_queue_reorder(
     thread_id: String,
     queue_ids: Vec<String>,
 ) -> Result<(), PultError> {
-    runtime.store().reorder_queue_items(&thread_id, &queue_ids)?;
+    runtime
+        .store()
+        .reorder_queue_items(&thread_id, &queue_ids)?;
     runtime.emit_queue_updated(&thread_id);
     Ok(())
 }
@@ -658,9 +698,7 @@ pub fn permissions_remembered_clear(
 
 /// config.toml read/parse failure (None when the file is healthy/missing).
 #[tauri::command]
-pub fn providers_config_status(
-    runtime: tauri::State<'_, Arc<AgentRuntime>>,
-) -> Option<String> {
+pub fn providers_config_status(runtime: tauri::State<'_, Arc<AgentRuntime>>) -> Option<String> {
     runtime.config_error()
 }
 
@@ -703,10 +741,9 @@ pub fn runs_set_permission_mode(
     thread_id: String,
     mode: String,
 ) -> Result<(), PultError> {
-    let mode: crate::runtime::permissions::PermissionMode = serde_json::from_value(
-        serde_json::Value::String(mode),
-    )
-    .map_err(|e| crate::PultError::internal(format!("unknown permission mode: {e}")))?;
+    let mode: crate::runtime::permissions::PermissionMode =
+        serde_json::from_value(serde_json::Value::String(mode))
+            .map_err(|e| crate::PultError::internal(format!("unknown permission mode: {e}")))?;
     runtime.set_permission_mode(&thread_id, mode)
 }
 
@@ -862,7 +899,8 @@ pub async fn providers_warmup(
 /// One-click connect check (§4.3): spawn the agent, handshake, cache caps,
 /// shut down. No prompt — free and session-safe.
 #[tauri::command]
-pub async fn providers_preflight(    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+pub async fn providers_preflight(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
     instance_id: String,
 ) -> Result<crate::runtime::PreflightReport, PultError> {
     runtime.preflight(&instance_id).await
@@ -899,7 +937,11 @@ pub async fn workspace_files(
     workspace: Option<String>,
     query: Option<String>,
 ) -> Result<Vec<String>, PultError> {
-    let root = match workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let root = match workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         Some(ws) => std::path::PathBuf::from(ws)
             .canonicalize()
             .map_err(|e| PultError::internal(format!("workspace {ws} not found: {e}")))?,
@@ -1047,11 +1089,8 @@ pub async fn terminal_pty_write(
 ) -> Result<(), PultError> {
     // Input arrives base64-encoded so arbitrary bytes (arrow keys, pastes)
     // survive the JSON bridge.
-    let bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        data.as_bytes(),
-    )
-    .map_err(|e| PultError::internal(format!("terminal input: {e}")))?;
+    let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data.as_bytes())
+        .map_err(|e| PultError::internal(format!("terminal input: {e}")))?;
     runtime.ptys().write(&terminal_id, &bytes)
 }
 
@@ -1096,7 +1135,10 @@ pub fn validate_external_url(url: &str) -> Result<(), PultError> {
     if trimmed.len() > 2048 {
         return Err(PultError::with_code("url.too_long", "URL is too long"));
     }
-    if trimmed.chars().any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'') {
+    if trimmed
+        .chars()
+        .any(|c| c.is_control() || c.is_whitespace() || c == '"' || c == '\'')
+    {
         return Err(PultError::internal(
             "URL contains whitespace, quotes or control characters",
         ));
@@ -1156,10 +1198,16 @@ pub fn open_external_url(url: String) -> Result<(), PultError> {
 pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultError> {
     let raw = path.trim();
     if raw.is_empty() {
-        return Err(PultError::with_code("editor.empty_path", "empty editor path"));
+        return Err(PultError::with_code(
+            "editor.empty_path",
+            "empty editor path",
+        ));
     }
     if raw.starts_with("\\\\") || raw.starts_with("//") {
-        return Err(PultError::with_code("editor.unc_blocked", "UNC paths are not allowed"));
+        return Err(PultError::with_code(
+            "editor.unc_blocked",
+            "UNC paths are not allowed",
+        ));
     }
     let target = std::path::Path::new(raw)
         .canonicalize()
@@ -1179,7 +1227,11 @@ pub fn open_in_editor(path: String, editor: Option<String>) -> Result<(), PultEr
         let Some(command) = crate::config::resolve_command(name) else {
             continue;
         };
-        if std::process::Command::new(command).arg(&target).spawn().is_ok() {
+        if std::process::Command::new(command)
+            .arg(&target)
+            .spawn()
+            .is_ok()
+        {
             return Ok(());
         }
     }
@@ -1408,26 +1460,40 @@ pub async fn workspace_read_text(
         let base = root
             .canonicalize()
             .map_err(|e| PultError::internal(format!("workspace: {e}")))?;
-        if path.starts_with("\\\\") || path.starts_with("//") || std::path::Path::new(&path).is_absolute()
+        if path.starts_with("\\\\")
+            || path.starts_with("//")
+            || std::path::Path::new(&path).is_absolute()
         {
-            return Err(PultError::with_code("workspace.path_escapes", "path escapes workspace"));
+            return Err(PultError::with_code(
+                "workspace.path_escapes",
+                "path escapes workspace",
+            ));
         }
         let target = base.join(&path);
         let target = target
             .canonicalize()
             .map_err(|e| PultError::internal(format!("file not found: {e}")))?;
         if !target.starts_with(&base) || !target.is_file() {
-            return Err(PultError::with_code("workspace.path_escapes", "path escapes workspace"));
+            return Err(PultError::with_code(
+                "workspace.path_escapes",
+                "path escapes workspace",
+            ));
         }
         let meta = std::fs::metadata(&target)
             .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
         if meta.len() > 512 * 1024 {
-            return Err(PultError::with_code("file.too_large", "file is too large to preview (max 512 KB)"));
+            return Err(PultError::with_code(
+                "file.too_large",
+                "file is too large to preview (max 512 KB)",
+            ));
         }
         let bytes = std::fs::read(&target)
             .map_err(|e| PultError::internal(format!("file not readable: {e}")))?;
         if bytes.contains(&0) {
-            return Err(PultError::with_code("file.binary", "binary file cannot be previewed as text"));
+            return Err(PultError::with_code(
+                "file.binary",
+                "binary file cannot be previewed as text",
+            ));
         }
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     })
@@ -1466,8 +1532,11 @@ fn npm_command(args: &[&str]) -> std::process::Command {
 
 /// Which self-updater a configured agent has (no package replacement).
 fn update_kind(instance: &crate::config::InstanceSpec) -> Option<&'static str> {
-    let haystack = format!("{} {} {}", instance.id, instance.display_name, instance.command)
-        .to_ascii_lowercase();
+    let haystack = format!(
+        "{} {} {}",
+        instance.id, instance.display_name, instance.command
+    )
+    .to_ascii_lowercase();
     if haystack.contains("codex") {
         Some("codex")
     } else if haystack.contains("opencode") {
@@ -1584,12 +1653,21 @@ pub async fn providers_update_install(
         .ok_or_else(|| PultError::with_code("provider.unknown", "unknown instance"))?
         .clone();
     tokio::task::spawn_blocking(move || {
-        let kind = update_kind(&instance)
-            .ok_or_else(|| PultError::with_code("provider.managed_externally", "this provider is managed externally"))?;
+        let kind = update_kind(&instance).ok_or_else(|| {
+            PultError::with_code(
+                "provider.managed_externally",
+                "this provider is managed externally",
+            )
+        })?;
         let args: &[&str] = match kind {
             "codex" => &["update"],
             "opencode" => &["upgrade"],
-            _ => return Err(PultError::with_code("provider.managed_externally", "this provider is managed externally")),
+            _ => {
+                return Err(PultError::with_code(
+                    "provider.managed_externally",
+                    "this provider is managed externally",
+                ))
+            }
         };
         let output = run_cli(kind, args).map_err(PultError::internal)?;
         if !output.status.success() {
@@ -1684,7 +1762,9 @@ fn parse_frame_headers(raw: &str) -> EmbedCheck {
     }
     let csp = final_block
         .lines()
-        .find(|line| line.starts_with("content-security-policy:") && line.contains("frame-ancestors"))
+        .find(|line| {
+            line.starts_with("content-security-policy:") && line.contains("frame-ancestors")
+        })
         .unwrap_or("");
     let mut allowed = true;
     if !csp.is_empty() {
@@ -1721,7 +1801,9 @@ fn check_frame_headers(url: &str) -> Result<EmbedCheck, PultError> {
             reason: None,
         });
     };
-    Ok(parse_frame_headers(&String::from_utf8_lossy(&output.stdout)))
+    Ok(parse_frame_headers(&String::from_utf8_lossy(
+        &output.stdout,
+    )))
 }
 
 /// Reads an HTML file from the thread workspace for the browser surface.
@@ -1743,9 +1825,7 @@ pub struct AppUpdateInfo {
     pub body: Option<String>,
 }
 
-fn updater_for(
-    app: &tauri::AppHandle,
-) -> Result<tauri_plugin_updater::Updater, PultError> {
+fn updater_for(app: &tauri::AppHandle) -> Result<tauri_plugin_updater::Updater, PultError> {
     use tauri_plugin_updater::UpdaterExt;
 
     let mut builder = app.updater_builder();
@@ -1780,9 +1860,7 @@ fn updater_for(
 }
 
 #[tauri::command]
-pub async fn app_update_check(
-    app: tauri::AppHandle,
-) -> Result<Option<AppUpdateInfo>, PultError> {
+pub async fn app_update_check(app: tauri::AppHandle) -> Result<Option<AppUpdateInfo>, PultError> {
     let updater = updater_for(&app)?;
     let update = updater
         .check()
@@ -1829,7 +1907,6 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), PultError> 
     app.restart();
 }
 
-
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
 #[tauri::command]
@@ -1861,7 +1938,11 @@ pub async fn read_image_data_url(
         .unwrap_or(false);
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
     if let Ok(threads) = runtime.store().list_threads() {
-        roots.extend(threads.into_iter().filter_map(|thread| thread.workspace.map(Into::into)));
+        roots.extend(
+            threads
+                .into_iter()
+                .filter_map(|thread| thread.workspace.map(Into::into)),
+        );
     }
     if let Ok(projects) = runtime.store().list_projects() {
         roots.extend(projects.into_iter().map(|project| project.root_path.into()));
@@ -1874,7 +1955,10 @@ pub async fn read_image_data_url(
         use base64::{engine::general_purpose::STANDARD, Engine as _};
         // Never touch UNC paths: canonicalize would open an SMB connection.
         if path.starts_with("\\\\") || path.starts_with("//") {
-            return Err(PultError::with_code("image.unc_blocked", "network image paths are not allowed"));
+            return Err(PultError::with_code(
+                "image.unc_blocked",
+                "network image paths are not allowed",
+            ));
         }
         let canonical = std::path::PathBuf::from(&path)
             .canonicalize()
@@ -1891,7 +1975,10 @@ pub async fn read_image_data_url(
         let meta = std::fs::metadata(&canonical)
             .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
         if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
-            return Err(PultError::with_code("image.too_large", "image must be a file up to 8 MB"));
+            return Err(PultError::with_code(
+                "image.too_large",
+                "image must be a file up to 8 MB",
+            ));
         }
         let mime = match canonical
             .extension()
@@ -1903,7 +1990,12 @@ pub async fn read_image_data_url(
             Some("jpg" | "jpeg") => "image/jpeg",
             Some("gif") => "image/gif",
             Some("webp") => "image/webp",
-            _ => return Err(PultError::with_code("image.unsupported_type", "unsupported image type")),
+            _ => {
+                return Err(PultError::with_code(
+                    "image.unsupported_type",
+                    "unsupported image type",
+                ))
+            }
         };
         let bytes = std::fs::read(&canonical)
             .map_err(|e| PultError::internal(format!("image read failed: {e}")))?;
@@ -1991,13 +2083,24 @@ mod update_tests {
     use crate::config::InstanceSpec;
 
     fn spec(id: &str, name: &str, command: &str) -> InstanceSpec {
-        InstanceSpec { id: id.into(), display_name: name.into(), driver: "acp".into(), command: command.into(), args: Vec::new(), env: Default::default(), enabled: true }
+        InstanceSpec {
+            id: id.into(),
+            display_name: name.into(),
+            driver: "acp".into(),
+            command: command.into(),
+            args: Vec::new(),
+            env: Default::default(),
+            enabled: true,
+        }
     }
 
     #[test]
     fn detects_self_updating_clis() {
         assert_eq!(update_kind(&spec("codex", "Codex", "codex")), Some("codex"));
-        assert_eq!(update_kind(&spec("opencode", "OpenCode", "opencode")), Some("opencode"));
+        assert_eq!(
+            update_kind(&spec("opencode", "OpenCode", "opencode")),
+            Some("opencode")
+        );
         assert_eq!(update_kind(&spec("mock", "Mock", "node")), None);
     }
 }
@@ -2029,8 +2132,6 @@ mod payload_cap_tests {
     }
 }
 
-
-
 #[cfg(test)]
 mod workspace_tree_tests;
 
@@ -2045,22 +2146,39 @@ mod security_regression_tests {
     fn open_in_editor_rejects_unc_paths_before_filesystem_lookup() {
         let err = open_in_editor("//server/share".to_string(), None)
             .expect_err("expected UNC forward-slash path to be rejected");
-        assert!(err.to_string().contains("UNC paths are not allowed"), "got: {err}");
+        assert!(
+            err.to_string().contains("UNC paths are not allowed"),
+            "got: {err}"
+        );
 
         let err_backslash = open_in_editor("\\\\server\\share".to_string(), None)
             .expect_err("expected UNC backslash path to be rejected");
-        assert!(err_backslash.to_string().contains("UNC paths are not allowed"), "got: {err_backslash}");
+        assert!(
+            err_backslash
+                .to_string()
+                .contains("UNC paths are not allowed"),
+            "got: {err_backslash}"
+        );
     }
 
     #[test]
     fn parse_frame_headers_blocks_x_frame_options_deny_and_sameorigin() {
         let deny = parse_frame_headers("HTTP/1.1 200 OK\r\nX-Frame-Options: DENY\r\n\r\n");
         assert!(!deny.embeddable);
-        assert!(deny.reason.as_deref().unwrap_or("").contains("X-Frame-Options"));
+        assert!(deny
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("X-Frame-Options"));
 
-        let sameorigin = parse_frame_headers("HTTP/1.1 200 OK\r\nX-Frame-Options: SameOrigin\r\n\r\n");
+        let sameorigin =
+            parse_frame_headers("HTTP/1.1 200 OK\r\nX-Frame-Options: SameOrigin\r\n\r\n");
         assert!(!sameorigin.embeddable);
-        assert!(sameorigin.reason.as_deref().unwrap_or("").contains("X-Frame-Options"));
+        assert!(sameorigin
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("X-Frame-Options"));
     }
 
     #[test]
@@ -2069,7 +2187,11 @@ mod security_regression_tests {
             "HTTP/1.1 200 OK\r\nContent-Security-Policy: default-src 'self'; frame-ancestors 'none'\r\n\r\n",
         );
         assert!(!blocked_csp.embeddable);
-        assert!(blocked_csp.reason.as_deref().unwrap_or("").contains("frame-ancestors"));
+        assert!(blocked_csp
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("frame-ancestors"));
 
         let wildcard_csp = parse_frame_headers(
             "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *\r\n\r\n",
@@ -2093,12 +2215,15 @@ mod security_regression_tests {
             "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *.example.com\r\n\r\n",
         );
         assert!(!host_wildcard.embeddable);
-        assert!(host_wildcard.reason.as_deref().unwrap_or("").contains("frame-ancestors"));
+        assert!(host_wildcard
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("frame-ancestors"));
 
         let wildcard = parse_frame_headers(
             "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *\r\n\r\n",
         );
         assert!(wildcard.embeddable);
     }
-
 }
