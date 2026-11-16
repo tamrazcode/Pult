@@ -284,20 +284,6 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
   );
 });
 
-/** Local paths from agents (`C:\...`, UNC, file://) need the backend bridge. */
-function fileUrlToPath(src: string): string {
-  if (!src.startsWith("file://")) return src;
-  try {
-    const url = new URL(src);
-    let path = decodeURIComponent(url.pathname);
-    if (url.host && url.host !== "localhost") path = `//${url.host}${path}`;
-    if (/^\/[a-zA-Z]:/.test(path)) path = path.slice(1);
-    return path;
-  } catch {
-    return src;
-  }
-}
-
 /** Markdown eats Windows backslashes (`C:\Users` -> `C:Users`) and may
     percent-encode a path; restore the drive form before reading the file. */
 function normalizeImageSource(src: string): string {
@@ -314,7 +300,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const t = useT();
   const source = typeof src === "string" ? normalizeImageSource(src) : undefined;
   const local = typeof source === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(source);
-  const absolutePath = source ? (localFilePath(source) ?? fileUrlToPath(source)) : "";
+  const absolutePath = source ? localFilePath(source) : null;
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -322,6 +308,10 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     if (!local || !source) return;
     setDataUrl(null);
     setFailed(false);
+    if (!absolutePath) {
+      setFailed(true);
+      return;
+    }
     let cancelled = false;
     readImageDataUrl(absolutePath, useThreadsStore.getState().activeThreadId ?? "")
       .then((url) => {
@@ -371,7 +361,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
       type="button"
       aria-label={t("chat.openImage")}
       title={alt || src}
-      data-local-path={absolutePath}
+      data-local-path={absolutePath ?? undefined}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
