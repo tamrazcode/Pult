@@ -14,7 +14,7 @@ import { preflightInstances, readCachedChecks } from "../lib/providerChecks";
 import type { CachedCheck } from "../lib/providerChecks";
 import { useUiStore } from "../stores/ui";
 import { localizeIpcError, translate, useT } from "../lib/i18n";
-import { ConnectRow } from "../components/settings/AgentConnect";
+import { AddProviderDialog } from "../components/settings/AddProviderDialog";
 import { SignInActions } from "../components/settings/SignInActions";
 import { ProviderLogo } from "../components/chat/ProviderLogo";
 import type { DetectedAgent, InstanceInfo, InstanceSpec, PreflightReport } from "../lib/types";
@@ -620,58 +620,16 @@ function ProvidersSettings() {
       </div>
 
       {adding && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40"
-          aria-hidden
-          onClick={() => setAdding(false)}
+        <AddProviderDialog
+          detected={detected}
+          instances={instances}
+          onClose={() => setAdding(false)}
+          onAdded={(id) => {
+            setSelectedId(id);
+            setDetailOpen(true);
+            void reload();
+          }}
         />
-      )}
-      {adding && (
-        <div className="fixed inset-y-0 right-0 z-40 w-[420px] max-w-[90vw] overflow-y-auto border-l border-border-strong bg-canvas p-4 shadow-(--shadow-composer)">
-          <div className="flex items-center justify-between">
-            <p className="text-sm font-medium text-text-primary">{t("settings.providers.add")}</p>
-            <button
-              onClick={() => setAdding(false)}
-              aria-label={t("common.close")}
-              className="flex h-7 w-7 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-            >
-              <X size={14} />
-            </button>
-          </div>
-          <p className="mt-1 text-xs text-text-tertiary">{t("settings.providers.addHint")}</p>
-          <div className="mt-3 space-y-2">
-            {detected.length === 0 && (
-              <p className="text-sm text-text-tertiary">{t("settings.providers.noneDetected")}</p>
-            )}
-            {detected.map((agent) => (
-              <ConnectRow
-                key={agent.id}
-                agent={agent}
-                alreadyAdded={instances.some((i) => i.id === agent.suggestedInstanceId)}
-                onAdded={() => void reload()}
-                onReport={(report) => {
-                  const now = Date.now();
-                  setReports((m) => ({
-                    ...m,
-                    [agent.suggestedInstanceId]: {
-                      report,
-                      at: now,
-                      lastAttemptAt: now,
-                      lastError: null,
-                    },
-                  }));
-                  setAuthAttempted((m) => ({
-                    ...m,
-                    [agent.suggestedInstanceId]: report.authRequired,
-                  }));
-                  setSelectedId(agent.suggestedInstanceId);
-                  void reload();
-                }}
-              />
-            ))}
-            <AddInstanceForm onAdded={() => void reload()} />
-          </div>
-        </div>
       )}
     </div>
   );
@@ -698,106 +656,5 @@ function Toggle({ on, onClick, label }: { on: boolean; onClick: () => void; labe
         }`}
       />
     </button>
-  );
-}
-
-/** Add-instance form: any ACP-over-stdio command works (custom providers). */
-function AddInstanceForm({ onAdded }: { onAdded: () => void }) {
-  const t = useT();
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState({ id: "", displayName: "", command: "", args: "" });
-  const [error, setError] = useState<string | null>(null);
-
-  const add = async () => {
-    try {
-      const all = await providersInstancesList();
-      const next = all.map((i) => ({
-        id: i.id,
-        displayName: i.displayName,
-        driver: i.driver,
-        command: i.command,
-        args: i.args,
-        env: i.env,
-        enabled: i.enabled,
-      }));
-      next.push({
-        id: draft.id.trim(),
-        displayName: draft.displayName.trim() || draft.id.trim(),
-        driver: "acp",
-        command: draft.command.trim(),
-        args: draft.args
-          .split(",")
-          .map((a) => a.trim())
-          .filter(Boolean),
-        env: {},
-        enabled: true,
-      });
-      await providersInstancesSave(next);
-      await useUiStore.getState().loadInstances();
-      setOpen(false);
-      setError(null);
-      setDraft({ id: "", displayName: "", command: "", args: "" });
-      onAdded();
-    } catch (err) {
-      setError(localizeIpcError(err));
-    }
-  };
-
-  if (!open) {
-    return (
-      <button
-        onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 rounded-(--radius-md) border border-dashed border-border-strong px-3 py-2 text-sm text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-      >
-        <Plus size={14} /> {t("settings.providers.addCustom")}
-      </button>
-    );
-  }
-  return (
-    <div className="rounded-(--radius-md) border border-border-strong bg-surface p-3">
-      <div className="space-y-2">
-        <div className="flex gap-2">
-          <input
-            value={draft.id}
-            onChange={(e) => setDraft({ ...draft, id: e.target.value })}
-            placeholder={t("settings.providers.idPlaceholder")}
-            className="h-8 w-40 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-          />
-          <input
-            value={draft.displayName}
-            onChange={(e) => setDraft({ ...draft, displayName: e.target.value })}
-            placeholder={t("settings.providers.displayNamePlaceholder")}
-            className="h-8 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-sm text-text-primary focus:outline-none"
-          />
-        </div>
-        <input
-          value={draft.command}
-          onChange={(e) => setDraft({ ...draft, command: e.target.value })}
-          placeholder={t("settings.providers.commandPlaceholder")}
-          className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-        />
-        <input
-          value={draft.args}
-          onChange={(e) => setDraft({ ...draft, args: e.target.value })}
-          placeholder={t("settings.providers.args")}
-          className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-        />
-        {error && <p className="text-xs text-danger">{error}</p>}
-        <div className="flex justify-end gap-2">
-          <button
-            onClick={() => setOpen(false)}
-            className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            <X size={12} /> {t("common.cancel")}
-          </button>
-          <button
-            onClick={() => void add()}
-            className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
-          >
-            {t("settings.providers.addInstance")}
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }

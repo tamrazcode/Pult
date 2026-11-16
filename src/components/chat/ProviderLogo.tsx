@@ -5,9 +5,23 @@ import openaiLogo from "../../assets/providers/openai.svg";
 import geminiLogo from "../../assets/providers/gemini.svg";
 import opencodeLogo from "../../assets/providers/opencode.svg";
 import antigravityLogo from "../../assets/editors/antigravity.svg";
+import cursorLogo from "../../assets/providers/cursor.svg";
+import grokLogo from "../../assets/providers/grok.svg";
+import museLogo from "../../assets/providers/muse.svg";
+import piLogo from "../../assets/providers/pi.svg";
 
 export type ProviderBrand =
-  "claude" | "codex" | "gemini" | "antigravity" | "opencode" | "mock" | "custom";
+  | "claude"
+  | "codex"
+  | "gemini"
+  | "antigravity"
+  | "opencode"
+  | "cursor"
+  | "grok"
+  | "muse"
+  | "pi"
+  | "mock"
+  | "custom";
 
 type ProviderIdentity = Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">;
 
@@ -36,6 +50,10 @@ export function detectProviderBrand(inst: ProviderIdentity): ProviderBrand {
   }
   if (haystack.includes("gemini")) return "gemini";
   if (haystack.includes("opencode")) return "opencode";
+  if (haystack.includes("cursor")) return "cursor";
+  if (haystack.includes("grok")) return "grok";
+  if (haystack.includes("muse")) return "muse";
+  if (/\bpi\b/.test(haystack)) return "pi";
   if (inst.driver === "mock" || haystack.includes("mock")) return "mock";
   return "custom";
 }
@@ -46,6 +64,10 @@ const BRAND_LOGOS: Partial<Record<ProviderBrand, string>> = {
   gemini: geminiLogo,
   antigravity: antigravityLogo,
   opencode: opencodeLogo,
+  cursor: cursorLogo,
+  grok: grokLogo,
+  muse: museLogo,
+  pi: piLogo,
 };
 
 /** Bundled brand marks (no remote assets); custom agents fall back to a monogram. */

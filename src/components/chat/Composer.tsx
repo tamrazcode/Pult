@@ -903,10 +903,6 @@ export function Composer({ threadId }: { threadId?: string }) {
       )}
       <div className="relative z-10 mx-auto w-full max-w-3xl">
         <div
-          aria-hidden
-          className="pointer-events-none absolute -inset-1 -bottom-1.5 rounded-[calc(var(--radius-lg)+6px)] border-4 border-b-[6px] border-surface-raised"
-        />
-        <div
           className="relative rounded-(--radius-lg) border border-border-strong backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
           style={{
             backgroundColor: `color-mix(in srgb, var(--composer-tint) ${glassOpacity}%, transparent)`,
