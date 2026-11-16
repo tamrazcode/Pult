@@ -57,7 +57,14 @@ export const useSubagentsStore = create<SubagentsState>()((set, get) => ({
   applyUpdated: ({ taskId, status }) => {
     const current = get().tasks[taskId];
     if (!current) return;
-    get().upsert({ ...current, status });
+    const active = isTaskActive(status);
+    get().upsert({
+      ...current,
+      status,
+      summary: active ? undefined : current.summary,
+      error: active ? undefined : current.error,
+      finishedAt: active ? null : current.finishedAt,
+    });
   },
 }));
 

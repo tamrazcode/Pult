@@ -125,9 +125,7 @@ impl PtyRegistry {
             .map_err(|e| PultError::internal(format!("openpty: {e}")))?;
 
         let (program, args) = match &params.command {
-            Some(argv) if !argv.is_empty() => {
-                (argv[0].clone(), argv[1..].to_vec())
-            }
+            Some(argv) if !argv.is_empty() => (argv[0].clone(), argv[1..].to_vec()),
             _ => default_shell(),
         };
         let mut cmd = CommandBuilder::new(&program);
@@ -209,9 +207,8 @@ impl PtyRegistry {
         let emit_terminal_id = terminal_id.clone();
         tokio::spawn(async move {
             let mut pending: Vec<u8> = Vec::new();
-            let mut ticker = tokio::time::interval(tokio::time::Duration::from_millis(
-                FLUSH_INTERVAL_MS,
-            ));
+            let mut ticker =
+                tokio::time::interval(tokio::time::Duration::from_millis(FLUSH_INTERVAL_MS));
             ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             ticker.tick().await; // first tick fires immediately
             let mut eof_since: Option<std::time::Instant> = None;
@@ -265,7 +262,10 @@ impl PtyRegistry {
         let state = self.get(terminal_id)?;
         let mut guard = state.lock().expect("pty lock poisoned");
         let Some(writer) = guard.writer.as_mut() else {
-            return Err(PultError::with_code("terminal.input_closed", "terminal input closed"));
+            return Err(PultError::with_code(
+                "terminal.input_closed",
+                "terminal input closed",
+            ));
         };
         writer
             .write_all(data)
@@ -305,9 +305,7 @@ impl PtyRegistry {
             .lock()
             .expect("pty registry lock poisoned")
             .iter()
-            .filter(|(_, s)| {
-                s.lock().expect("pty lock poisoned").thread_id == thread_id
-            })
+            .filter(|(_, s)| s.lock().expect("pty lock poisoned").thread_id == thread_id)
             .map(|(id, s)| {
                 let guard = s.lock().expect("pty lock poisoned");
                 PtyInfo {
@@ -438,8 +436,7 @@ mod tests {
             let decoded: Vec<String> = events
                 .iter()
                 .filter(|(event, payload)| {
-                    event == "terminal:pty"
-                        && payload["terminalId"].as_str() == Some(terminal_id)
+                    event == "terminal:pty" && payload["terminalId"].as_str() == Some(terminal_id)
                 })
                 .filter_map(|(_, payload)| {
                     base64::engine::general_purpose::STANDARD
@@ -540,7 +537,9 @@ mod tests {
         );
         assert!(sink.saw_exit(&info.terminal_id), "exit event emitted");
         // Writing to the (now closed) input is a typed error.
-        let err = registry.write(&info.terminal_id, b"ls\r").expect_err("closed input");
+        let err = registry
+            .write(&info.terminal_id, b"ls\r")
+            .expect_err("closed input");
         assert!(err.to_string().contains("input closed"));
 
         // A live interactive shell accepts input and echoes it back (it also
@@ -556,9 +555,14 @@ mod tests {
                 registry.write(&live.terminal_id, b"\x1b[1;1R").unwrap();
                 live_cpr = true;
                 tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
-                registry.write(&live.terminal_id, b"echo live-input-ok\r\n").unwrap();
+                registry
+                    .write(&live.terminal_id, b"echo live-input-ok\r\n")
+                    .unwrap();
             }
-            if sink.combined_output(&live.terminal_id).contains("live-input-ok") {
+            if sink
+                .combined_output(&live.terminal_id)
+                .contains("live-input-ok")
+            {
                 live_ok = true;
                 break;
             }
@@ -589,10 +593,7 @@ mod tests {
         let err = registry.resize("pty-nope", 10, 10).expect_err("unknown");
         assert!(err.to_string().contains("unknown terminal"));
         let live = registry
-            .create(&params(
-                &std::env::temp_dir(),
-                vec!["cmd".to_string()],
-            ))
+            .create(&params(&std::env::temp_dir(), vec!["cmd".to_string()]))
             .unwrap();
         registry.resize(&live.terminal_id, 30, 120).unwrap();
         registry.kill(&live.terminal_id).unwrap();

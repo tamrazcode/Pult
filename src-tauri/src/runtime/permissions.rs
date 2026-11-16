@@ -88,9 +88,7 @@ impl<'a> PolicyRequest<'a> {
     }
 
     fn find_kind_starts_with(&self, prefix: &str) -> Option<&'a PolicyOption> {
-        self.options
-            .iter()
-            .find(|o| o.kind.starts_with(prefix))
+        self.options.iter().find(|o| o.kind.starts_with(prefix))
     }
 }
 
@@ -228,11 +226,17 @@ mod tests {
         let paths = vec!["/repo/src/main.rs".to_string()];
         let options = opts();
         let r = req("edit", &paths, &options, None);
-        assert_eq!(resolve(PermissionMode::Supervised, &root(), &r), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::Supervised, &root(), &r),
+            PolicyDecision::Ask
+        );
 
         // Supervised ALWAYS asks even with a remembered allow_always.
         let r2 = req("edit", &paths, &options, Some("always"));
-        assert_eq!(resolve(PermissionMode::Supervised, &root(), &r2), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::Supervised, &root(), &r2),
+            PolicyDecision::Ask
+        );
 
         // Remembered allow_always short-circuits outside Supervised inside the workspace
         // when the remembered option id still maps to an allow* kind.
@@ -248,7 +252,10 @@ mod tests {
             kind: "reject_once".into(),
         }];
         let r_reject = req("edit", &paths, &reject_now, Some("always"));
-        assert_eq!(resolve(PermissionMode::Auto, &root(), &r_reject), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::Auto, &root(), &r_reject),
+            PolicyDecision::Ask
+        );
     }
 
     #[test]
@@ -262,19 +269,31 @@ mod tests {
         );
         // different tool kind → ask
         let r2 = req("execute", &inside, &options, None);
-        assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r2), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r2),
+            PolicyDecision::Ask
+        );
         // drive-qualified path outside the workspace → ask
         let outside = vec!["C:\\Windows\\system32\\config.sys".to_string()];
         let r3 = req("edit", &outside, &options, None);
-        assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r3), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r3),
+            PolicyDecision::Ask
+        );
         // ../ escape inside the path → ask
         let sneaky = vec!["/repo/../../etc/passwd".to_string()];
         let r4 = req("edit", &sneaky, &options, None);
-        assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r4), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r4),
+            PolicyDecision::Ask
+        );
         // relative ../ escape (the agent edits it outside the fs sandbox) → ask
         let relative = vec!["..\\..\\Windows\\System32\\drivers\\etc\\hosts".to_string()];
         let r5 = req("edit", &relative, &options, None);
-        assert_eq!(resolve(PermissionMode::AutoEdit, &root(), &r5), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r5),
+            PolicyDecision::Ask
+        );
     }
 
     #[test]
@@ -287,7 +306,10 @@ mod tests {
             PolicyDecision::AutoResolve("allow".into())
         );
         let del = req("delete", &paths, &options, None);
-        assert_eq!(resolve(PermissionMode::Auto, &root(), &del), PolicyDecision::Ask);
+        assert_eq!(
+            resolve(PermissionMode::Auto, &root(), &del),
+            PolicyDecision::Ask
+        );
         let outside = vec!["C:\\Windows\\temp\\x.txt".to_string()];
         let write_outside = req("edit", &outside, &options, None);
         assert_eq!(
@@ -346,7 +368,10 @@ mod tests {
             PermissionMode::from_settings_value(&serde_json::json!("auto_edit")),
             Some(PermissionMode::AutoEdit)
         );
-        assert_eq!(PermissionMode::from_settings_value(&serde_json::json!("nope")), None);
+        assert_eq!(
+            PermissionMode::from_settings_value(&serde_json::json!("nope")),
+            None
+        );
         assert_eq!(PermissionMode::default_mode(), PermissionMode::Supervised);
     }
 
@@ -398,4 +423,3 @@ mod tests {
         );
     }
 }
-

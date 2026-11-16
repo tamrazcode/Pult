@@ -154,10 +154,10 @@ impl TerminalRegistry {
             .lock()
             .expect("terminal registry lock")
             .insert(terminal_id.clone(), state);
-        Ok(serde_json::to_value(crate::protocol::types::CreateTerminalResult {
-            terminal_id,
-        })
-        .unwrap_or_default())
+        Ok(
+            serde_json::to_value(crate::protocol::types::CreateTerminalResult { terminal_id })
+                .unwrap_or_default(),
+        )
     }
 
     /// Entry for a terminal the caller owns. Foreign ids look exactly like
@@ -243,7 +243,11 @@ impl TerminalRegistry {
     }
 
     /// `terminal/release` — kill and free the registry entry.
-    pub fn release(&self, terminal_id: &str, owner_token: &str) -> crate::drivers::acp::ClientReply {
+    pub fn release(
+        &self,
+        terminal_id: &str,
+        owner_token: &str,
+    ) -> crate::drivers::acp::ClientReply {
         let mut guard = self.inner.lock().expect("terminal registry lock");
         let owned = guard
             .get(terminal_id)
@@ -367,7 +371,10 @@ mod tests {
                 None,
             )
             .expect("terminal created");
-        let terminal_id = created["terminalId"].as_str().expect("terminalId").to_string();
+        let terminal_id = created["terminalId"]
+            .as_str()
+            .expect("terminalId")
+            .to_string();
 
         // wait_for_exit resolves with a 0 exit code; output sees the echo.
         let waited = registry
@@ -382,9 +389,7 @@ mod tests {
             "expected the echo in output, got {text:?}"
         );
 
-        let released = registry
-            .release(&terminal_id, &owner)
-            .expect("release");
+        let released = registry.release(&terminal_id, &owner).expect("release");
         assert_eq!(released, serde_json::json!({}));
         let err = registry.output(&terminal_id, &owner).unwrap_err();
         assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
@@ -519,11 +524,7 @@ mod tests {
 
         assert_eq!(out["exitStatus"]["exitCode"], 0);
         let text = out["output"].as_str().expect("output text");
-        assert!(
-            text.contains("ok"),
-            "expected 'ok' in output, got {text:?}"
-        );
+        assert!(text.contains("ok"), "expected 'ok' in output, got {text:?}");
         registry.release(&terminal_id, &token).expect("release");
     }
 }
-

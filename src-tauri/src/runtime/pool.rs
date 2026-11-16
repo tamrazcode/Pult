@@ -84,7 +84,10 @@ impl IdlePool {
     }
 
     /// Production pool also revokes orchestration tokens on eviction.
-    pub fn with_mcp_registry(mut self, registry: Arc<crate::orchestrator::McpTokenRegistry>) -> Self {
+    pub fn with_mcp_registry(
+        mut self,
+        registry: Arc<crate::orchestrator::McpTokenRegistry>,
+    ) -> Self {
         self.mcp_registry = Some(registry);
         self
     }

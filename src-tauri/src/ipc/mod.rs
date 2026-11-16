@@ -502,21 +502,6 @@ async fn threads_delete_inner(
     for child in &descendants {
         runtime.pool.invalidate_thread(child);
     }
-    // Child worktrees are separate checkouts: deleting the parent row would
-    // otherwise strand them on disk with no handle in the UI.
-    for child in &descendants {
-        let Ok(thread) = runtime.store().get_thread(child) else {
-            continue;
-        };
-        if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
-            crate::git::worktree_remove(
-                std::path::Path::new(main_repo),
-                name,
-                worktree_mode == Some("force_remove"),
-            )
-            .await?;
-        }
-    }
     if let Some(run_id) = runtime.active_run_for(thread_id) {
         let _ = runtime.cancel(&run_id);
         for _ in 0..40 {
@@ -541,19 +526,57 @@ async fn threads_delete_inner(
     // keep the worktree open and the directory removal below fails.
     runtime.ptys().kill_thread(thread_id);
     if worktree_mode != Some("keep") {
-        if let Ok(thread) = runtime.store().get_thread(thread_id) {
+        let parent_worktree = runtime
+            .store()
+            .get_thread(thread_id)
+            .ok()
+            .and_then(|thread| thread.worktree_name);
+        // Child worktrees are separate checkouts: deleting the parent row
+        // would otherwise strand them on disk with no handle in the UI.
+        // `shared` children point at the parent's worktree and are skipped.
+        for child in &descendants {
+            let Ok(thread) = runtime.store().get_thread(child) else {
+                continue;
+            };
+            if thread.worktree_name == parent_worktree {
+                continue;
+            }
             if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
                 let force = worktree_mode == Some("force_remove");
                 if let Err(err) =
                     crate::git::worktree_remove(std::path::Path::new(main_repo), name, force).await
                 {
-                    // Never delete the row while the user's worktree files remain:
-                    // the thread is the only handle back to them.
                     if err.code() == "git.worktree_dirty" {
                         return Err(err);
                     }
-                    tracing::warn!(target: "pult::ipc", thread_id = %thread_id,
+                    tracing::warn!(target: "pult::ipc", thread_id = %child,
+                        error = %err, "child worktree cleanup failed; deleting anyway");
+                }
+            }
+        }
+        if let Ok(thread) = runtime.store().get_thread(thread_id) {
+            // A `shared` child has no worktree of its own: its name matches
+            // the parent's. Deleting the child must not delete the parent.
+            let shared_with_parent = thread
+                .parent_thread_id
+                .as_deref()
+                .and_then(|parent_id| runtime.store().get_thread(parent_id).ok())
+                .is_some_and(|parent| parent.worktree_name == thread.worktree_name);
+            if !shared_with_parent {
+                if let (Some(main_repo), Some(name)) = (&thread.main_repo, &thread.worktree_name) {
+                    let force = worktree_mode == Some("force_remove");
+                    if let Err(err) =
+                        crate::git::worktree_remove(std::path::Path::new(main_repo), name, force)
+                            .await
+                    {
+                        // Never delete the row while the user's worktree files remain:
+                        // the thread is the only handle back to them.
+                        if err.code() == "git.worktree_dirty" {
+                            return Err(err);
+                        }
+                        tracing::warn!(target: "pult::ipc", thread_id = %thread_id,
                         error = %err, "worktree cleanup failed; deleting thread anyway");
+                    }
                 }
             }
         }

@@ -156,7 +156,11 @@ mod tests {
         };
 
         let pre_flushed = batcher.push(approval.clone());
-        assert_eq!(pre_flushed.len(), 1, "barrier must flush preceding delta first");
+        assert_eq!(
+            pre_flushed.len(),
+            1,
+            "barrier must flush preceding delta first"
+        );
         assert_eq!(pre_flushed[0].run_id, "run-2");
         assert_eq!(pre_flushed[0].seq, 1);
         assert_eq!(

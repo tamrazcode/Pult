@@ -20,14 +20,14 @@ use crate::events::{
     now_millis, AgentCapsPayload, Event, EventKind, PermissionOption as AppPermissionOption,
     RunEventsPayload, RunTiming,
 };
-use crate::runtime::permissions::PermissionMode;
-use crate::runtime::terminals::TerminalRegistry;
 use crate::protocol::jsonrpc::{RequestId, RpcError, ERR_RESOURCE_NOT_FOUND};
 use crate::protocol::types::{
     AgentCapabilities, ConfigOptionValue, CreateElicitationParams, CreateTerminalParams,
     ElicitationAction, ReadTextFileParams, ReadTextFileResult, RequestPermissionParams,
     SessionConfigOption, WriteTextFileParams,
 };
+use crate::runtime::permissions::PermissionMode;
+use crate::runtime::terminals::TerminalRegistry;
 use crate::store::records::{ImageInput, QueueItem, RunRecord, ThreadRecord};
 use crate::store::Store;
 
@@ -336,8 +336,12 @@ impl AgentRuntime {
         // by a previous shutdown are orphans вЂ” make them drafts at boot.
         match store.reset_orphaned_run_states() {
             Ok(0) => {}
-            Ok(n) => tracing::info!(target: "pult::runtime", count = n, "reset orphaned run states at boot"),
-            Err(err) => tracing::warn!(target: "pult::runtime", error = %err, "orphaned run-state reset failed"),
+            Ok(n) => {
+                tracing::info!(target: "pult::runtime", count = n, "reset orphaned run states at boot")
+            }
+            Err(err) => {
+                tracing::warn!(target: "pult::runtime", error = %err, "orphaned run-state reset failed")
+            }
         }
         let home = crate::pult_home();
         let (instances, config_error) = match crate::config::load_instances_checked(&home) {
@@ -393,25 +397,30 @@ impl AgentRuntime {
         workspace: Option<&str>,
     ) -> Result<(), crate::PultError> {
         let spawn_config = self.spawn_config_for(instance_id)?;
-        let root = match workspace.map(str::trim).filter(|value| !value.is_empty()) {
-            Some(path) => {
-                let path = PathBuf::from(path);
-                if !path.is_dir() {
-                    return Err(crate::PultError::with_code(
-                        "workspace.missing",
-                        format!("Project or thread folder not found: {}", path.display()),
-                    ));
+        let root =
+            match workspace.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(path) => {
+                    let path = PathBuf::from(path);
+                    if !path.is_dir() {
+                        return Err(crate::PultError::with_code(
+                            "workspace.missing",
+                            format!("Project or thread folder not found: {}", path.display()),
+                        ));
+                    }
+                    clean_verbatim(path.canonicalize().map_err(|e| {
+                        crate::PultError::internal(format!("warmup workspace: {e}"))
+                    })?)
                 }
-                clean_verbatim(path.canonicalize().map_err(|e| {
-                    crate::PultError::internal(format!("warmup workspace: {e}"))
-                })?)
-            }
-            None => self.workspace_root()?,
-        };
+                None => self.workspace_root()?,
+            };
         let spawn_sig = crate::runtime::pool::SpawnSig {
             command: spawn_config.command.clone(),
             args: spawn_config.args.clone(),
-            env: spawn_config.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            env: spawn_config
+                .env
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
         };
         {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
@@ -443,7 +452,10 @@ impl AgentRuntime {
             .map_err(|e| crate::PultError::internal(format!("warmup initialize: {e}")))?;
         if conn.is_dead() {
             conn.kill();
-            return Err(crate::PultError::with_code("provider.warmup_failed", "warmup agent exited"));
+            return Err(crate::PultError::with_code(
+                "provider.warmup_failed",
+                "warmup agent exited",
+            ));
         }
         let warm = WarmConn {
             conn: Arc::clone(&conn),
@@ -487,13 +499,8 @@ impl AgentRuntime {
     }
 
     /// User PTY terminal registry (M5 terminal panel).
-    pub fn ptys(&self) -> Arc<crate::runtime::ptys::PtyRegistry> {        Arc::clone(
-            &self
-                .inner
-                .lock()
-                .expect("runtime lock poisoned")
-                .ptys,
-        )
+    pub fn ptys(&self) -> Arc<crate::runtime::ptys::PtyRegistry> {
+        Arc::clone(&self.inner.lock().expect("runtime lock poisoned").ptys)
     }
 
     pub fn store(&self) -> &Arc<Store> {
@@ -577,15 +584,19 @@ impl AgentRuntime {
             .instances
             .iter()
             .map(|spec| {
-                let caps = inner.capabilities.get(&spec.id).cloned().unwrap_or(CachedCaps {
-                    prompt_image: false,
-                    load_session: false,
-                    modes: Vec::new(),
-                    config_options: Vec::new(),
-                    auth_methods: Vec::new(),
-                    auth_required: false,
-                    auth_hint: None,
-                });
+                let caps = inner
+                    .capabilities
+                    .get(&spec.id)
+                    .cloned()
+                    .unwrap_or(CachedCaps {
+                        prompt_image: false,
+                        load_session: false,
+                        modes: Vec::new(),
+                        config_options: Vec::new(),
+                        auth_methods: Vec::new(),
+                        auth_required: false,
+                        auth_hint: None,
+                    });
                 InstanceInfo {
                     id: spec.id.clone(),
                     display_name: spec.display_name.clone(),
@@ -617,10 +628,7 @@ impl AgentRuntime {
     /// Test seam: swap the registry without writing `config.toml`.
     #[cfg(test)]
     pub fn set_instances_in_memory(&self, specs: Vec<crate::config::InstanceSpec>) {
-        self.inner
-            .lock()
-            .expect("runtime lock poisoned")
-            .instances = specs;
+        self.inner.lock().expect("runtime lock poisoned").instances = specs;
     }
 
     /// Spawn configuration for an instance (M6): `"mock"` resolves the
@@ -677,10 +685,16 @@ impl AgentRuntime {
 
     /// Rewrites the agent matrix (settings UI save): validates ids, writes
     /// config.toml, and swaps the live registry.
-    pub fn set_instances(&self, specs: Vec<crate::config::InstanceSpec>) -> Result<(), crate::PultError> {
+    pub fn set_instances(
+        &self,
+        specs: Vec<crate::config::InstanceSpec>,
+    ) -> Result<(), crate::PultError> {
         for spec in &specs {
             if spec.id.trim().is_empty() {
-                return Err(crate::PultError::with_code("provider.invalid_id", "instance id must not be empty"));
+                return Err(crate::PultError::with_code(
+                    "provider.invalid_id",
+                    "instance id must not be empty",
+                ));
             }
             if spec.driver != "acp" && spec.driver != "mock" {
                 return Err(crate::PultError::internal(format!(
@@ -751,7 +765,9 @@ impl AgentRuntime {
             match inner.runs.get(&run_id) {
                 Some(state) => (Arc::clone(&state.conn), state.session_id.clone()),
                 None => {
-                    return Err(crate::PultError::internal(format!("run {run_id} is not active")))
+                    return Err(crate::PultError::internal(format!(
+                        "run {run_id} is not active"
+                    )))
                 }
             }
         };
@@ -887,10 +903,9 @@ impl AgentRuntime {
                     // thread; a queued message must not rewrite the active run.
                     if let Some(mode) = &mode {
                         let key = format!("thread_mode:{}", thread.id);
-                        let _ = self.store.set_setting(
-                            &key,
-                            &serde_json::Value::String(mode.clone()),
-                        );
+                        let _ = self
+                            .store
+                            .set_setting(&key, &serde_json::Value::String(mode.clone()));
                     }
                     self.save_desired_config(&thread.id, &snapshot)?;
                     return Ok(SendOutcome {
@@ -943,7 +958,8 @@ impl AgentRuntime {
             .contains_key(run_id)
     }
 
-    pub fn active_run_for(&self, thread_id: &str) -> Option<String> {        self.inner
+    pub fn active_run_for(&self, thread_id: &str) -> Option<String> {
+        self.inner
             .lock()
             .expect("runtime lock poisoned")
             .threads_working
@@ -978,7 +994,11 @@ impl AgentRuntime {
 
     /// Sends a queued message now: move it ahead of the queue and cancel the
     /// active run so the queue drain picks it next. Best-effort cancel.
-    pub fn steer(self: &Arc<Self>, thread_id: &str, queue_id: &str) -> Result<(), crate::PultError> {
+    pub fn steer(
+        self: &Arc<Self>,
+        thread_id: &str,
+        queue_id: &str,
+    ) -> Result<(), crate::PultError> {
         self.store.move_queue_item_to_head(thread_id, queue_id)?;
         self.emit_queue_updated(thread_id);
         if let Some(run_id) = self.active_run_for(thread_id) {
@@ -1037,7 +1057,10 @@ impl AgentRuntime {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
             let previous = inner.capabilities.get(instance_id).cloned();
             let modes = if modes.is_empty() {
-                previous.as_ref().map(|c| c.modes.clone()).unwrap_or_default()
+                previous
+                    .as_ref()
+                    .map(|c| c.modes.clone())
+                    .unwrap_or_default()
             } else {
                 modes
             };
@@ -1062,7 +1085,9 @@ impl AgentRuntime {
                 auth_hint: previous.as_ref().and_then(|c| c.auth_hint.clone()),
             };
             changed = previous.as_ref() != Some(&cached);
-            inner.capabilities.insert(instance_id.to_string(), cached.clone());
+            inner
+                .capabilities
+                .insert(instance_id.to_string(), cached.clone());
         }
         if changed {
             self.emit("agent:caps", &cached.payload(instance_id));
@@ -1173,7 +1198,11 @@ impl AgentRuntime {
 
     /// Replaces the cached config options from a `set_config_option` reply or
     /// a live `config_option_update`.
-    fn update_cached_config_options(&self, instance_id: &str, config_options: Vec<SessionConfigOption>) {
+    fn update_cached_config_options(
+        &self,
+        instance_id: &str,
+        config_options: Vec<SessionConfigOption>,
+    ) {
         let cached = {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
             match inner.capabilities.get_mut(instance_id) {
@@ -1438,8 +1467,7 @@ impl AgentRuntime {
             tokio::time::sleep(std::time::Duration::from_millis(grace_ms)).await;
             let still_active = {
                 let inner = runtime.inner.lock().expect("runtime lock poisoned");
-                inner.cancelling_runs.contains(&grace_run)
-                    && inner.runs.contains_key(&grace_run)
+                inner.cancelling_runs.contains(&grace_run) && inner.runs.contains_key(&grace_run)
             };
             if still_active {
                 tracing::warn!(target: "pult::runtime", run_id = %grace_run,
@@ -1478,11 +1506,7 @@ impl AgentRuntime {
         request_id: &str,
         option_id: Option<String>,
     ) -> Result<(), crate::PultError> {
-        self.push_answer(
-            run_id,
-            request_id,
-            AnswerPayload::Permission { option_id },
-        )
+        self.push_answer(run_id, request_id, AnswerPayload::Permission { option_id })
     }
 
     /// Route an elicitation answer (accept/decline/cancel + content).
@@ -1515,11 +1539,14 @@ impl AgentRuntime {
         // policy already resolved the request locally).
         match tx {
             Some(tx) => {
-                tx.send((request_id.to_string(), payload))
-                    .map_err(|_| crate::PultError::with_code("run.finished", "run already finished"))?;
+                tx.send((request_id.to_string(), payload)).map_err(|_| {
+                    crate::PultError::with_code("run.finished", "run already finished")
+                })?;
                 Ok(())
             }
-            None => Err(crate::PultError::internal(format!("run {run_id} is not active"))),
+            None => Err(crate::PultError::internal(format!(
+                "run {run_id} is not active"
+            ))),
         }
     }
 
@@ -1613,7 +1640,12 @@ impl AgentRuntime {
 
     /// Flat view for Settings в–ё General (revoke list).
     pub fn list_remembered_permissions(&self) -> Vec<RememberedPermission> {
-        let Some(value) = self.store.get_setting("remembered_permissions").ok().flatten() else {
+        let Some(value) = self
+            .store
+            .get_setting("remembered_permissions")
+            .ok()
+            .flatten()
+        else {
             return Vec::new();
         };
         let Some(workspaces) = value.as_object() else {
@@ -1685,10 +1717,7 @@ impl AgentRuntime {
                     }
                 }
                 if !next_kinds.is_empty() {
-                    next_instances.insert(
-                        instance.clone(),
-                        serde_json::Value::Object(next_kinds),
-                    );
+                    next_instances.insert(instance.clone(), serde_json::Value::Object(next_kinds));
                 }
             }
             if !next_instances.is_empty() {
@@ -1783,8 +1812,16 @@ impl AgentRuntime {
     /// Session cwd for a thread: its explicit workspace (worktree threads
     /// pin theirs at creation), else its project's folder, else the global
     /// root. A missing folder is an explicit error, never a silent fallback.
-    pub(crate) fn workspace_root_for(&self, thread: &ThreadRecord) -> Result<PathBuf, crate::PultError> {
-        if let Some(ws) = thread.workspace.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    pub(crate) fn workspace_root_for(
+        &self,
+        thread: &ThreadRecord,
+    ) -> Result<PathBuf, crate::PultError> {
+        if let Some(ws) = thread
+            .workspace
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             let path = PathBuf::from(ws);
             if !path.is_absolute() || !path.is_dir() {
                 return Err(crate::PultError::with_code(
@@ -2140,7 +2177,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             preinit.take(),
         )
         .await
-            {
+        {
             Ok(resolved) => resolved,
             Err(err) => {
                 let died = conn.died_on_own();
@@ -2267,10 +2304,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         if applied_config.get(&config_id) == Some(&value) {
             continue;
         }
-        match conn
-            .set_config_option(&session_id, &config_id, value)
-            .await
-        {
+        match conn.set_config_option(&session_id, &config_id, value).await {
             Ok(result) => {
                 sync_applied_config(&mut applied_config, &result.config_options);
                 runtime.update_cached_config_options(&instance_id, result.config_options.clone());
@@ -2566,8 +2600,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     if failure.is_none() {
         while let Ok(kind) = events_rx.try_recv() {
             if let Err(err) = apply_session_event(
-                &runtime, &run_id, &thread_id, &instance_id, &mut timing, &mut batcher,
-                &mut applied_config, prompt_started, kind,
+                &runtime,
+                &run_id,
+                &thread_id,
+                &instance_id,
+                &mut timing,
+                &mut batcher,
+                &mut applied_config,
+                prompt_started,
+                kind,
             ) {
                 failure = Some(err);
                 stop_reason = Some("failed".to_string());
@@ -2746,7 +2787,10 @@ impl AgentRuntime {
                     Some(item.config_options.clone().into_iter().collect()),
                     Some(&item.id),
                 ) {
-                    Ok(_) => {}
+                    Ok(run) => {
+                        // A queued steer becomes the task's new live run.
+                        self.orchestrator.attach_child_run(thread_id, &run.id);
+                    }
                     Err(err) => {
                         tracing::error!(target: "pult::runtime",
                             error = %err, "queue auto-dispatch failed");
@@ -2756,6 +2800,11 @@ impl AgentRuntime {
                         // the queue, unless it already ended in this gap.
                         if is_thread_busy(&err) && self.active_run_for(thread_id).is_none() {
                             self.auto_dispatch_queue(thread_id);
+                        } else if !is_thread_busy(&err) {
+                            // A queued steer whose next run cannot start must
+                            // close the subagent card instead of hanging.
+                            self.orchestrator
+                                .mark_dispatch_failed(thread_id, &err.to_string());
                         }
                     }
                 }
@@ -2842,15 +2891,16 @@ impl AgentRuntime {
             )));
         }
         let spawn_config = self.spawn_config_for(instance_id)?;
-        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config)
-            .map_err(|e| crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name)))?;
-        let init = conn
-            .initialize()
-            .await
-            .map_err(|e| {
-                conn.kill();
-                crate::PultError::internal(format!("{} did not answer the handshake: {e}", spec.display_name))
-            })?;
+        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
+            crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
+        })?;
+        let init = conn.initialize().await.map_err(|e| {
+            conn.kill();
+            crate::PultError::internal(format!(
+                "{} did not answer the handshake: {e}",
+                spec.display_name
+            ))
+        })?;
         // Auth is real only if a session can actually be created: authMethods
         // advertise SUPPORTED methods, not a missing login (T3 semantics).
         // The probe runs in a temp cwd and sends no prompt вЂ” free and safe.
@@ -2916,7 +2966,10 @@ impl AgentRuntime {
         method_id: &str,
     ) -> Result<PreflightReport, crate::PultError> {
         if method_id.trim().is_empty() {
-            return Err(crate::PultError::with_code("provider.auth_method_missing", "auth method id is empty"));
+            return Err(crate::PultError::with_code(
+                "provider.auth_method_missing",
+                "auth method id is empty",
+            ));
         }
         let (spec, cached_methods) = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
@@ -3138,15 +3191,12 @@ async fn resolve_session(
                             .to_string(),
                     );
                     let fresh = runtime
-                        .open_session(
-                            conn,
-                            &cwd,
-                            instance_id,
-                            &init.auth_methods,
-                            &mcp_servers,
-                        )
+                        .open_session(conn, &cwd, instance_id, &init.auth_methods, &mcp_servers)
                         .await?;
-                    let _ = runtime.store.upsert_session_ref(thread_id, instance_id, &fresh.session_id);
+                    let _ =
+                        runtime
+                            .store
+                            .upsert_session_ref(thread_id, instance_id, &fresh.session_id);
                     runtime.cache_capabilities(
                         instance_id,
                         &init.agent_capabilities,
@@ -3214,7 +3264,9 @@ async fn resolve_session(
 }
 
 /// M6: the mode picker works from the advertised mode list.
-fn collect_modes(state: &crate::protocol::types::SessionModeState) -> Vec<crate::protocol::types::SessionMode> {
+fn collect_modes(
+    state: &crate::protocol::types::SessionModeState,
+) -> Vec<crate::protocol::types::SessionMode> {
     state.available_modes.clone()
 }
 
@@ -3504,8 +3556,8 @@ fn request_id_key(id: &RequestId) -> String {
 
 fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply {
     let path = safe_path(root, &params.path)?;
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| fs_error(format!("{}: {e}", params.path)))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| fs_error(format!("{}: {e}", params.path)))?;
     let mut lines: Vec<&str> = content.lines().collect();
     if let Some(line) = params.line {
         let start = line.saturating_sub(1) as usize;

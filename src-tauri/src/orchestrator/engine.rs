@@ -596,6 +596,12 @@ impl OrchestratorEngine {
                             .store
                             .get_delegated_task(&task.id)
                             .map_err(|error| error.to_string())?;
+                        if let Ok(runtime) = self.runtime() {
+                            runtime.emit(
+                                "subagent:updated",
+                                &json!({ "taskId": updated.id, "status": updated.status }),
+                            );
+                        }
                         return Ok(task_json(&updated));
                     }
                     let text = error.to_string();
@@ -663,6 +669,57 @@ impl OrchestratorEngine {
                     "status": "cancelled",
                     "summary": Value::Null,
                     "error": Value::Null,
+                }),
+            );
+        }
+        self.waiters.notify_waiters();
+    }
+
+    /// Runtime dispatched a queued run for a child thread: point the task at
+    /// the new live run and surface the running status.
+    pub fn attach_child_run(&self, thread_id: &str, run_id: &str) {
+        let Ok(Some(task)) = self.store.find_delegated_task_by_child_thread(thread_id) else {
+            return;
+        };
+        if task_finished(&task.status) {
+            return;
+        }
+        let _ = self.store.attach_delegated_run(&task.id, run_id);
+        if let Ok(runtime) = self.runtime() {
+            runtime.emit(
+                "subagent:updated",
+                &json!({ "taskId": task.id, "status": "running" }),
+            );
+        }
+    }
+
+    /// A queued follow-up could not start: fail the task so its card closes.
+    pub fn mark_dispatch_failed(&self, thread_id: &str, error: &str) {
+        let Ok(Some(task)) = self.store.find_delegated_task_by_child_thread(thread_id) else {
+            return;
+        };
+        if task_finished(&task.status) {
+            return;
+        }
+        let _ = self.store.update_delegated_task_status(
+            &task.id,
+            &crate::store::DelegatedTaskUpdate {
+                status: "failed",
+                child_run_id: None,
+                summary: None,
+                error: Some(error),
+                usage_json: None,
+                finished_at: Some(now_millis()),
+            },
+        );
+        if let Ok(runtime) = self.runtime() {
+            runtime.emit(
+                "subagent:finished",
+                &json!({
+                    "taskId": task.id,
+                    "status": "failed",
+                    "summary": Value::Null,
+                    "error": error,
                 }),
             );
         }
@@ -769,12 +826,14 @@ impl OrchestratorEngine {
         };
         // A steer (or any queued follow-up) keeps the task alive: the next
         // queued run will finish it, so do not close the card on run 1.
-        if task.status == "running"
-            && self
-                .store
-                .list_queue(thread_id)
-                .map(|queue| !queue.is_empty())
-                .unwrap_or(false)
+        if matches!(
+            task.status.as_str(),
+            "running" | "waiting_approval" | "waiting_input"
+        ) && self
+            .store
+            .list_queue(thread_id)
+            .map(|queue| !queue.is_empty())
+            .unwrap_or(false)
         {
             self.waiters.notify_waiters();
             return;
