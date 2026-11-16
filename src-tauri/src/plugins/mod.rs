@@ -73,10 +73,10 @@ pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> 
                 continue;
             };
             let id = manifest.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            if !valid_id(id) || !seen.insert(id.to_owned()) {
+            if !valid_id(id) {
                 continue;
             }
-            if entry.file_name().to_str() != Some(id) {
+            if entry.file_name().to_str() != Some(id) || !seen.insert(id.to_owned()) {
                 continue;
             }
             let string = |key: &str| manifest.get(key).and_then(|v| v.as_str()).map(str::to_owned);
