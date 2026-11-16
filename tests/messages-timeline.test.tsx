@@ -834,6 +834,20 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("shows the ASCII spinner beside the initial Working… line", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "running", 0)] },
+      viewsByRun: {
+        r1: { items: [], streaming: true },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+    const line = screen.getByText("Working…");
+    const spinner = line.querySelector("span[aria-hidden]")!;
+    expect(spinner.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u);
+  });
+
   it("shows readable tool output without exec- ids and reveals raw JSON only after clicking Raw", () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0)] },
