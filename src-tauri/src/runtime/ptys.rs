@@ -493,7 +493,10 @@ mod tests {
                 vec![
                     "cmd".to_string(),
                     "/c".to_string(),
-                    "echo pty-round-trip-marker".to_string(),
+                    // Give ConPTY's renderer time to receive the CPR answer
+                    // before the child prints and exits; an instant echo can
+                    // be dropped while the renderer is still blocked.
+                    "ping -n 2 127.0.0.1 >nul & echo pty-round-trip-marker".to_string(),
                 ],
             ))
             .unwrap();
