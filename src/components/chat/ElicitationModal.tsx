@@ -1,6 +1,7 @@
 import { memo, useMemo, useState } from "react";
 import { Button } from "../ui/button";
 import { ipcErrorMessage, openExternalUrl } from "../../lib/ipc";
+import { useT } from "../../lib/i18n";
 
 export interface ElicitationRequest {
   runId: string;
@@ -124,6 +125,7 @@ function RequiredMark({ required }: { required: boolean }) {
 }
 
 export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
+  const t = useT();
   const { message, detail } = request;
   const fields = useMemo(() => parseFields(detail), [detail]);
   // Values are keyed to the request the modal mounts with; the parent mounts a
@@ -187,7 +189,7 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
         className="w-full max-w-lg overflow-hidden rounded-2xl border border-border-strong bg-(--surface-raised) shadow-(--shadow-composer)"
       >
         <div className="bg-warning/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-warning">
-          Agent request
+          {t("chat.elicitation.request")}
         </div>
         <div className="space-y-4 px-4 py-3">
           <p className="text-sm text-text-primary">{message}</p>
@@ -266,7 +268,7 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
                       value={typeof value === "string" ? value : ""}
                       onChange={(e) => setValue(field.name, e.target.value)}
                     >
-                      <option value="">Select a value</option>
+                      <option value="">{t("chat.elicitation.selectValue")}</option>
                       {(field.options ?? []).map((option) => (
                         <option key={option} value={option}>
                           {option}
@@ -302,25 +304,25 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
           )}
 
           {!isForm && !isUrl && (
-            <p className="text-xs text-text-tertiary">The agent sent an unknown request mode</p>
+            <p className="text-xs text-text-tertiary">{t("chat.elicitation.unknownMode")}</p>
           )}
         </div>
         <div className="flex justify-end gap-2 px-4 pb-4">
           {isForm && (
             <Button variant="primary" onClick={accept} disabled={!canAccept}>
-              Accept
+              {t("chat.elicitation.accept")}
             </Button>
           )}
           {isUrl && (
             <Button variant="primary" onClick={() => void openUrl()}>
-              Open URL
+              {t("chat.elicitation.openUrl")}
             </Button>
           )}
           <Button variant="secondary" onClick={() => onSubmit("decline")}>
-            Decline
+            {t("chat.elicitation.decline")}
           </Button>
           <Button variant="ghost" onClick={() => onSubmit("cancel")}>
-            Cancel
+            {t("common.cancel")}
           </Button>
         </div>
       </div>

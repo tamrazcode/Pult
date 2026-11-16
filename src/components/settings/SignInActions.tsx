@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { buildTerminalAuthCommand, detectDefaultAuthShell, splitAuthMethods } from "../../lib/auth";
 import type { AuthShell } from "../../lib/auth";
 import type { AuthMethod } from "../../lib/types";
+import { useT } from "../../lib/i18n";
 
 /**
  * Sign-in actions for a provider that reports Needs sign-in. Agent-managed
@@ -25,6 +26,7 @@ export function SignInActions({
   onSignIn: (methodId: string) => void;
   onRecheck: () => void;
 }) {
+  const t = useT();
   const { agent, terminal } = splitAuthMethods(authMethods);
   const [copied, setCopied] = useState<string | null>(null);
   const [shell, setShell] = useState<AuthShell>(detectDefaultAuthShell);
@@ -45,15 +47,12 @@ export function SignInActions({
   if (agent.length === 0 && terminal.length === 0) {
     return (
       <div className="mt-2 rounded-(--radius-sm) border border-warning/40 bg-warning/5 px-2 py-1.5">
-        <p className="text-xs text-text-secondary">
-          {authHint ??
-            "This agent needs a sign-in pult cannot run for it. Sign in with its CLI, then re-check."}
-        </p>
+        <p className="text-xs text-text-secondary">{authHint ?? t("settings.signIn.noMethods")}</p>
         <button
           onClick={onRecheck}
           className="mt-1 flex h-6 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
         >
-          Re-check
+          {t("settings.signIn.recheck")}
         </button>
       </div>
     );
@@ -69,10 +68,14 @@ export function SignInActions({
             onClick={() => onSignIn(method.id ?? "")}
             className="flex h-6 items-center rounded-(--radius-sm) bg-accent px-2 text-xs font-medium text-accent-fg transition hover:brightness-110 disabled:opacity-50"
           >
-            {signingIn ? "Signing in…" : `Sign in${method.name ? `: ${method.name}` : ""}`}
+            {signingIn
+              ? t("settings.providers.signingIn")
+              : method.name
+                ? t("settings.signIn.signInWith", { name: method.name })
+                : t("settings.signIn.signIn")}
           </button>
           {authAttempted && !signingIn && (
-            <span className="text-xs text-warning">Still needs sign-in</span>
+            <span className="text-xs text-warning">{t("settings.providers.stillNeedsSignIn")}</span>
           )}
         </div>
       ))}
@@ -81,7 +84,9 @@ export function SignInActions({
         return (
           <div key={method.id ?? ""} className="space-y-1">
             <p className="text-xs text-text-secondary">
-              {method.name ?? "Terminal sign-in"} runs outside pult. Copy and run:
+              {t("settings.signIn.runsOutside", {
+                name: method.name ?? t("settings.signIn.terminalTitle"),
+              })}
             </p>
             <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-1.5 font-mono text-[13px] text-text-primary">
               {command}
@@ -91,10 +96,10 @@ export function SignInActions({
                 onClick={() => copy(command)}
                 className="flex h-6 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
               >
-                {copied === command ? "Copied" : "Copy command"}
+                {copied === command ? t("common.copied") : t("settings.signIn.copyCommand")}
               </button>
               <select
-                aria-label="Terminal shell"
+                aria-label={t("settings.signIn.shell")}
                 value={shell}
                 onChange={(event) => setShell(event.target.value as AuthShell)}
                 className="h-6 rounded-(--radius-sm) border border-border-subtle bg-surface px-1 text-xs text-text-secondary focus:outline-none"
@@ -106,7 +111,7 @@ export function SignInActions({
                 onClick={onRecheck}
                 className="flex h-6 items-center rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
               >
-                Re-check
+                {t("settings.signIn.recheck")}
               </button>
             </div>
           </div>

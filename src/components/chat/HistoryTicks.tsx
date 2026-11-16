@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useT } from "../../lib/i18n";
 
 export interface HistoryTick {
   key: string;
@@ -19,12 +20,13 @@ export function HistoryTicks({
   activeKey: string | null;
   onJump: (tick: HistoryTick) => void;
 }) {
+  const t = useT();
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   if (ticks.length === 0) return null;
   const preview = ticks.find((tick) => tick.key === previewKey);
   return (
     <nav
-      aria-label="Message history"
+      aria-label={t("chat.history.label")}
       className="pointer-events-none absolute top-1/2 right-4 z-10 -translate-y-1/2"
     >
       {preview && (

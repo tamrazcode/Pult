@@ -20,6 +20,7 @@ import type { HighlighterCore } from "shiki/core";
 import { Check, Copy } from "lucide-react";
 import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
 import { activeWorkspaceRoot } from "../../lib/activeWorkspace";
+import { useT } from "../../lib/i18n";
 import { classifyMarkdownHref } from "../../lib/links";
 import { isTauri } from "../../lib/tauri";
 import { useUiStore } from "../../stores/ui";
@@ -181,6 +182,7 @@ function extractCode(children: ReactNode): { code: string; lang?: string } {
 }
 
 function CopyButton({ text }: { text: string }) {
+  const t = useT();
   const [copied, setCopied] = useState(false);
   const resetTimer = useRef<number | undefined>(undefined);
 
@@ -202,7 +204,12 @@ function CopyButton({ text }: { text: string }) {
   };
 
   return (
-    <button type="button" className="md-code-copy" onClick={handleCopy} aria-label="Copy code">
+    <button
+      type="button"
+      className="md-code-copy"
+      onClick={handleCopy}
+      aria-label={t("chat.copyCode")}
+    >
       {copied ? <Check size={13} aria-hidden /> : <Copy size={13} aria-hidden />}
     </button>
   );
@@ -291,6 +298,7 @@ function fileUrlToPath(src: string): string {
 }
 
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
+  const t = useT();
   const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
@@ -316,7 +324,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     return (
       <button
         type="button"
-        aria-label="Open image"
+        aria-label={t("chat.openImage")}
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -336,17 +344,17 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   if (failed) {
     return (
       <span title={src} className="text-sm text-text-tertiary">
-        Image unavailable: {alt || src}
+        {t("chat.imageUnavailable", { name: alt || src })}
       </span>
     );
   }
   if (!dataUrl) {
-    return <span className="text-sm text-text-tertiary">Loading image…</span>;
+    return <span className="text-sm text-text-tertiary">{t("common.loading")}</span>;
   }
   return (
     <button
       type="button"
-      aria-label="Open image"
+      aria-label={t("chat.openImage")}
       title={alt || src}
       onClick={(event) => {
         event.preventDefault();

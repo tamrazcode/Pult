@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { useT } from "../../lib/i18n";
 
 export interface ContextMenuItem {
   id: string;
@@ -31,6 +32,7 @@ export function ContextMenu({
   items: Array<ContextMenuItem | "separator">;
   onClose: () => void;
 }) {
+  const t = useT();
   const menuRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const previousFocus = useRef<HTMLElement | null>(null);
@@ -127,7 +129,7 @@ export function ContextMenu({
       ref={menuRef}
       role="menu"
       data-escape-layer
-      aria-label="Context menu"
+      aria-label={t("common.contextMenu")}
       onContextMenu={(event) => event.preventDefault()}
       onKeyDown={(event) => {
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {

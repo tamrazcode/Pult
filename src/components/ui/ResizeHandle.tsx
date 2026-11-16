@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
 import type { KeyboardEvent, PointerEvent } from "react";
+import { useT } from "../../lib/i18n";
 
 interface Props {
   /** Current panel width in px. */
@@ -22,6 +23,7 @@ const KEY_STEP = 24;
  * without a mouse. The handle is invisible until hovered or focused.
  */
 export function ResizeHandle({ value, min, max, side, onResize, onCommit, label }: Props) {
+  const t = useT();
   const [dragging, setDragging] = useState(false);
   const lastX = useRef<number | null>(null);
 
@@ -92,7 +94,7 @@ export function ResizeHandle({ value, min, max, side, onResize, onCommit, label 
       className={`group relative z-30 w-1 shrink-0 cursor-col-resize bg-transparent transition-colors duration-150 hover:bg-accent/40 focus-visible:bg-accent/60 focus-visible:outline-none ${
         dragging ? "bg-accent/60" : ""
       }`}
-      title="Drag to resize"
+      title={t("common.dragToResize")}
     />
   );
 }

@@ -3,6 +3,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { EDITORS, getEditorMeta, type EditorId } from "../../lib/editors";
 import { useSettingsStore } from "../../stores/settings";
 import { EditorLogo } from "./EditorLogo";
+import { useT } from "../../lib/i18n";
 
 /**
  * Editor choice shared by the Files toolbar and the project card.
@@ -17,6 +18,7 @@ export function EditorSplitButton({
   variant?: "compact" | "card";
   className?: string;
 }): ReactElement {
+  const t = useT();
   const preferred = useSettingsStore((s) => s.preferredEditor);
   const setPreferred = useSettingsStore((s) => s.setPreferredEditor);
   const [open, setOpen] = useState(false);
@@ -65,10 +67,10 @@ export function EditorSplitButton({
       </button>
       <button
         type="button"
-        aria-label="Choose editor"
+        aria-label={t("common.chooseEditor")}
         aria-haspopup="menu"
         aria-expanded={open}
-        title="Choose editor"
+        title={t("common.chooseEditor")}
         onClick={() => setOpen((value) => !value)}
         className={
           compact
@@ -81,7 +83,7 @@ export function EditorSplitButton({
       {open && (
         <div
           role="menu"
-          aria-label="Editor"
+          aria-label={t("common.editor")}
           className={`absolute top-full z-40 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer) ${
             compact ? "right-0" : "left-0"
           }`}

@@ -89,27 +89,28 @@ export function ErrorBanner() {
  * designed card with reload + escape hatches, never a blank pane.
  */
 export function RouteErrorCard({ error, reset }: { error?: Error; reset: () => void }) {
+  const t = useT();
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-8">
       <div className="w-full max-w-md rounded-(--radius-md) border border-border-strong bg-surface p-5">
         <p className="text-sm font-semibold tracking-wider text-danger uppercase">
-          Something went wrong
+          {t("errorBanner.somethingWrong")}
         </p>
         <pre className="mt-2 max-h-40 overflow-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs whitespace-pre-wrap text-text-secondary">
-          {error?.message ?? "The view crashed while rendering."}
+          {error?.message ?? t("errorBanner.viewCrashed")}
         </pre>
         <div className="mt-3 flex gap-2">
           <button
             onClick={reset}
             className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover"
           >
-            <RotateCcw size={12} /> Reload view
+            <RotateCcw size={12} /> {t("errorBanner.reloadView")}
           </button>
           <Link
             to="/chat"
             className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover"
           >
-            Back to chat
+            {t("errorBanner.backToChat")}
           </Link>
         </div>
       </div>

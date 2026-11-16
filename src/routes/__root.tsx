@@ -20,6 +20,7 @@ import { activeWorkspaceRoot } from "../lib/activeWorkspace";
 import { classifyMarkdownHref } from "../lib/links";
 import { preflightInstances } from "../lib/providerChecks";
 import { isTauri } from "../lib/tauri";
+import { useT } from "../lib/i18n";
 import { useRunsStore } from "../stores/runs";
 import { useProjectsStore } from "../stores/projects";
 import { useSettingsStore } from "../stores/settings";
@@ -37,6 +38,7 @@ export const Route = createRootRoute({
 });
 
 function RootLayout() {
+  const t = useT();
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const sidebarWidth = useUiStore((s) => s.sidebarWidth);
   const setSidebarWidth = useUiStore((s) => s.setSidebarWidth);
@@ -143,7 +145,7 @@ function RootLayout() {
       items.push(
         {
           id: "cut",
-          label: "Cut",
+          label: t("common.cut"),
           shortcut: `${mod}X`,
           disabled: !hasSelection || field.readOnly,
           onSelect: () => {
@@ -153,7 +155,7 @@ function RootLayout() {
         },
         {
           id: "copy",
-          label: "Copy",
+          label: t("common.copy"),
           shortcut: `${mod}C`,
           disabled: !hasSelection,
           onSelect: () => {
@@ -163,7 +165,7 @@ function RootLayout() {
         },
         {
           id: "paste",
-          label: "Paste",
+          label: t("common.paste"),
           shortcut: `${mod}V`,
           disabled: field.readOnly,
           onSelect: () => {
@@ -178,7 +180,7 @@ function RootLayout() {
         },
         {
           id: "select-all",
-          label: "Select All",
+          label: t("common.selectAll"),
           shortcut: `${mod}A`,
           onSelect: () => {
             field.focus();
@@ -198,12 +200,12 @@ function RootLayout() {
         items.push(
           {
             id: "open-browser",
-            label: "Open in browser",
+            label: t("common.openInBrowser"),
             onSelect: () => void openExternalUrl(classified.url).catch(fail),
           },
           {
             id: "copy-link",
-            label: "Copy link",
+            label: t("common.copyLink"),
             onSelect: () =>
               void navigator.clipboard.writeText(classified.url).catch(() => undefined),
           },
@@ -212,19 +214,19 @@ function RootLayout() {
         if (/\.html?$/i.test(classified.relativePath)) {
           items.push({
             id: "open-browser",
-            label: "Open in browser",
+            label: t("common.openInBrowser"),
             onSelect: () => useUiStore.getState().openInBrowserPanel(classified.relativePath),
           });
         }
         items.push(
           {
             id: "reveal",
-            label: "Reveal in File Explorer",
+            label: t("common.revealInExplorer"),
             onSelect: () => void openInEditor(classified.fullPath, "explorer").catch(fail),
           },
           {
             id: "open-editor",
-            label: "Open in editor",
+            label: t("common.openInEditor"),
             onSelect: () =>
               void openInEditor(
                 classified.fullPath,
@@ -233,7 +235,7 @@ function RootLayout() {
           },
           {
             id: "copy-path",
-            label: "Copy path",
+            label: t("common.copyPath"),
             onSelect: () =>
               void navigator.clipboard.writeText(classified.fullPath).catch(() => undefined),
           },
@@ -241,7 +243,7 @@ function RootLayout() {
       } else if (selection) {
         items.push({
           id: "copy-selection",
-          label: "Copy",
+          label: t("common.copy"),
           shortcut: `${mod}C`,
           onSelect: () => void navigator.clipboard.writeText(selection).catch(() => undefined),
         });
@@ -265,7 +267,7 @@ function RootLayout() {
           <>
             <Sidebar width={sidebarWidth} />
             <ResizeHandle
-              label="Sidebar width"
+              label={t("common.sidebarWidth")}
               value={sidebarWidth}
               min={220}
               max={480}
@@ -281,7 +283,7 @@ function RootLayout() {
         {rightPanelOpen && (
           <>
             <ResizeHandle
-              label="Right panel width"
+              label={t("common.rightPanelWidth")}
               value={rightPanelWidth}
               min={300}
               max={720}

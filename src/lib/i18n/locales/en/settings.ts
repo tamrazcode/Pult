@@ -176,4 +176,18 @@ export const settings = {
   "settings.diagnostics.configOptions": "{{count}} config options",
   "settings.diagnostics.processLog": "Process log",
   "settings.diagnostics.lastFrames": "Last raw frames",
+  "settings.connect.connecting": "Connecting…",
+  "settings.connect.connected": "Connected",
+  "settings.connect.added": "Added",
+  "settings.connect.connect": "Connect",
+  "settings.connect.title": "Connect {{name}} ({{command}})",
+  "settings.signIn.recheck": "Re-check",
+  "settings.signIn.shell": "Terminal shell",
+  "settings.signIn.copyCommand": "Copy command",
+  "settings.signIn.terminalTitle": "Terminal sign-in",
+  "settings.signIn.runsOutside": "{{name}} runs outside Pult. Copy and run:",
+  "settings.signIn.signIn": "Sign in",
+  "settings.signIn.signInWith": "Sign in: {{name}}",
+  "settings.signIn.noMethods":
+    "This agent needs a sign-in Pult cannot run for it. Sign in with its CLI, then re-check.",
 } as const;

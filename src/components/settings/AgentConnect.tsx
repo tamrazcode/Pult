@@ -11,6 +11,7 @@ import {
 import { useUiStore } from "../../stores/ui";
 import type { DetectedAgent, PreflightReport } from "../../lib/types";
 import { SignInActions } from "./SignInActions";
+import { useT } from "../../lib/i18n";
 
 /** Appends a detected agent as an instance without touching the others. */
 export async function addDetectedAgent(agent: DetectedAgent): Promise<void> {
@@ -67,6 +68,7 @@ export function ConnectRow({
   const [state, setState] = useState<ConnectState>({ kind: "idle" });
   const [signingIn, setSigningIn] = useState(false);
   const [authAttempted, setAuthAttempted] = useState(false);
+  const t = useT();
   const [authError, setAuthError] = useState<string | null>(null);
 
   const connect = async () => {
@@ -122,23 +124,26 @@ export function ConnectRow({
       case "working":
         return (
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-text-secondary">
-            <Loader2 size={12} className="animate-spin" /> Connecting…
+            <Loader2 size={12} className="animate-spin" /> {t("settings.connect.connecting")}
           </span>
         );
       case "connected":
         return (
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-success">
             <Check size={12} />
-            Connected
+            {t("settings.connect.connected")}
             {state.report.agentVersion ? ` · ${state.report.agentVersion}` : ""}
-            {state.report.loadSession ? " · resume ✓" : ""}
-            {state.report.promptImage ? " · images ✓" : ""}
+            {state.report.loadSession ? ` · ${t("settings.providers.capResume")} ✓` : ""}
+            {state.report.promptImage ? ` · ${t("settings.providers.capImages")} ✓` : ""}
           </span>
         );
       case "needs_auth":
         return (
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-warning">
-            <ShieldAlert size={12} /> {authAttempted ? "Still needs sign-in" : "Needs sign-in"}
+            <ShieldAlert size={12} />{" "}
+            {authAttempted
+              ? t("settings.providers.stillNeedsSignIn")
+              : t("settings.providers.needsSignIn")}
           </span>
         );
       case "error":
@@ -168,7 +173,7 @@ export function ConnectRow({
         {status()}
         {alreadyAdded ? (
           <span className="flex shrink-0 items-center gap-1 text-xs text-success">
-            <Check size={12} /> Added
+            <Check size={12} /> {t("settings.connect.added")}
           </span>
         ) : (
           <button
@@ -176,12 +181,15 @@ export function ConnectRow({
             disabled={state.kind === "working" || !agent.suggestedCommand}
             title={
               agent.suggestedCommand
-                ? `Connect ${agent.displayName} (${agent.suggestedCommand.join(" ")})`
+                ? t("settings.connect.title", {
+                    name: agent.displayName,
+                    command: agent.suggestedCommand.join(" "),
+                  })
                 : agent.notes
             }
             className="flex h-7 shrink-0 items-center gap-1 rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110 disabled:opacity-40"
           >
-            Connect
+            {t("settings.connect.connect")}
           </button>
         )}
       </div>
