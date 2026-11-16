@@ -17,6 +17,8 @@ import { useTerminalsStore } from "../stores/terminals";
 import { useThreadsStore } from "../stores/threads";
 import { useUiStore } from "../stores/ui";
 import type { AppEvent } from "./types";
+import { translate } from "./i18n";
+import { notifyRunFinished } from "./notifications";
 
 let unlisten: (() => void)[] | null = null;
 
@@ -42,6 +44,19 @@ function afterRunEvents(runId: string, events: AppEvent[]): void {
       if (threadId && useThreadsStore.getState().activeThreadId !== threadId) {
         useThreadsStore.getState().markUnread(threadId, true);
       }
+      const thread = useThreadsStore.getState().threads.find((item) => item.id === threadId);
+      const title = thread?.title || translate("sidebar.untitled");
+      const kind =
+        event.payload.stopReason === "failed" || event.payload.error
+          ? "error"
+          : event.payload.stopReason === "cancelled"
+            ? "cancelled"
+            : "done";
+      notifyRunFinished(
+        kind,
+        translate(`notifications.${kind}Title`),
+        translate(`notifications.${kind}Body`, { title }),
+      );
     }
   }
   // Diff panel freshness: every write re-projects the git diff (debounced).

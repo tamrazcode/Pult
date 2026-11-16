@@ -1652,17 +1652,18 @@ fn updater_for(
 ) -> Result<tauri_plugin_updater::Updater, PultError> {
     use tauri_plugin_updater::UpdaterExt;
 
-    let mut builder = app.updater_builder();
-    if let Ok(endpoint) = std::env::var("PULT_UPDATE_ENDPOINT") {
-        let endpoint = endpoint.trim();
-        if !endpoint.is_empty() {
-            let url = endpoint
-                .parse()
-                .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
-            builder = builder
-                .endpoints(vec![url])
-                .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
-        }
+    let builder = app.updater_builder();
+    let override_endpoint = std::env::var("PULT_UPDATE_ENDPOINT")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    if let Some(endpoint) = override_endpoint.take() {
+        let url = endpoint
+            .parse()
+            .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
+        builder = builder
+            .endpoints(vec![url])
+            .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;
     } else if let Ok(config) = serde_json::to_value(&app.config().plugins) {
         let endpoint = config
             .get("updater")
@@ -1735,6 +1736,17 @@ pub async fn app_update_install(app: tauri::AppHandle) -> Result<(), PultError> 
 
 /// Reads a local raster image the agent referenced and returns a data URL.
 /// Capped and restricted to common raster formats; remote URLs are not fetched.
+#[tauri::command]
+pub fn app_notify(app: tauri::AppHandle, title: String, body: String) -> Result<(), PultError> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .show()
+        .map_err(|e| PultError::internal(format!("notification failed: {e}")))
+}
+
 #[tauri::command]
 pub async fn read_image_data_url(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,

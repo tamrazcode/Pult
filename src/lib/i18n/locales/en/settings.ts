@@ -190,4 +190,9 @@ export const settings = {
   "settings.signIn.signInWith": "Sign in: {{name}}",
   "settings.signIn.noMethods":
     "This agent needs a sign-in Pult cannot run for it. Sign in with its CLI, then re-check.",
+  "settings.chat.notifications": "Notifications",
+  "settings.chat.notificationsDesc":
+    "Show a system notification when a run finishes while Pult is in the background.",
+  "settings.chat.notificationSound": "Notification sound",
+  "settings.chat.notificationSoundDesc": "Play a soft chime with those notifications.",
 } as const;

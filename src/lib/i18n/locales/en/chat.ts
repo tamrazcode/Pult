@@ -102,4 +102,10 @@ export const chat = {
   "chat.action.moreLines.one": "+{{count}} more line",
   "chat.action.moreLines.other": "+{{count}} more lines",
   "chat.action.withDuration": "{{action}} · {{duration}}",
+  "notifications.doneTitle": "Agent finished",
+  "notifications.errorTitle": "Agent needs attention",
+  "notifications.cancelledTitle": "Run cancelled",
+  "notifications.doneBody": "{{title}} is ready for you.",
+  "notifications.errorBody": "{{title}} stopped with an error.",
+  "notifications.cancelledBody": "{{title}} was stopped.",
 } as const;

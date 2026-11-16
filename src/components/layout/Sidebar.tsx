@@ -36,6 +36,7 @@ import { useSettingsStore } from "../../stores/settings";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import type { Project, Thread, WorktreeDirtyStatus } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
+import { ThinkingAscii } from "../chat/MessagesTimeline";
 import { ContextMenu, type ContextMenuItem } from "../ui/ContextMenu";
 import { Tooltip } from "../ui/Tooltip";
 import { projectInitials, projectMonogram } from "../../lib/projectColor";
@@ -145,9 +146,20 @@ function ThreadRow({
             />
           ) : null}
           <FadeText text={thread.title || t("sidebar.untitled")} className="min-w-0" />
-          <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
-            {relativeTime(thread.updatedAt)}
-          </span>
+          {working ? (
+            <span className="ml-auto flex w-8 shrink-0 justify-end">
+              <ThinkingAscii />
+            </span>
+          ) : unread ? (
+            <span
+              aria-label={t("sidebar.unreadThread")}
+              className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
+            />
+          ) : (
+            <span className="tnum ml-auto shrink-0 text-xs text-text-tertiary">
+              {relativeTime(thread.updatedAt)}
+            </span>
+          )}
         </a>
       )}
       <button
@@ -311,16 +323,21 @@ export function Sidebar({ width }: { width: number }) {
   useEffect(() => {
     if (!isTauri()) return;
     let unlisten: (() => void) | null = null;
+    let cancelled = false;
     void onAppUpdateProgress((payload) => {
       setUpdateProgress({ downloaded: payload.downloaded, total: payload.total });
     })
       .then((off) => {
-        unlisten = off;
+        if (cancelled) off();
+        else unlisten = off;
       })
       .catch(() => {
         // Event bridge unavailable in plain-browser/test environments.
       });
-    return () => unlisten?.();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   useEffect(() => {
@@ -428,10 +445,18 @@ export function Sidebar({ width }: { width: number }) {
     setUpdateState("installing");
     setUpdateProgress({ downloaded: 0, total: null });
     setUpdateError(null);
-    void appUpdateInstall().catch((err) => {
-      setUpdateState("error");
-      setUpdateError(localizeIpcError(err));
-    });
+    void appUpdateInstall()
+      .then(() => {
+        // The app restarts on success; reaching this means the release vanished
+        // between the check and the install.
+        setAppUpdate(null);
+        setUpdateState("idle");
+        setUpdateNotice(t("sidebar.upToDate"));
+      })
+      .catch((err) => {
+        setUpdateState("error");
+        setUpdateError(localizeIpcError(err));
+      });
   };
 
   const onUpdateButton = () => {

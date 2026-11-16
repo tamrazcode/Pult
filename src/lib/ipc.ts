@@ -111,6 +111,11 @@ export function onAppUpdateProgress(
   return listenOrNoop<{ downloaded: number; total: number | null }>("app:updateProgress", handler);
 }
 
+/** Native OS notification (Windows toast / macOS / Linux). */
+export function appNotify(title: string, body: string): Promise<void> {
+  return invokeRequired<void>("app_notify", { title, body });
+}
+
 // ---- threads ----
 
 /**

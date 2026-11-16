@@ -114,13 +114,6 @@ export function LivingAscii() {
       draw(now);
     };
 
-    resize();
-    if (reduced) {
-      draw(performance.now());
-      return;
-    }
-    frame = requestAnimationFrame(loop);
-
     const onPointer = (event: PointerEvent) => {
       const rect = wrap.getBoundingClientRect();
       const x = event.clientX - rect.left;
@@ -163,17 +156,31 @@ export function LivingAscii() {
       }
     };
 
-    const observer = new ResizeObserver(resize);
+    resize();
+
+    const observer = new ResizeObserver(() => {
+      resize();
+      if (reduced) draw(performance.now());
+    });
     observer.observe(wrap);
-    window.addEventListener("pointermove", onPointer, { passive: true });
-    wrap.addEventListener("pointerleave", onLeave);
-    wrap.addEventListener("click", onClick);
-    document.addEventListener("visibilitychange", onVisibility);
-    const themeObserver = new MutationObserver(readAccent);
+    const themeObserver = new MutationObserver(() => {
+      readAccent();
+      if (reduced) draw(performance.now());
+    });
     themeObserver.observe(document.documentElement, {
       attributes: true,
       attributeFilter: ["data-theme"],
     });
+
+    if (reduced) {
+      draw(performance.now());
+    } else {
+      frame = requestAnimationFrame(loop);
+      window.addEventListener("pointermove", onPointer, { passive: true });
+      wrap.addEventListener("pointerleave", onLeave);
+      wrap.addEventListener("click", onClick);
+      document.addEventListener("visibilitychange", onVisibility);
+    }
 
     return () => {
       stopped = true;

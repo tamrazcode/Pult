@@ -147,6 +147,7 @@ pub fn run() {
             app_version,
             ipc::app_update_check,
             ipc::app_update_install,
+            ipc::app_notify,
             ipc::threads_create,
             ipc::threads_list,
             ipc::projects_list,

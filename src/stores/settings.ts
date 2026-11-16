@@ -40,6 +40,10 @@ interface SettingsState {
   sendKey: "enter" | "mod-enter";
   /** Show message hover timestamps. */
   showTimestamps: boolean;
+  /** Native notifications when a run finishes while Pult is in the background. */
+  notificationsEnabled: boolean;
+  /** Play a soft chime with those notifications. */
+  notificationSound: boolean;
   /** Keep the transcript pinned to streaming output. */
   followStreaming: boolean;
   /** Composer glass tint opacity (0–100). */
@@ -58,6 +62,8 @@ interface SettingsState {
   setConfirmDeleteThread: (value: boolean) => void;
   setSendKey: (value: "enter" | "mod-enter") => void;
   setShowTimestamps: (value: boolean) => void;
+  setNotificationsEnabled: (value: boolean) => void;
+  setNotificationSound: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
   setGlassOpacity: (value: number) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
@@ -79,6 +85,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   confirmDeleteThread: true,
   sendKey: "enter",
   showTimestamps: true,
+  notificationsEnabled: true,
+  notificationSound: true,
   followStreaming: true,
   glassOpacity: 100,
   diffViewMode: "unified",
@@ -115,6 +123,16 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setShowTimestamps: (showTimestamps) => {
     set({ showTimestamps });
     if (isTauri()) void settingsSet("show_timestamps", showTimestamps).catch(() => {});
+  },
+  setNotificationsEnabled: (notificationsEnabled) => {
+    set({ notificationsEnabled });
+    if (isTauri()) {
+      void settingsSet("notifications_enabled", notificationsEnabled).catch(() => {});
+    }
+  },
+  setNotificationSound: (notificationSound) => {
+    set({ notificationSound });
+    if (isTauri()) void settingsSet("notification_sound", notificationSound).catch(() => {});
   },
   setFollowStreaming: (followStreaming) => {
     set({ followStreaming });
@@ -163,6 +181,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       confirmDelete,
       sendKey,
       showTimestamps,
+      notificationsEnabled,
+      notificationSound,
       followStreaming,
       diffViewMode,
       preferredEditor,
@@ -177,6 +197,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("confirm_delete_thread").catch(() => null),
       settingsGet("send_key").catch(() => null),
       settingsGet("show_timestamps").catch(() => null),
+      settingsGet("notifications_enabled").catch(() => null),
+      settingsGet("notification_sound").catch(() => null),
       settingsGet("follow_streaming").catch(() => null),
       settingsGet("diff_view_mode").catch(() => null),
       settingsGet("preferred_editor").catch(() => null),
@@ -203,6 +225,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       confirmDeleteThread: confirmDelete !== false,
       sendKey: sendKey === "mod-enter" ? "mod-enter" : "enter",
       showTimestamps: showTimestamps !== false,
+      notificationsEnabled: notificationsEnabled !== false,
+      notificationSound: notificationSound !== false,
       followStreaming: followStreaming !== false,
       diffViewMode: diffViewMode === "split" ? "split" : "unified",
       preferredEditor: isEditorId(preferredEditor) ? preferredEditor : "zed",

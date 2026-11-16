@@ -12,6 +12,10 @@ function ChatSettings() {
   const setFollowStreaming = useSettingsStore((s) => s.setFollowStreaming);
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
   const setShowTimestamps = useSettingsStore((s) => s.setShowTimestamps);
+  const notificationsEnabled = useSettingsStore((s) => s.notificationsEnabled);
+  const setNotificationsEnabled = useSettingsStore((s) => s.setNotificationsEnabled);
+  const notificationSound = useSettingsStore((s) => s.notificationSound);
+  const setNotificationSound = useSettingsStore((s) => s.setNotificationSound);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -87,6 +91,54 @@ function ChatSettings() {
             <span
               className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white transition-all ${
                 showTimestamps ? "left-[18px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </div>
+        <div className="flex items-center gap-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-text-primary">{t("settings.chat.notifications")}</p>
+            <p className="mt-0.5 text-xs text-text-tertiary">
+              {t("settings.chat.notificationsDesc")}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notificationsEnabled}
+            aria-label={t("settings.chat.notifications")}
+            onClick={() => setNotificationsEnabled(!notificationsEnabled)}
+            className={`relative h-5 w-9 shrink-0 rounded-full border transition ${
+              notificationsEnabled ? "border-accent bg-accent" : "border-border-strong bg-surface"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white transition-all ${
+                notificationsEnabled ? "left-[18px]" : "left-0.5"
+              }`}
+            />
+          </button>
+        </div>
+        <div className="flex items-center gap-4 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm text-text-primary">{t("settings.chat.notificationSound")}</p>
+            <p className="mt-0.5 text-xs text-text-tertiary">
+              {t("settings.chat.notificationSoundDesc")}
+            </p>
+          </div>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={notificationSound}
+            aria-label={t("settings.chat.notificationSound")}
+            onClick={() => setNotificationSound(!notificationSound)}
+            className={`relative h-5 w-9 shrink-0 rounded-full border transition ${
+              notificationSound ? "border-accent bg-accent" : "border-border-strong bg-surface"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 h-3.5 w-3.5 rounded-full bg-white transition-all ${
+                notificationSound ? "left-[18px]" : "left-0.5"
               }`}
             />
           </button>

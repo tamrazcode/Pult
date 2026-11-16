@@ -66,6 +66,32 @@ export function RightPanel({ width }: { width: number }) {
     useUiStore.setState({ filePreview: null });
   }, [activeThreadId]);
 
+  useEffect(() => {
+    if (tab !== "none") return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const key = event.key.toUpperCase();
+      const match = (Object.entries(SHORTCUTS) as Array<[RightPanelTab, string]>).find(
+        ([id, shortcut]) => id !== "none" && shortcut === key,
+      );
+      if (!match) return;
+      event.preventDefault();
+      setTab(match[0]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [tab, setTab]);
+
   return (
     <aside
       style={{ width }}
