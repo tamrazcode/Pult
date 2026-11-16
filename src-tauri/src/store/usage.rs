@@ -33,6 +33,9 @@ pub struct RunUsageRecord {
     pub run_id: String,
     pub thread_id: String,
     pub thread_title: String,
+    /// Root/coordinator thread for app-owned subagent runs.
+    pub parent_thread_id: Option<String>,
+    pub parent_thread_title: Option<String>,
     pub run_idx: i64,
     pub status: String,
     pub instance_id: String,
@@ -113,11 +116,13 @@ impl Store {
                 .map_err(|e| sql("usage_report count runs", e))?;
             let mut stmt = conn
                 .prepare(
-                    "SELECT e.run_id, r.thread_id, t.title, r.idx, r.status, r.instance_id,
+                    "SELECT e.run_id, r.thread_id, t.title, t.parent_thread_id, pt.title,
+                            r.idx, r.status, r.instance_id,
                             r.model, r.started_at, r.stopped_at, e.seq, e.ts, e.payload
                      FROM events AS e
                      JOIN runs AS r ON r.id = e.run_id
                      JOIN threads AS t ON t.id = r.thread_id
+                     LEFT JOIN threads AS pt ON pt.id = t.parent_thread_id
                      WHERE e.kind = 'usage'
                      ORDER BY e.run_id ASC, e.seq ASC",
                 )
@@ -128,15 +133,17 @@ impl Store {
                         row.get::<_, String>(0)?,
                         row.get::<_, String>(1)?,
                         row.get::<_, String>(2)?,
-                        row.get::<_, i64>(3)?,
-                        row.get::<_, String>(4)?,
-                        row.get::<_, String>(5)?,
-                        row.get::<_, Option<String>>(6)?,
-                        row.get::<_, i64>(7)?,
-                        row.get::<_, Option<i64>>(8)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<String>>(4)?,
+                        row.get::<_, i64>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                        row.get::<_, Option<String>>(8)?,
                         row.get::<_, i64>(9)?,
-                        row.get::<_, i64>(10)?,
-                        row.get::<_, String>(11)?,
+                        row.get::<_, Option<i64>>(10)?,
+                        row.get::<_, i64>(11)?,
+                        row.get::<_, i64>(12)?,
+                        row.get::<_, String>(13)?,
                     ))
                 })
                 .map_err(|e| sql("usage_report query", e))?;
@@ -148,6 +155,8 @@ impl Store {
                     run_id,
                     thread_id,
                     thread_title,
+                    parent_thread_id,
+                    parent_thread_title,
                     run_idx,
                     status,
                     instance_id,
@@ -168,6 +177,8 @@ impl Store {
                         run_id,
                         thread_id,
                         thread_title,
+                        parent_thread_id,
+                        parent_thread_title,
                         run_idx,
                         status,
                         instance_id,
@@ -199,7 +210,12 @@ impl Store {
             let mut by_thread: Vec<ThreadUsageSummary> = threads
                 .into_values()
                 .map(|mut group| {
-                    group.sort_by_key(|r| (std::cmp::Reverse(r.started_at), std::cmp::Reverse(r.run_idx)));
+                    group.sort_by_key(|r| {
+                        (
+                            std::cmp::Reverse(r.started_at),
+                            std::cmp::Reverse(r.run_idx),
+                        )
+                    });
                     let latest = group[0];
                     let latest_cost = group
                         .iter()
@@ -342,8 +358,8 @@ mod tests {
             })
         );
 
-        let no_cost = parse_usage_detail(r#"{"detail":{"used":5,"size":10,"cost":null}}"#)
-            .expect("no cost");
+        let no_cost =
+            parse_usage_detail(r#"{"detail":{"used":5,"size":10,"cost":null}}"#).expect("no cost");
         assert_eq!(no_cost.cost, None);
 
         for bad in [
@@ -375,7 +391,9 @@ mod tests {
         store.create_thread(&thread("th2")).unwrap();
         store.create_run(&run("r1", "th1", 0, "mock", 100)).unwrap();
         store.create_run(&run("r2", "th1", 1, "mock", 300)).unwrap();
-        store.create_run(&run("r3", "th2", 0, "codex", 500)).unwrap();
+        store
+            .create_run(&run("r3", "th2", 0, "codex", 500))
+            .unwrap();
 
         usage(&store, "r1", 1, 10, 12_000, 200_000, 0.05);
         usage(&store, "r1", 2, 20, 50_000, 200_000, 0.12);
@@ -389,13 +407,21 @@ mod tests {
         assert_eq!(latest.used, Some(50_000), "last seq wins, no sum");
         assert_eq!(latest.cost.as_ref().unwrap().amount, 0.12);
 
-        let th1 = report.by_thread.iter().find(|t| t.thread_id == "th1").unwrap();
+        let th1 = report
+            .by_thread
+            .iter()
+            .find(|t| t.thread_id == "th1")
+            .unwrap();
         assert_eq!(th1.runs_with_usage, 1);
         assert_eq!(th1.latest_used, Some(50_000));
         assert_eq!(th1.peak_used, Some(50_000));
         assert_eq!(th1.latest_cost.as_ref().unwrap().amount, 0.12);
 
-        let inst = report.by_instance.iter().find(|i| i.instance_id == "codex").unwrap();
+        let inst = report
+            .by_instance
+            .iter()
+            .find(|i| i.instance_id == "codex")
+            .unwrap();
         assert_eq!(inst.runs_with_usage, 1);
         assert_eq!(inst.median_used, Some(7_500));
     }
@@ -412,6 +438,42 @@ mod tests {
         assert_eq!(value["totalRuns"], 2);
         assert!(value["byThread"].is_array());
         assert!(value["byInstance"].is_array());
+    }
+
+    #[test]
+    fn usage_report_links_subagent_runs_to_the_coordinator() {
+        let store = Store::open_in_memory().unwrap();
+        store.create_thread(&thread("parent")).unwrap();
+        let mut child = thread("child");
+        child.parent_thread_id = Some("parent".to_string());
+        child.depth = 1;
+        store.create_thread(&child).unwrap();
+        store
+            .create_run(&run("r-parent", "parent", 0, "mock", 100))
+            .unwrap();
+        store
+            .create_run(&run("r-child", "child", 0, "codex", 200))
+            .unwrap();
+        usage(&store, "r-parent", 1, 10, 100, 1000, 0.01);
+        usage(&store, "r-child", 1, 20, 200, 2000, 0.02);
+
+        let report = store.usage_report().unwrap();
+        let child_run = report
+            .runs
+            .iter()
+            .find(|run| run.run_id == "r-child")
+            .expect("child usage row");
+        assert_eq!(child_run.parent_thread_id.as_deref(), Some("parent"));
+        assert_eq!(
+            child_run.parent_thread_title.as_deref(),
+            Some("Thread parent")
+        );
+        let parent_run = report
+            .runs
+            .iter()
+            .find(|run| run.run_id == "r-parent")
+            .expect("parent usage row");
+        assert!(parent_run.parent_thread_id.is_none());
     }
 
     #[test]
@@ -439,9 +501,21 @@ mod tests {
                 .unwrap();
         }
         let report = store.usage_report().unwrap();
-        let inst = report.by_instance.iter().find(|i| i.instance_id == "mock").unwrap();
-        assert_eq!(inst.median_used, Some(25_000), "even median of 10k/20k/30k/40k");
-        assert_eq!(inst.latest_cost.as_ref().unwrap().amount, 0.03, "last run that reported cost");
+        let inst = report
+            .by_instance
+            .iter()
+            .find(|i| i.instance_id == "mock")
+            .unwrap();
+        assert_eq!(
+            inst.median_used,
+            Some(25_000),
+            "even median of 10k/20k/30k/40k"
+        );
+        assert_eq!(
+            inst.latest_cost.as_ref().unwrap().amount,
+            0.03,
+            "last run that reported cost"
+        );
         let th = &report.by_thread[0];
         assert_eq!(th.latest_cost.as_ref().unwrap().amount, 0.03);
     }

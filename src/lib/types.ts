@@ -499,6 +499,9 @@ export interface RunUsageRecord {
   runId: string;
   threadId: string;
   threadTitle: string;
+  /** Root/coordinator thread for app-owned subagent runs. */
+  parentThreadId?: string | null;
+  parentThreadTitle?: string | null;
   runIdx: number;
   status: string;
   instanceId: string;

@@ -72,15 +72,28 @@ export function UsagePage() {
     [report, instanceId],
   );
   const threads = useMemo(() => {
-    const grouped = new Map<string, { threadId: string; threadTitle: string; runs: typeof runs }>();
+    const grouped = new Map<
+      string,
+      {
+        threadId: string;
+        threadTitle: string;
+        runs: typeof runs;
+        subagentRuns: number;
+      }
+    >();
     for (const run of runs) {
-      const entry = grouped.get(run.threadId) ?? {
-        threadId: run.threadId,
-        threadTitle: run.threadTitle,
+      // Subagent runs roll up into the coordinator row: costs are not
+      // double-counted because each run appears exactly once.
+      const key = run.parentThreadId ?? run.threadId;
+      const entry = grouped.get(key) ?? {
+        threadId: key,
+        threadTitle: run.parentThreadTitle ?? run.threadTitle,
         runs: [],
+        subagentRuns: 0,
       };
+      if (run.parentThreadId) entry.subagentRuns += 1;
       entry.runs.push(run);
-      grouped.set(run.threadId, entry);
+      grouped.set(key, entry);
     }
     return [...grouped.values()]
       .map((entry) => {
@@ -94,6 +107,7 @@ export function UsagePage() {
         return {
           threadId: entry.threadId,
           threadTitle: entry.threadTitle,
+          subagentRuns: entry.subagentRuns,
           runsWithUsage: entry.runs.length,
           latestUsed: latest.used ?? null,
           latestSize: latest.size ?? null,
@@ -290,6 +304,11 @@ export function UsagePage() {
                         >
                           <td className="max-w-[280px] truncate px-3 py-2 text-text-secondary">
                             {thread.threadTitle}
+                            {thread.subagentRuns > 0 && (
+                              <span className="ml-2 rounded-full bg-active px-1.5 py-0.5 text-xs text-text-tertiary">
+                                +{thread.subagentRuns} subagent
+                              </span>
+                            )}
                           </td>
                           <td className="px-3 py-2 text-text-tertiary">{thread.runsWithUsage}</td>
                           <td className="px-3 py-2 text-text-secondary">
