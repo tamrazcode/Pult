@@ -12,6 +12,8 @@ interface Props {
   onResize: (width: number) => void;
   /** Fired on pointer-up / keyboard change — the moment to persist. */
   onCommit: (width: number) => void;
+  /** Tells the shell to disable the open/close width transition mid-drag. */
+  onDragChange?: (dragging: boolean) => void;
   label: string;
 }
 
@@ -22,7 +24,16 @@ const KEY_STEP = 24;
  * keyboard path (focus + Left/Right, Home/End) so the layout is adjustable
  * without a mouse. The handle is invisible until hovered or focused.
  */
-export function ResizeHandle({ value, min, max, side, onResize, onCommit, label }: Props) {
+export function ResizeHandle({
+  value,
+  min,
+  max,
+  side,
+  onResize,
+  onCommit,
+  onDragChange,
+  label,
+}: Props) {
   const t = useT();
   const [dragging, setDragging] = useState(false);
   const lastX = useRef<number | null>(null);
@@ -37,6 +48,7 @@ export function ResizeHandle({ value, min, max, side, onResize, onCommit, label 
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     lastX.current = e.clientX;
     setDragging(true);
+    onDragChange?.(true);
   };
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -51,6 +63,7 @@ export function ResizeHandle({ value, min, max, side, onResize, onCommit, label 
     if (!dragging) return;
     setDragging(false);
     lastX.current = null;
+    onDragChange?.(false);
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
     onCommit(value);
   };

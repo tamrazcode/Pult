@@ -59,11 +59,14 @@ export function ConnectRow({
   alreadyAdded,
   onAdded,
   onReport,
+  minimal = false,
 }: {
   agent: DetectedAgent;
   alreadyAdded: boolean;
   onAdded: () => void;
   onReport?: (report: PreflightReport) => void;
+  /** Onboarding: only a check + Connected, no version/capability chips. */
+  minimal?: boolean;
 }) {
   const [state, setState] = useState<ConnectState>({ kind: "idle" });
   const [signingIn, setSigningIn] = useState(false);
@@ -132,9 +135,13 @@ export function ConnectRow({
           <span className="flex shrink-0 items-center gap-1.5 text-xs text-success">
             <Check size={12} />
             {t("settings.connect.connected")}
-            {state.report.agentVersion ? ` · ${state.report.agentVersion}` : ""}
-            {state.report.loadSession ? ` · ${t("settings.providers.capResume")} ✓` : ""}
-            {state.report.promptImage ? ` · ${t("settings.providers.capImages")} ✓` : ""}
+            {!minimal && state.report.agentVersion ? ` · ${state.report.agentVersion}` : ""}
+            {!minimal && state.report.loadSession
+              ? ` · ${t("settings.providers.capResume")} ✓`
+              : ""}
+            {!minimal && state.report.promptImage
+              ? ` · ${t("settings.providers.capImages")} ✓`
+              : ""}
           </span>
         );
       case "needs_auth":
@@ -171,11 +178,11 @@ export function ConnectRow({
           </p>
         </div>
         {status()}
-        {alreadyAdded ? (
+        {alreadyAdded && !minimal ? (
           <span className="flex shrink-0 items-center gap-1 text-xs text-success">
             <Check size={12} /> {t("settings.connect.added")}
           </span>
-        ) : (
+        ) : !alreadyAdded ? (
           <button
             onClick={() => void connect()}
             disabled={state.kind === "working" || !agent.suggestedCommand}
@@ -191,7 +198,7 @@ export function ConnectRow({
           >
             {t("settings.connect.connect")}
           </button>
-        )}
+        ) : null}
       </div>
       {state.kind === "needs_auth" && (
         <div className="px-3 pb-2">

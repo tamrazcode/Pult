@@ -171,6 +171,7 @@ export function WelcomePage() {
                   <div key={agent.id} className="min-w-0">
                     <ConnectRow
                       agent={{ ...agent, displayName: shortName(agent) }}
+                      minimal
                       alreadyAdded={instances.some(
                         (instance) =>
                           instance.id === agent.suggestedInstanceId ||

@@ -56,6 +56,7 @@ function RootLayout() {
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
   const projects = useProjectsStore((s) => s.projects);
+  const [resizing, setResizing] = useState(false);
   const router = useRouter();
   const onboarding = useRouterState({ select: (s) => s.location.pathname === "/welcome" });
   useGlobalHotkeys(() => setPaletteOpen(true));
@@ -301,9 +302,9 @@ function RootLayout() {
       <div className="flex min-h-0 flex-1">
         <div
           aria-hidden={!sidebarOpen || onboarding}
-          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
-            sidebarOpen && !onboarding ? "" : "pointer-events-none"
-          }`}
+          className={`shrink-0 overflow-hidden ${
+            resizing ? "" : "transition-[width] duration-200 ease-out"
+          } ${sidebarOpen && !onboarding ? "" : "pointer-events-none"}`}
           style={{ width: sidebarOpen && !onboarding ? sidebarWidth : 0 }}
         >
           <Sidebar width={sidebarWidth} />
@@ -317,6 +318,7 @@ function RootLayout() {
             side="right"
             onResize={setSidebarWidth}
             onCommit={(w) => setSidebarWidth(w, true)}
+            onDragChange={setResizing}
           />
         )}
         <main className="flex min-w-0 flex-1 flex-col">
@@ -331,13 +333,14 @@ function RootLayout() {
             side="left"
             onResize={setRightPanelWidth}
             onCommit={(w) => setRightPanelWidth(w, true)}
+            onDragChange={setResizing}
           />
         )}
         <div
           aria-hidden={!rightPanelOpen || onboarding}
-          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
-            rightPanelOpen && !onboarding ? "" : "pointer-events-none"
-          }`}
+          className={`shrink-0 overflow-hidden ${
+            resizing ? "" : "transition-[width] duration-200 ease-out"
+          } ${rightPanelOpen && !onboarding ? "" : "pointer-events-none"}`}
           style={{ width: rightPanelOpen && !onboarding ? rightPanelWidth : 0 }}
         >
           <RightPanel width={rightPanelWidth} />

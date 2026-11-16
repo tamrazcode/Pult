@@ -108,6 +108,7 @@ export function WindowControls(): ReactElement | null {
 
 function TauriWindowControls() {
   const t = useT();
+  const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const [maximized, setMaximized] = useState(false);
   const [win] = useState(() => {
     try {
@@ -137,7 +138,11 @@ function TauriWindowControls() {
   const base =
     "flex h-10 w-11 shrink-0 items-center justify-center text-text-secondary transition-colors duration-150";
   return (
-    <div className="fixed top-0 right-0 z-50 flex h-10 items-center bg-chrome pl-1">
+    <div
+      className={`fixed top-0 right-0 z-50 flex h-10 items-center pl-1 ${
+        rightPanelOpen ? "bg-surface" : "bg-chrome"
+      }`}
+    >
       <button
         type="button"
         aria-label={t("sidebar.minimizeWindow")}
