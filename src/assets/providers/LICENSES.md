@@ -1,13 +1,16 @@
-# Provider brand marks
+# Provider logo assets
 
-Bundled locally so the app never fetches remote icons at runtime.
+Bundled for offline UI; no logo is fetched at runtime.
 
-- `claude.svg` — Claude/Anthropic starburst, from Iconify `logos:claude-icon`
-  (Anthropic brand asset; used to identify the connected agent).
-- `openai.svg` — OpenAI knot, from Iconify `logos:openai-icon` (tinted white for
-  the dark UI).
-- `gemini.svg` — Google Gemini spark, from Simple Icons (`googlegemini`).
-- `opencode.svg` — OpenCode mark, from Simple Icons (`opencode`).
+| File | Source | Notes |
+| --- | --- | --- |
+| `claude.svg` | Anthropic brand mark (existing asset) | Anthropic/Claude trademark |
+| `openai.svg` | OpenAI brand mark (existing asset) | OpenAI/Codex trademark |
+| `gemini.svg` | Google Gemini brand mark (existing asset) | Google trademark |
+| `opencode.svg` | OpenCode brand mark (existing asset) | OpenCode trademark |
+| `cursor.svg` | T3 Code `apps/marketing/public/harnesses/cursor_light.svg` (MIT) | Cursor trademark |
+| `grok.svg` | T3 Code `apps/marketing/public/harnesses/grok-dark.svg` (MIT) | xAI/Grok trademark |
+| `muse.svg` | Simple infinity mark drawn for Pult | Muse Code trademark |
+| `pi.svg` | Simple pi mark drawn for Pult | Pi trademark |
 
-These marks belong to their respective owners; pult uses them only to identify
-the user's own locally connected agent.
+Brand marks identify the connected CLI; Pult is not affiliated with these vendors.
