@@ -242,7 +242,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           {entries.length === 0 && view.streaming && (
             <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
               <ThinkingAscii />
-              {t("chat.workingEllipsis")}
+              <span className="activity-shimmer">{t("chat.workingEllipsis")}</span>
             </div>
           )}
 
@@ -468,14 +468,11 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
         (item.type === "thought" && item.streaming),
     );
   const active = activeItem !== undefined;
-  // Open while the agent works, fold away when the run goes quiet; a manual
-  // toggle stays until the next active/idle transition.
-  const [open, setOpen] = useState(active);
-  const previousActive = useRef(active);
+  // Collapsed by default; a manual open stays until the work finishes, and a
+  // finished run folds away again.
+  const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (previousActive.current === active) return;
-    previousActive.current = active;
-    setOpen(active);
+    if (!active) setOpen(false);
   }, [active]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -676,7 +673,9 @@ function WorkingTimer({ startedAt }: { startedAt: number }) {
   return (
     <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
       <ThinkingAscii />
-      {t("chat.workingFor", { duration: formatDuration(startedAt, now) })}
+      <span className="activity-shimmer">
+        {t("chat.workingFor", { duration: formatDuration(startedAt, now) })}
+      </span>
     </div>
   );
 }

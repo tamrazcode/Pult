@@ -325,6 +325,38 @@ describe("Markdown links", () => {
     expect(openExternalUrl).not.toHaveBeenCalled();
   });
 
+  it("loads a local Windows image even when the path was encoded", async () => {
+    readImageDataUrl.mockReset().mockResolvedValue("data:image/png;base64,SHOT");
+
+    render(
+      <Markdown text={"![shot](C:%5CUsers%5Cborch%5Cpult-workspace%5Coutputs%5Cdesktop.png)"} />,
+    );
+
+    await waitFor(() =>
+      expect(readImageDataUrl).toHaveBeenCalledWith(
+        "C:\\Users\\borch\\pult-workspace\\outputs\\desktop.png",
+      ),
+    );
+    expect(await screen.findByRole("button", { name: "Open image" })).toBeTruthy();
+  });
+
+  it("loads a raw Windows image path from Markdown", async () => {
+    readImageDataUrl.mockReset().mockResolvedValue("data:image/png;base64,SHOT");
+
+    render(
+      <Markdown
+        text={"![shot](C:\\Users\\borch\\pult-workspace\\outputs\\screenshots\\desktop.png)"}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(readImageDataUrl).toHaveBeenCalledWith(
+        "C:\\Users\\borch\\pult-workspace\\outputs\\screenshots\\desktop.png",
+      ),
+    );
+    expect(await screen.findByRole("button", { name: "Open image" })).toBeTruthy();
+  });
+
   it("opens a Markdown image nested inside a link in the image preview dialog without calling openExternalUrl", () => {
     function MarkdownWithLightbox() {
       const imagePreview = useUiStore((s) => s.imagePreview);

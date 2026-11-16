@@ -553,6 +553,9 @@ describe("MessagesTimeline", () => {
     const { container } = render(<MessagesTimeline threadId="th" />);
     expect(container.querySelectorAll("button[aria-expanded]")).toHaveLength(1);
     const summary = screen.getByRole("button", { name: "Running command" });
+    expect(summary).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Read source")).toBeNull();
+    fireEvent.click(summary);
     expect(summary).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("Read source")).toBeVisible();
     expect(screen.getByText("Run newest checks")).toBeVisible();
@@ -694,7 +697,7 @@ describe("MessagesTimeline", () => {
       expect(spinner.textContent).not.toBe(initial);
       act(() => vi.advanceTimersByTime(5_910));
       expect(screen.getByRole("button", { name: "Thinking · 1m 5s" })).toBeVisible();
-      expect(screen.getByText("Still reasoning")).toBeVisible();
+      expect(screen.queryByText("Still reasoning")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -819,7 +822,7 @@ describe("MessagesTimeline", () => {
       render(<MessagesTimeline threadId="th" />);
       const line = screen.getByText(/Working for \d+s/);
       expect(line).toHaveTextContent("Working for 4s");
-      const spinner = line.querySelector("span[aria-hidden]")!;
+      const spinner = line.parentElement!.querySelector("span[aria-hidden]")!;
       expect(spinner.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u);
       const initial = spinner.textContent;
       act(() => {
@@ -846,7 +849,7 @@ describe("MessagesTimeline", () => {
 
     render(<MessagesTimeline threadId="th" />);
     const line = screen.getByText("Working…");
-    const spinner = line.querySelector("span[aria-hidden]")!;
+    const spinner = line.parentElement!.querySelector("span[aria-hidden]")!;
     expect(spinner.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/u);
   });
 

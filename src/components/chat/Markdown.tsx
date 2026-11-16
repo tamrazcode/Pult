@@ -297,18 +297,31 @@ function fileUrlToPath(src: string): string {
   }
 }
 
+/** Markdown eats Windows backslashes (`C:\Users` -> `C:Users`) and may
+    percent-encode a path; restore the drive form before reading the file. */
+function normalizeImageSource(src: string): string {
+  let path = src;
+  try {
+    path = decodeURI(path);
+  } catch {
+    // Keep the original when the value is not valid percent-encoding.
+  }
+  return path.replace(/^([A-Za-z]):(?![/\\])/, "$1:\\");
+}
+
 function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   const t = useT();
-  const local = typeof src === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(src);
+  const source = typeof src === "string" ? normalizeImageSource(src) : undefined;
+  const local = typeof source === "string" && /^(?:[a-zA-Z]:[\\/]|\\\\|file:\/\/)/.test(source);
   const [dataUrl, setDataUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!local || !src) return;
+    if (!local || !source) return;
     setDataUrl(null);
     setFailed(false);
     let cancelled = false;
-    readImageDataUrl(fileUrlToPath(src))
+    readImageDataUrl(fileUrlToPath(source))
       .then((url) => {
         if (!cancelled) setDataUrl(url);
       })
@@ -318,7 +331,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     return () => {
       cancelled = true;
     };
-  }, [local, src]);
+  }, [local, source]);
 
   if (!local) {
     return (
@@ -343,8 +356,8 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   }
   if (failed) {
     return (
-      <span title={src} className="text-sm text-text-tertiary">
-        {t("chat.imageUnavailable", { name: alt || src })}
+      <span title={source} className="text-sm text-text-tertiary">
+        {t("chat.imageUnavailable", { name: alt || source })}
       </span>
     );
   }
