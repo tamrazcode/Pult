@@ -1652,12 +1652,12 @@ fn updater_for(
 ) -> Result<tauri_plugin_updater::Updater, PultError> {
     use tauri_plugin_updater::UpdaterExt;
 
-    let builder = app.updater_builder();
+    let mut builder = app.updater_builder();
     let override_endpoint = std::env::var("PULT_UPDATE_ENDPOINT")
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
-    if let Some(endpoint) = override_endpoint.take() {
+    if let Some(endpoint) = override_endpoint {
         let url = endpoint
             .parse()
             .map_err(|e| PultError::internal(format!("bad update endpoint: {e}")))?;

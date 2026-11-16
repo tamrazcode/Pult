@@ -7,6 +7,7 @@ pub mod drivers;
 pub mod events;
 pub mod git;
 pub mod ipc;
+pub mod plugins;
 pub mod protocol;
 pub mod runtime;
 pub mod store;
@@ -148,6 +149,8 @@ pub fn run() {
             ipc::app_update_check,
             ipc::app_update_install,
             ipc::app_notify,
+            plugins::plugins_list,
+            plugins::plugins_set_enabled,
             ipc::threads_create,
             ipc::threads_list,
             ipc::projects_list,

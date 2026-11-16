@@ -9,6 +9,7 @@ import {
   Keyboard,
   MessageSquare,
   Palette,
+  Puzzle,
   Search,
   Settings2,
   UserRound,
@@ -43,7 +44,10 @@ const NAV_GROUPS: { titleKey?: string; items: NavItem[] }[] = [
   },
   {
     titleKey: "settings.nav.code",
-    items: [{ to: "/settings/projects", labelKey: "settings.nav.projects", icon: FolderTree }],
+    items: [
+      { to: "/settings/projects", labelKey: "settings.nav.projects", icon: FolderTree },
+      { to: "/settings/plugins", labelKey: "settings.nav.plugins", icon: Puzzle },
+    ],
   },
   {
     titleKey: "settings.nav.advanced",

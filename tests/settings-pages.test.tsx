@@ -94,6 +94,8 @@ describe("settings pages", () => {
       sendKey: "enter",
       followStreaming: true,
       showTimestamps: true,
+      notificationsEnabled: true,
+      notificationSound: true,
     });
   });
 
@@ -169,6 +171,20 @@ describe("settings pages", () => {
     fireEvent.click(timestampsSwitch);
     expect(useSettingsStore.getState().showTimestamps).toBe(false);
     expect(settingsSet).toHaveBeenCalledWith("show_timestamps", false);
+
+    const notificationsSwitch = screen.getByRole("switch", { name: "Notifications" });
+    expect(notificationsSwitch).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(notificationsSwitch);
+    expect(useSettingsStore.getState().notificationsEnabled).toBe(false);
+    expect(notificationsSwitch).toHaveAttribute("aria-checked", "false");
+    expect(settingsSet).toHaveBeenCalledWith("notifications_enabled", false);
+
+    const soundSwitch = screen.getByRole("switch", { name: "Notification sound" });
+    expect(soundSwitch).toHaveAttribute("aria-checked", "true");
+    fireEvent.click(soundSwitch);
+    expect(useSettingsStore.getState().notificationSound).toBe(false);
+    expect(soundSwitch).toHaveAttribute("aria-checked", "false");
+    expect(settingsSet).toHaveBeenCalledWith("notification_sound", false);
   });
 
   it("filters SettingsLayout nav items via the search input", () => {

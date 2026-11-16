@@ -814,4 +814,45 @@ export const fr: Record<string, string> = {
   "profile.preview": "Aperçu",
   "profile.linkPreview": "Votre lien : {{link}}",
   "profile.unnamed": "Sans nom",
+  "onboarding.heading": "Bienvenue",
+  "onboarding.skip": "Passer l’intro",
+  "onboarding.getStarted": "Commencer",
+  "onboarding.back": "Retour",
+  "onboarding.continue": "Continuer",
+  "onboarding.finish": "Terminer",
+  "onboarding.step1.title": "Voici Pult. Tous vos agents dans un espace.",
+  "onboarding.step1.body":
+    "Pult trouve les agents de code de cet ordinateur et vous laisse les lancer côte à côte.",
+  "onboarding.step2.eyebrow": "02 — Agents",
+  "onboarding.step2.title": "Amenez vos agents.",
+  "onboarding.step2.body":
+    "Les agents détectés peuvent être connectés maintenant ; modifiable ensuite dans les réglages.",
+  "onboarding.step2.none":
+    "Aucun agent détecté — connectez-les plus tard dans Réglages → Fournisseurs.",
+  "onboarding.step3.eyebrow": "03 — Flux de travail",
+  "onboarding.step3.title": "Un fil, tous les outils.",
+  "onboarding.step3.body":
+    "Relisez les diffs, lancez des commandes, ouvrez le navigateur et gardez chaque agent dans son worktree.",
+  "onboarding.tour.git": "Git et worktrees",
+  "onboarding.tour.gitBody":
+    "Chaque fil peut travailler dans une copie isolée ; relisez et validez sans quitter Pult.",
+  "onboarding.tour.browser": "Navigateur intégré",
+  "onboarding.tour.browserBody":
+    "Ouvrez des sites ou du HTML/JS local à côté du chat sans changer d’application.",
+  "onboarding.tour.terminal": "Terminal",
+  "onboarding.tour.terminalBody":
+    "Lancez des commandes dans le workspace du fil et suivez la sortie en direct.",
+  "onboarding.step4.eyebrow": "04 — Profil",
+  "onboarding.step4.title": "Choisissez votre profil local.",
+  "onboarding.step4.body": "Votre nom, avatar et @identifiant restent sur cet ordinateur.",
+  "settings.nav.plugins": "Extensions",
+  "plugins.title": "Extensions",
+  "plugins.subtitle":
+    "Installées sur cet ordinateur. Elles ajoutent des commandes, panneaux et thèmes sans modifier le cœur de Pult.",
+  "plugins.openFolder": "Ouvrir le dossier des extensions",
+  "plugins.empty": "Aucune extension installée.",
+  "plugins.emptyHint":
+    "Déposez un dossier avec pult-plugin.json dans ~/.pult/plugins puis revenez ici. Les extensions sont déclaratives pour l’instant — métadonnées, commandes et slots — sans accès au shell ni au système de fichiers.",
+  "plugins.enabled": "Activée",
+  "plugins.dir": "Dossier des extensions :",
 };

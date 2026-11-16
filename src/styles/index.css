@@ -101,6 +101,50 @@
   }
 }
 
+/* First-run constellation: lines draw once, nodes settle in. */
+@keyframes onboarding-draw {
+  from {
+    stroke-dashoffset: 80;
+    opacity: 0;
+  }
+  to {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}
+@keyframes onboarding-node {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+.onboarding-line {
+  animation: onboarding-draw 900ms ease-out both;
+}
+.onboarding-node {
+  animation: onboarding-node 500ms ease-out both;
+}
+@keyframes onboarding-exit {
+  to {
+    clip-path: circle(0% at 50% 50%);
+    opacity: 0;
+  }
+}
+.onboarding-exit {
+  animation: onboarding-exit 520ms ease-in forwards;
+}
+@media (prefers-reduced-motion: reduce) {
+  .onboarding-line,
+  .onboarding-node,
+  .onboarding-exit {
+    animation: none;
+  }
+}
+
 @layer base {
   html,
   body,

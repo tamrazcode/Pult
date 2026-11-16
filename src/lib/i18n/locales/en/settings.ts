@@ -216,4 +216,14 @@ export const settings = {
   "profile.preview": "Preview",
   "profile.linkPreview": "Your link: {{link}}",
   "profile.unnamed": "Unnamed",
+  "settings.nav.plugins": "Plugins",
+  "plugins.title": "Plugins",
+  "plugins.subtitle":
+    "Installed on this computer. Plugins add commands, panels and themes without changing Pult's core.",
+  "plugins.openFolder": "Open plugins folder",
+  "plugins.empty": "No plugins installed yet.",
+  "plugins.emptyHint":
+    "Drop a folder with pult-plugin.json into ~/.pult/plugins, then return here. Plugins are declarative for now — metadata, commands and slots — and never receive shell or raw filesystem access.",
+  "plugins.enabled": "Enabled",
+  "plugins.dir": "Plugins folder:",
 } as const;

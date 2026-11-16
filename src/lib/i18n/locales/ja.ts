@@ -809,4 +809,43 @@ export const ja: Record<string, string> = {
   "profile.preview": "プレビュー",
   "profile.linkPreview": "あなたのリンク: {{link}}",
   "profile.unnamed": "名前なし",
+  "onboarding.heading": "ようこそ",
+  "onboarding.skip": "イントロをスキップ",
+  "onboarding.getStarted": "始める",
+  "onboarding.back": "戻る",
+  "onboarding.continue": "続ける",
+  "onboarding.finish": "完了",
+  "onboarding.step1.title": "Pult へようこそ。すべてのエージェントを 1 か所に。",
+  "onboarding.step1.body":
+    "Pult はこのコンピューター上のコーディングエージェントを見つけ、並行して動かせます。",
+  "onboarding.step2.eyebrow": "02 — エージェント",
+  "onboarding.step2.title": "エージェントを接続。",
+  "onboarding.step2.body": "検出されたエージェントは今すぐ接続できます。後で設定から変更できます。",
+  "onboarding.step2.none":
+    "エージェントが見つかりません。後で 設定 → プロバイダー から接続してください。",
+  "onboarding.step3.eyebrow": "03 — ワークフロー",
+  "onboarding.step3.title": "1 つのスレッドにすべてのツール。",
+  "onboarding.step3.body":
+    "差分を確認し、コマンドを実行し、ブラウザーを開き、各エージェントを専用 worktree で動かします。",
+  "onboarding.tour.git": "Git と worktree",
+  "onboarding.tour.gitBody":
+    "各スレッドは分離されたチェックアウトで作業。Pult を離れずにレビューとコミット。",
+  "onboarding.tour.browser": "内蔵ブラウザー",
+  "onboarding.tour.browserBody": "サイトやローカル HTML/JS をチャットの横で開けます。",
+  "onboarding.tour.terminal": "ターミナル",
+  "onboarding.tour.terminalBody":
+    "スレッドのワークスペースでコマンドを実行し、出力をライブで確認。",
+  "onboarding.step4.eyebrow": "04 — プロフィール",
+  "onboarding.step4.title": "ローカルプロフィールを選択。",
+  "onboarding.step4.body": "名前、アバター、@handle はこのコンピューターに保存されます。",
+  "settings.nav.plugins": "プラグイン",
+  "plugins.title": "プラグイン",
+  "plugins.subtitle":
+    "このコンピューターにインストールされています。コマンド、パネル、テーマを追加し、Pult 本体は変更しません。",
+  "plugins.openFolder": "プラグインフォルダーを開く",
+  "plugins.empty": "プラグインはまだありません。",
+  "plugins.emptyHint":
+    "pult-plugin.json を含むフォルダーを ~/.pult/plugins に置いて戻ってください。現時点では宣言型（メタデータ、コマンド、スロット）で、シェルやファイルシステムへのアクセスはありません。",
+  "plugins.enabled": "有効",
+  "plugins.dir": "プラグインフォルダー:",
 };

@@ -85,7 +85,7 @@ export function ProfileCard({
           </p>
           <p className="truncate text-sm text-text-tertiary">@{profile.handle}</p>
           <span
-            className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px]"
+            className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs"
             style={{ color: accent, borderColor: `${accent}55`, background: `${accent}14` }}
           >
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: accent }} />

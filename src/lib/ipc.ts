@@ -116,6 +116,31 @@ export function appNotify(title: string, body: string): Promise<void> {
   return invokeRequired<void>("app_notify", { title, body });
 }
 
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string;
+  description: string | null;
+  author: string | null;
+  path: string;
+  enabled: boolean;
+  commands: string[];
+  slots: string[];
+}
+
+export interface PluginList {
+  dir: string;
+  plugins: PluginInfo[];
+}
+
+export function pluginsList(): Promise<PluginList> {
+  return invokeWithFallback<PluginList>("plugins_list", { dir: "", plugins: [] });
+}
+
+export function pluginsSetEnabled(id: string, enabled: boolean): Promise<void> {
+  return invokeRequired<void>("plugins_set_enabled", { id, enabled });
+}
+
 // ---- threads ----
 
 /**

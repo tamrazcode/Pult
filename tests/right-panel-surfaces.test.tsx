@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 
 vi.mock("../src/lib/tauri", () => ({
@@ -21,6 +21,9 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     gitGhAvailable: vi.fn(async () => false),
     terminalPtyList: vi.fn(async () => []),
     workspaceTree: vi.fn(async () => ({ entries: [], truncated: false })),
+    browserSetBounds: vi.fn(async () => undefined),
+    browserState: vi.fn(async () => null),
+    onBrowserNavigated: vi.fn(async () => () => {}),
   };
 });
 
@@ -107,5 +110,39 @@ describe("RightPanel surfaces", () => {
     expect(useUiStore.getState().rightPanelTab).toBe("none");
     expect(screen.getByText("Open a surface")).toBeVisible();
     expect(screen.queryByRole("button", { name: "Back to surfaces" })).toBeNull();
+  });
+
+  it("handles B/T/F/D/P shortcuts only when tab is 'none' and not typing in an input", () => {
+    render(
+      <>
+        <input aria-label="Test input" />
+        <RightPanel width={420} />
+      </>,
+    );
+
+    const input = screen.getByLabelText("Test input");
+    fireEvent.keyDown(input, { key: "b" });
+    expect(useUiStore.getState().rightPanelTab).toBe("none");
+
+    for (const [key, expectedTab] of [
+      ["b", "browser"],
+      ["T", "terminal"],
+      ["f", "files"],
+      ["d", "diff"],
+      ["P", "pull-requests"],
+    ] as const) {
+      act(() => {
+        useUiStore.setState({ rightPanelTab: "none" });
+      });
+      fireEvent.keyDown(window, { key });
+      expect(useUiStore.getState().rightPanelTab).toBe(expectedTab);
+    }
+
+    // While tab !== "none", another shortcut key does not switch tabs.
+    act(() => {
+      useUiStore.setState({ rightPanelTab: "diff" });
+    });
+    fireEvent.keyDown(window, { key: "b" });
+    expect(useUiStore.getState().rightPanelTab).toBe("diff");
   });
 });

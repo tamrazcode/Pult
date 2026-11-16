@@ -45,6 +45,15 @@ versions are milestone snapshots of the 0.1.0 development line (unreleased).
   an update exists, a determinate download ring, silent install and automatic restart.
 - **Backdrop:** ASCII glyphs rest in neutral gray (independent of the theme) at slightly
   lower brightness; pointer trails and click blooms take the theme color, white on Graphite.
+- **Profile & onboarding:** a local profile card (avatar/initials, nickname, @handle,
+  accent) lives in Settings, and a clean install walks through a four-step wizard:
+  agent constellation, provider connection, git/browser/terminal tour, profile creation.
+- **Notifications:** background run completion/error shows a native notification with a
+  soft synthesized chime; both are switchable in Settings → Chat.
+- **Plugins:** `~/.pult/plugins` manifests are discovered and can be enabled; the current
+  milestone is declarative only (commands/slots metadata, no code execution).
+- **Shortcuts & status:** B/T/F/D/P open right-panel surfaces; working threads show an
+  ASCII spinner on the right, finished unread ones a theme dot.
 - **i18n:** zero-dependency typed catalogs, language picker (English default, Russian,
   German, Spanish, Japanese, Chinese, French), persisted per install, `Intl` date/number
   formatting and localized IPC error codes.

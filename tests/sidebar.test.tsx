@@ -523,6 +523,48 @@ describe("Sidebar", () => {
     expect(readRow!.querySelector(unreadDotSelector)).toBeNull();
   });
 
+  it("renders ASCII spinner for working, accent dot for unread settled, and relative time for read settled threads", () => {
+    const now = Date.now();
+    useThreadsStore.setState({
+      threads: [
+        makeThread("t-work", "Working thread", {
+          projectId: "p1",
+          status: "working",
+          updatedAt: now - 5 * 60_000,
+        }),
+        makeThread("t-unread", "Unread settled thread", {
+          projectId: "p1",
+          status: "settled",
+          updatedAt: now - 10 * 60_000,
+        }),
+        makeThread("t-read", "Read settled thread", {
+          projectId: "p1",
+          status: "settled",
+          updatedAt: now - 5 * 60_000,
+        }),
+      ],
+      unreadIds: ["t-unread"],
+    } as never);
+
+    render(<Sidebar width={288} />);
+
+    const workingLink = screen.getByText("Working thread").closest("a") as HTMLElement;
+    const workingRight = workingLink.querySelector("span.ml-auto") as HTMLElement;
+    expect(workingRight).not.toBeNull();
+    expect(workingRight.textContent).toMatch(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]$/);
+
+    const unreadLink = screen.getByText("Unread settled thread").closest("a") as HTMLElement;
+    const unreadRight = unreadLink.querySelector("span.ml-auto") as HTMLElement;
+    expect(unreadRight).not.toBeNull();
+    expect(unreadRight).toHaveAttribute("aria-label", "Unread");
+    expect(unreadRight).toHaveClass("bg-accent", "rounded-full");
+
+    const readLink = screen.getByText("Read settled thread").closest("a") as HTMLElement;
+    const readRight = readLink.querySelector("span.ml-auto") as HTMLElement;
+    expect(readRight).not.toBeNull();
+    expect(readRight).toHaveTextContent("5m");
+  });
+
   it("renders footer navigation and a Pult update action", async () => {
     render(<Sidebar width={288} />);
 

@@ -13,8 +13,12 @@ import {
   ipcErrorMessage,
   openExternalUrl,
   openInEditor,
+  projectsList,
   providersWarmup,
   runsRespondElicitation,
+  settingsGet,
+  settingsSet,
+  threadsList,
 } from "../lib/ipc";
 import { activeWorkspaceRoot } from "../lib/activeWorkspace";
 import { classifyMarkdownHref } from "../lib/links";
@@ -60,6 +64,29 @@ function RootLayout() {
     useUiStore.getState().setPendingThread(null);
     void router.navigate({ to: "/thread/$threadId", params: { threadId: pendingThreadId } });
   }, [pendingThreadId, router]);
+
+  // Clean install → guided onboarding. Existing installs with any project or
+  // thread are marked complete silently, so the wizard never interrupts them.
+  useEffect(() => {
+    if (!isTauri() || router.state.location.pathname === "/welcome") return;
+    let cancelled = false;
+    void (async () => {
+      const [done, threads, projects] = await Promise.all([
+        settingsGet("onboarding_completed").catch(() => null),
+        threadsList().catch(() => []),
+        projectsList().catch(() => []),
+      ]);
+      if (cancelled || done === true) return;
+      if (threads.length === 0 && projects.length === 0) {
+        void router.navigate({ to: "/welcome", replace: true });
+      } else {
+        void settingsSet("onboarding_completed", true).catch(() => {});
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [router]);
 
   // Warm the selected provider so the first turn does not pay the 5–13 s CLI
   // cold start. Only provider changes trigger this: project switches must not

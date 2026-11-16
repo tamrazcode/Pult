@@ -812,4 +812,44 @@ export const es: Record<string, string> = {
   "profile.preview": "Vista previa",
   "profile.linkPreview": "Tu enlace: {{link}}",
   "profile.unnamed": "Sin nombre",
+  "onboarding.heading": "Bienvenido",
+  "onboarding.skip": "Saltar introducción",
+  "onboarding.getStarted": "Empezar",
+  "onboarding.back": "Atrás",
+  "onboarding.continue": "Continuar",
+  "onboarding.finish": "Terminar",
+  "onboarding.step1.title": "Conoce Pult. Todos los agentes en un espacio.",
+  "onboarding.step1.body":
+    "Pult encuentra los agentes de código de este ordenador y te deja ejecutarlos en paralelo.",
+  "onboarding.step2.eyebrow": "02 — Agentes",
+  "onboarding.step2.title": "Trae tus agentes.",
+  "onboarding.step2.body":
+    "Puedes conectar los agentes detectados ahora; cámbialo luego en Ajustes.",
+  "onboarding.step2.none": "Aún no hay agentes detectados: conéctalos en Ajustes → Proveedores.",
+  "onboarding.step3.eyebrow": "03 — Flujo",
+  "onboarding.step3.title": "Un hilo, todas las herramientas.",
+  "onboarding.step3.body":
+    "Revisa diffs, ejecuta comandos, abre el navegador y mantén cada agente en su worktree.",
+  "onboarding.tour.git": "Git y worktrees",
+  "onboarding.tour.gitBody":
+    "Cada hilo puede trabajar en una copia aislada; revisa y confirma sin salir de Pult.",
+  "onboarding.tour.browser": "Navegador integrado",
+  "onboarding.tour.browserBody":
+    "Abre sitios o HTML/JS local junto al chat sin cambiar de aplicación.",
+  "onboarding.tour.terminal": "Terminal",
+  "onboarding.tour.terminalBody":
+    "Ejecuta comandos en el workspace del hilo y mira la salida en vivo.",
+  "onboarding.step4.eyebrow": "04 — Perfil",
+  "onboarding.step4.title": "Elige tu perfil local.",
+  "onboarding.step4.body": "Tu nombre, avatar y @usuario se quedan en este ordenador.",
+  "settings.nav.plugins": "Complementos",
+  "plugins.title": "Complementos",
+  "plugins.subtitle":
+    "Instalados en este ordenador. Añaden comandos, paneles y temas sin cambiar el núcleo de Pult.",
+  "plugins.openFolder": "Abrir carpeta de complementos",
+  "plugins.empty": "Aún no hay complementos.",
+  "plugins.emptyHint":
+    "Coloca una carpeta con pult-plugin.json en ~/.pult/plugins y vuelve aquí. Por ahora son declarativos — metadatos, comandos y ranuras — sin acceso a shell ni al sistema de archivos.",
+  "plugins.enabled": "Activado",
+  "plugins.dir": "Carpeta de complementos:",
 };

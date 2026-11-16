@@ -22,6 +22,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsDiffsRouteImport } from './routes/settings.diffs'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsPluginsRouteImport } from './routes/settings.plugins'
 import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
@@ -92,6 +93,11 @@ const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   path: '/keybindings',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsPluginsRoute = SettingsPluginsRouteImport.update({
+  id: '/plugins',
+  path: '/plugins',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsProfileRoute = SettingsProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
@@ -127,6 +133,7 @@ export interface FileRoutesByFullPath {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -146,6 +153,7 @@ export interface FileRoutesByTo {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -166,6 +174,7 @@ export interface FileRoutesById {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
@@ -187,6 +196,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
@@ -334,6 +346,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/plugins': {
+      id: '/settings/plugins'
+      path: '/plugins'
+      fullPath: '/settings/plugins'
+      preLoaderRoute: typeof SettingsPluginsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/profile': {
       id: '/settings/profile'
       path: '/profile'
@@ -373,6 +392,7 @@ interface SettingsRouteChildren {
   SettingsDiffsRoute: typeof SettingsDiffsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsPluginsRoute: typeof SettingsPluginsRoute
   SettingsProfileRoute: typeof SettingsProfileRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
@@ -386,6 +406,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsDiffsRoute: SettingsDiffsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsPluginsRoute: SettingsPluginsRoute,
   SettingsProfileRoute: SettingsProfileRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
