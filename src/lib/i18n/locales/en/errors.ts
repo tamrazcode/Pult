@@ -43,4 +43,12 @@ export const errors = {
   "errors.queue.order_mismatch": "The queue changed; reorder it again.",
   "errors.run.finished": "That run already finished.",
   "errors.terminal.input_closed": "The terminal is no longer accepting input.",
+  "errors.browser.state_failed": "The browser is in an inconsistent state. Reopen the panel.",
+  "errors.browser.window_missing": "The main window is not available.",
+  "errors.browser.webview_failed": "The browser view could not be created.",
+  "errors.browser.bounds_failed": "The browser view could not be positioned.",
+  "errors.browser.server_failed": "The local preview server could not start.",
+  "errors.browser.navigate_failed": "That page could not be opened.",
+  "errors.browser.local_file": "That local file could not be previewed.",
+  "errors.browser.history_failed": "The browser history action failed.",
 } as const;

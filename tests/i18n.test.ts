@@ -1,4 +1,4 @@
-﻿import { createElement } from "react";
+import { createElement } from "react";
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { en } from "../src/lib/i18n/locales/en";
@@ -8,7 +8,13 @@ import { es } from "../src/lib/i18n/locales/es";
 import { ja } from "../src/lib/i18n/locales/ja";
 import { zh } from "../src/lib/i18n/locales/zh";
 import { fr } from "../src/lib/i18n/locales/fr";
-import { plural, SUPPORTED_LOCALES, translate, useLocaleStore } from "../src/lib/i18n";
+import {
+  localizeIpcError,
+  plural,
+  SUPPORTED_LOCALES,
+  translate,
+  useLocaleStore,
+} from "../src/lib/i18n";
 import { Route as GeneralRoute } from "../src/routes/settings.general";
 
 vi.mock("../src/lib/ipc", async (importOriginal) => ({
@@ -111,5 +117,12 @@ describe("translation behavior", () => {
     expect(screen.getByRole("heading", { name: "Основные" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Язык" })).toBeVisible();
     expect(screen.queryByRole("heading", { name: "General" })).toBeNull();
+  });
+
+  it("localizes structured IPC error codes and falls back to raw message for unknown codes", () => {
+    expect(localizeIpcError({ code: "browser.navigate_failed", message: "raw" })).toBe(
+      "That page could not be opened.",
+    );
+    expect(localizeIpcError({ code: "unknown.error_code", message: "raw" })).toBe("raw");
   });
 });

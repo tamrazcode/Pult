@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "./tauri";
+import { localizeIpcError } from "./i18n";
 import type {
   AgentProcessPayload,
   CommitOutcome,
@@ -59,9 +60,9 @@ export function isIpcError(error: unknown): error is IpcError {
 
 /** Human-readable line for inline notices (M1 surfaces errors inline, no toasts). */
 export function ipcErrorMessage(error: unknown): string {
-  if (isIpcError(error)) return error.message;
-  if (error instanceof Error) return error.message;
-  return String(error);
+  // Structured codes get the active locale; unknown errors keep the backend
+  // message. Every existing call site localizes for free.
+  return localizeIpcError(error);
 }
 
 function invokeRequired<T>(command: string, args?: Record<string, unknown>): Promise<T> {

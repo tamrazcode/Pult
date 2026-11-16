@@ -78,6 +78,7 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
   useEffect(() => {
     if (!isTauri()) return;
     let alive = true;
+    let unlisten: (() => void) | null = null;
     void onBrowserNavigated(({ url, event }) => {
       if (!alive || event !== "finished") return;
       // Token-scoped loopback URLs are an implementation detail; keep the
@@ -87,38 +88,73 @@ export function BrowserPanel({ threadId }: { threadId: string | null }) {
       setCurrent(url);
     }).then((off) => {
       if (!alive) off();
+      else unlisten = off;
     });
     return () => {
       alive = false;
+      unlisten?.();
+      unlisten = null;
     };
   }, []);
 
   // Keep the child webview glued to the host div and hide it under overlays.
+  // The native HWND paints over the WebView2 host, so DOM dialogs/menus must
+  // hide it even when they belong to a different component.
   useEffect(() => {
     if (!isTauri()) return;
     const element = hostRef.current;
     if (!element) return;
     let frame = 0;
+    let overlayOpen = false;
+    let lastKey = "";
+    const hasOverlay = () =>
+      document.querySelector('[role="dialog"], [role="menu"], [data-escape-layer]') !== null;
     const apply = () => {
       frame = 0;
       const rect = element.getBoundingClientRect();
+      const visible = !occluded && !overlayOpen && current !== null;
+      const key = `${Math.round(rect.left)}:${Math.round(rect.top)}:${Math.round(
+        rect.width,
+      )}:${Math.round(rect.height)}:${visible}`;
+      if (key === lastKey) return;
+      lastKey = key;
       void browserSetBounds({
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
-        visible: !occluded && current !== null,
+        visible,
       }).catch(() => {});
     };
     const schedule = () => {
       if (frame === 0) frame = requestAnimationFrame(apply);
     };
+    overlayOpen = hasOverlay();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(schedule);
     observer?.observe(element);
+    // Menus/dialogs are mounted elsewhere: watch their presence, not every
+    // streamed token. Attribute changes cover late role="dialog" mounts.
+    const mutations =
+      typeof MutationObserver === "undefined"
+        ? null
+        : new MutationObserver(() => {
+            const next = hasOverlay();
+            if (next === overlayOpen) return;
+            overlayOpen = next;
+            lastKey = "";
+            schedule();
+          });
+    mutations?.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["role"],
+    });
     window.addEventListener("resize", schedule);
     schedule();
     return () => {
       observer?.disconnect();
+      mutations?.disconnect();
       window.removeEventListener("resize", schedule);
       if (frame) cancelAnimationFrame(frame);
       void browserSetBounds({ x: 0, y: 0, width: 1, height: 1, visible: false }).catch(() => {});

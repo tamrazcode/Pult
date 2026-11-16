@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ArrowRightLeft,
@@ -24,7 +24,13 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { readImageDataUrl, runsDispatch } from "../../lib/ipc";
-import { localizeIpcError, plural, translate, useT } from "../../lib/i18n";
+import {
+  formatTime as formatClock,
+  localizeIpcError,
+  plural,
+  translate,
+  useT,
+} from "../../lib/i18n";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
@@ -93,7 +99,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const activeRun = activeRunForThread(runs);
   const runId = activeRun?.id;
   const view = useRunsStore((s) => (runId ? s.viewsByRun[runId] : undefined));
-  const entries = threadTimelineItems(runs, views);
+  const entries = useMemo(() => threadTimelineItems(runs, views), [runs, views]);
   const pendingUser = useRunsStore((s) => (threadId ? s.pendingUserByThread[threadId] : undefined));
   const hasView = view !== undefined;
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -434,18 +440,30 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
   const [open, setOpen] = useState(false);
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
-  const active = items.some(
-    (item) =>
-      (item.type === "tool" && (item.status === "pending" || item.status === "in_progress")) ||
-      (item.type === "thought" && item.streaming),
-  );
+  const activeItem = [...items]
+    .reverse()
+    .find(
+      (item) =>
+        (item.type === "tool" && (item.status === "pending" || item.status === "in_progress")) ||
+        (item.type === "thought" && item.streaming),
+    );
+  const active = activeItem !== undefined;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (activeItem?.type !== "thought") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [activeItem]);
+  const shown = activeItem ?? last;
   const Icon =
-    last.type === "tool" ? toolIcon(last.kind) : last.type === "thought" ? Brain : ShieldCheck;
-  const label = active
-    ? last.type === "thought"
-      ? t("chat.thinking")
-      : last.type === "tool"
-        ? last.title
+    shown.type === "tool" ? toolIcon(shown.kind) : shown.type === "thought" ? Brain : ShieldCheck;
+  const label = activeItem
+    ? activeItem.type === "thought"
+      ? t("chat.thinkingWithDuration", {
+          duration: formatDuration(activeItem.startedAt, now),
+        })
+      : activeItem.type === "tool"
+        ? activeItem.title
         : t("chat.tool.working")
     : summarizeActionGroup(items);
   return (
@@ -456,7 +474,7 @@ function ActionGroupRow({ entries }: { entries: TimelineEntry[] }) {
         aria-expanded={open}
         className="flex w-full items-center gap-2 py-0.5 text-left"
       >
-        {active && last.type === "thought" ? (
+        {activeItem?.type === "thought" ? (
           <ThinkingAscii />
         ) : (
           <Icon size={13} className="shrink-0 text-text-secondary" />
@@ -499,10 +517,9 @@ function WorkingTimer({ startedAt }: { startedAt: number }) {
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
-  const seconds = Math.max(0, Math.floor((now - startedAt) / 1000));
   return (
     <div className="py-1 text-sm text-text-tertiary">
-      {t("chat.workingFor", { duration: `${seconds}s` })}
+      {t("chat.workingFor", { duration: formatDuration(startedAt, now) })}
     </div>
   );
 }
@@ -533,7 +550,7 @@ function Caret({ show }: { show: boolean }) {
 
 function formatTime(ts: number | undefined): string | null {
   if (!ts) return null;
-  return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return formatClock(ts);
 }
 
 /** Hover row under a message: copy, branch into a new thread, timestamp. */

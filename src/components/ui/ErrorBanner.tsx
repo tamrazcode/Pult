@@ -2,11 +2,12 @@ import { Link, useRouter } from "@tanstack/react-router";
 import { RotateCcw, TriangleAlert, X, HardDrive, Bot } from "lucide-react";
 import { useUiStore } from "../../stores/ui";
 import type { GlobalError } from "../../stores/ui";
+import { useT } from "../../lib/i18n";
 
-const KIND_HEADLINES: Record<GlobalError["kind"], string> = {
-  agent_crash: "Agent crashed",
-  storage: "Storage problem",
-  protocol: "Protocol error",
+const KIND_KEYS: Record<GlobalError["kind"], string> = {
+  agent_crash: "errorBanner.agentCrash",
+  storage: "errorBanner.storage",
+  protocol: "errorBanner.protocol",
 };
 
 const KIND_ICONS: Record<GlobalError["kind"], typeof Bot> = {
@@ -20,6 +21,7 @@ const KIND_ICONS: Record<GlobalError["kind"], typeof Bot> = {
  * surface here with a designed recovery path instead of a silent stall.
  */
 export function ErrorBanner() {
+  const t = useT();
   const error = useUiStore((s) => s.globalError);
   const clear = useUiStore((s) => s.clearGlobalError);
   const router = useRouter();
@@ -37,7 +39,7 @@ export function ErrorBanner() {
           <Icon size={14} className="text-danger" aria-hidden />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-medium text-text-primary">{KIND_HEADLINES[error.kind]}</p>
+          <p className="text-sm font-medium text-text-primary">{t(KIND_KEYS[error.kind])}</p>
           <p className="mt-0.5 text-sm break-words text-text-secondary">{error.message}</p>
           <div className="mt-2 flex items-center gap-2">
             {error.kind === "agent_crash" && (
@@ -48,7 +50,7 @@ export function ErrorBanner() {
                 }}
                 className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover"
               >
-                <RotateCcw size={12} /> Open diagnostics
+                <RotateCcw size={12} /> {t("errorBanner.openDiagnostics")}
               </button>
             )}
             {error.kind === "storage" && (
@@ -56,7 +58,7 @@ export function ErrorBanner() {
                 onClick={() => window.location.reload()}
                 className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover"
               >
-                <RotateCcw size={12} /> Retry after freeing space
+                <RotateCcw size={12} /> {t("errorBanner.retrySpace")}
               </button>
             )}
             {error.kind === "protocol" && (
@@ -65,15 +67,15 @@ export function ErrorBanner() {
                 onClick={clear}
                 className="flex items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle px-2.5 py-1 text-xs text-text-secondary transition hover:bg-hover"
               >
-                Inspect protocol frames
+                {t("errorBanner.inspectFrames")}
               </Link>
             )}
             <button
               onClick={clear}
-              aria-label="Dismiss error"
+              aria-label={t("errorBanner.dismiss")}
               className="flex items-center gap-1.5 rounded-(--radius-sm) px-2 py-1 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
-              <X size={12} /> Dismiss
+              <X size={12} /> {t("errorBanner.dismiss")}
             </button>
           </div>
         </div>

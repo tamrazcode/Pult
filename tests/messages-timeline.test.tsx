@@ -698,6 +698,44 @@ describe("MessagesTimeline", () => {
     }
   });
 
+  it("renders '1m 5s' in the active Thinking label of a running action group after 65s", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(60_000);
+      useRunsStore.setState({
+        runsByThread: { th: [run("r1", "running", 0)] },
+        viewsByRun: {
+          r1: {
+            items: [
+              {
+                type: "tool",
+                toolCallId: "t1",
+                title: "Read context",
+                kind: "read",
+                status: "completed",
+                locations: [],
+              },
+              {
+                type: "thought",
+                text: "Deep reasoning",
+                streaming: true,
+                startedAt: 1_000,
+                endedAt: 1_000,
+              },
+            ],
+            streaming: true,
+          },
+        },
+      });
+      render(<MessagesTimeline threadId="th" />);
+      expect(screen.getByRole("button", { name: "Thinking · 59s" })).toBeVisible();
+      act(() => vi.advanceTimersByTime(6_000));
+      expect(screen.getByRole("button", { name: "Thinking · 1m 5s" })).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("formats a completed thought lasting at least a minute as minutes and seconds", () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0)] },

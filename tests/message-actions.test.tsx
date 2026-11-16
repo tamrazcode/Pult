@@ -20,6 +20,7 @@ vi.mock("../src/components/chat/Markdown", () => ({
 }));
 
 import { MessagesTimeline } from "../src/components/chat/MessagesTimeline";
+import { formatTime } from "../src/lib/i18n";
 import { useRunsStore } from "../src/stores/runs";
 import { useSettingsStore } from "../src/stores/settings";
 import { useThreadsStore } from "../src/stores/threads";
@@ -46,10 +47,7 @@ const finishedRun: Run = {
 };
 
 const sampleTs = new Date(2026, 0, 15, 14, 5).getTime();
-const expectedTimeLabel = new Date(sampleTs).toLocaleTimeString([], {
-  hour: "2-digit",
-  minute: "2-digit",
-});
+const expectedTimeLabel = formatTime(sampleTs);
 
 describe("MessageActions", () => {
   let writeText: ReturnType<typeof vi.fn>;

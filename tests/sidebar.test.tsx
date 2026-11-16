@@ -230,6 +230,32 @@ describe("buildSidebarGroups", () => {
     expect(groups[0].threads.map((thread) => thread.id)).toEqual(["t1", "t2"]);
   });
 
+  it("hides a query-matched project when filter is 'unread' and it has no unread threads, but shows it with filter 'all'", () => {
+    const alpha = makeProject("p1", "Alpha");
+    const beta = makeProject("p2", "Beta");
+    const threads = [
+      makeThread("t1", "Fix login", { projectId: "p1", updatedAt: 200 }),
+      makeThread("t2", "Update docs", { projectId: "p1", updatedAt: 100 }),
+      makeThread("t3", "Unread elsewhere", { projectId: "p2", updatedAt: 300 }),
+    ];
+
+    const unreadGroups = buildSidebarGroups([alpha, beta], threads, {
+      query: "alpha",
+      filter: "unread",
+      unreadIds: new Set(["t3"]),
+    });
+    expect(unreadGroups).toEqual([]);
+
+    const allGroups = buildSidebarGroups([alpha, beta], threads, {
+      query: "alpha",
+      filter: "all",
+      unreadIds: new Set(["t3"]),
+    });
+    expect(allGroups).toHaveLength(1);
+    expect(allGroups[0].project).toEqual(alpha);
+    expect(allGroups[0].threads.map((thread) => thread.id)).toEqual(["t1", "t2"]);
+  });
+
   it("places 'No project' group last only when non-empty", () => {
     const projects = [makeProject("p1", "Alpha")];
     const withOrphan = [
@@ -457,6 +483,30 @@ describe("Sidebar", () => {
     expect(screen.queryByText("Beta")).toBeNull();
     expect(screen.queryByText("Refactor sidebar")).toBeNull();
     expect(screen.queryByText("Standalone note")).toBeNull();
+  });
+
+  it("hides a query-matched project with no unread threads when filter is 'unread' and renders it with filter 'all'", async () => {
+    useThreadsStore.setState({
+      threads: [...seededThreads, makeThread("t4", "Beta follow-up", { projectId: "p2" })],
+    });
+    render(<Sidebar width={288} />);
+
+    await userEvent.type(screen.getByLabelText("Search projects and threads"), "beta");
+    expect(screen.getByText("Beta")).toBeVisible();
+    expect(screen.getByText("Refactor sidebar")).toBeVisible();
+    expect(screen.getByText("Beta follow-up")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Filter threads" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "Unread" }));
+    expect(screen.queryByText("Beta")).toBeNull();
+    expect(screen.queryByText("Refactor sidebar")).toBeNull();
+    expect(screen.queryByText("Beta follow-up")).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Filter threads" }));
+    await userEvent.click(screen.getByRole("menuitemradio", { name: "All threads" }));
+    expect(screen.getByText("Beta")).toBeVisible();
+    expect(screen.getByText("Refactor sidebar")).toBeVisible();
+    expect(screen.getByText("Beta follow-up")).toBeVisible();
   });
 
   it("renders an unread dot for threads in unreadIds", () => {

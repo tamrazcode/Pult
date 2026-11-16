@@ -51,25 +51,25 @@ pub struct BrowserState {
 }
 
 impl BrowserState {
-    fn ensure_webview(&self, app: &AppHandle) -> Result<Webview<tauri::Wry>, String> {
+    fn ensure_webview(&self, app: &AppHandle) -> Result<Webview<tauri::Wry>, crate::PultError> {
         if let Some(webview) = self
             .webview
             .lock()
-            .map_err(|_| "browser state poisoned".to_string())?
+            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?
             .clone()
         {
             return Ok(webview);
         }
         let window = app
             .get_window("main")
-            .ok_or_else(|| "main window is not available".to_string())?;
+            .ok_or_else(|| browser_err("browser.window_missing", "main window is not available"))?;
         let bounds = *self
             .bounds
             .lock()
-            .map_err(|_| "browser state poisoned".to_string())?;
+            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?;
         let blank: Url = "about:blank"
             .parse()
-            .map_err(|_| "invalid blank url".to_string())?;
+            .map_err(|_| browser_err("browser.navigate_failed", "invalid blank url"))?;
         let webview = window
             .add_child(
                 WebviewBuilder::new(CHILD_LABEL, WebviewUrl::External(blank))
@@ -87,12 +87,12 @@ impl BrowserState {
                 LogicalPosition::new(bounds.x, bounds.y),
                 LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0)),
             )
-            .map_err(|e| format!("browser webview: {e}"))?;
+            .map_err(|e| browser_err("browser.webview_failed", e.to_string()))?;
         let _ = webview.hide();
         *self
             .webview
             .lock()
-            .map_err(|_| "browser state poisoned".to_string())? = Some(webview.clone());
+            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))? = Some(webview.clone());
         Ok(webview)
     }
 
@@ -108,6 +108,10 @@ impl BrowserState {
     }
 }
 
+fn browser_err(code: &str, message: impl Into<String>) -> crate::PultError {
+    crate::PultError::with_code(code, message)
+}
+
 /// `<state>` is managed by lib.rs; commands below are registered there.
 #[tauri::command]
 pub async fn browser_set_bounds(
@@ -118,12 +122,12 @@ pub async fn browser_set_bounds(
     width: f64,
     height: f64,
     visible: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::PultError> {
     {
         let mut bounds = state
             .bounds
             .lock()
-            .map_err(|_| "browser state poisoned".to_string())?;
+            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?;
         *bounds = Bounds {
             x,
             y,
@@ -142,10 +146,17 @@ pub async fn browser_set_bounds(
         }
         return Ok(());
     }
-    let webview = state.ensure_webview(&app)?;
-    let _ = webview.set_position(LogicalPosition::new(x, y));
-    let _ = webview.set_size(LogicalSize::new(width.max(1.0), height.max(1.0)));
-    let _ = webview.show();
+    let webview = state
+        .ensure_webview(&app)?;
+    webview
+        .set_position(LogicalPosition::new(x, y))
+        .map_err(|e| browser_err("browser.bounds_failed", e.to_string()))?;
+    webview
+        .set_size(LogicalSize::new(width.max(1.0), height.max(1.0)))
+        .map_err(|e| browser_err("browser.bounds_failed", e.to_string()))?;
+    webview
+        .show()
+        .map_err(|e| browser_err("browser.bounds_failed", e.to_string()))?;
     Ok(())
 }
 
@@ -156,27 +167,34 @@ pub async fn browser_navigate(
     runtime: tauri::State<'_, Arc<crate::runtime::AgentRuntime>>,
     target: String,
     thread_id: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, crate::PultError> {
     let trimmed = target.trim();
     if trimmed.is_empty() {
-        return Err("empty browser target".to_string());
+        return Err(browser_err("url.empty", "empty browser target"));
     }
     let url = if let Some(url) = external_url(trimmed) {
         url
     } else {
-        let server = state.server().await?;
-        let (root, file) = resolve_local(&runtime, trimmed, thread_id.as_deref())?;
+        let server = state
+            .server()
+            .await
+            .map_err(|e| browser_err("browser.server_failed", e))?;
+        let (root, file) = resolve_local(&runtime, trimmed, thread_id.as_deref())
+            .map_err(|e| browser_err("browser.local_file", e))?;
         let token = server.register(root);
-        server.file_url(&token, &file)?
+        server
+            .file_url(&token, &file)
+            .map_err(|e| browser_err("browser.local_file", e))?
     };
-    let webview = state.ensure_webview(&app)?;
+    let webview = state
+        .ensure_webview(&app)?;
     webview
         .navigate(url.clone())
-        .map_err(|e| format!("browser navigate: {e}"))?;
+        .map_err(|e| browser_err("browser.navigate_failed", e.to_string()))?;
     let bounds = *state
         .bounds
         .lock()
-        .map_err(|_| "browser state poisoned".to_string())?;
+        .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?;
     if bounds.visible {
         let _ = webview.show();
     }
@@ -187,11 +205,11 @@ pub async fn browser_navigate(
 pub fn browser_history(
     state: tauri::State<'_, BrowserState>,
     action: String,
-) -> Result<(), String> {
+) -> Result<(), crate::PultError> {
     let guard = state
         .webview
         .lock()
-        .map_err(|_| "browser state poisoned".to_string())?;
+        .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?;
     let Some(webview) = guard.as_ref() else {
         return Ok(());
     };
@@ -199,11 +217,16 @@ pub fn browser_history(
         "back" => "history.back()",
         "forward" => "history.forward()",
         "reload" => "location.reload()",
-        other => return Err(format!("unknown history action: {other}")),
+        other => {
+            return Err(browser_err(
+                "browser.history_failed",
+                format!("unknown history action: {other}"),
+            ))
+        }
     };
     webview
         .eval(script)
-        .map_err(|e| format!("browser history: {e}"))
+        .map_err(|e| browser_err("browser.history_failed", e.to_string()))
 }
 
 /// Current page of the persistent child webview (panel remounts restore it).
@@ -219,11 +242,11 @@ pub fn browser_state(state: tauri::State<'_, BrowserState>) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn browser_close(state: tauri::State<'_, BrowserState>) -> Result<(), String> {
+pub fn browser_close(state: tauri::State<'_, BrowserState>) -> Result<(), crate::PultError> {
     let webview = state
         .webview
         .lock()
-        .map_err(|_| "browser state poisoned".to_string())?
+        .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))?
         .take();
     if let Some(webview) = webview {
         let _ = webview.close();
@@ -376,7 +399,14 @@ impl StaticServer {
         if method != "GET" && method != "HEAD" {
             return respond(&mut stream, 405, "text/plain", b"method not allowed").await;
         }
-        let path = percent_decode(raw_path.trim_start_matches('/'));
+        // Query strings and fragments are for the page, not the file lookup:
+        // `./app.js?v=1` must serve `app.js`.
+        let raw_path = raw_path
+            .split(['?', '#'])
+            .next()
+            .unwrap_or("")
+            .trim_start_matches('/');
+        let path = percent_decode(raw_path);
         if path.is_empty() {
             return respond(&mut stream, 404, "text/plain", b"not found").await;
         }
@@ -613,6 +643,10 @@ mod tests {
         assert!(ok.starts_with("HTTP/1.1 200"), "{ok}");
         assert!(ok.contains("export const x = 1;"));
         assert!(ok.contains("text/javascript"));
+
+        let with_query = fetch(format!("{path}?v=1")).await;
+        assert!(with_query.starts_with("HTTP/1.1 200"), "{with_query}");
+        assert!(with_query.contains("export const x = 1;"));
 
         let forbidden = fetch(format!("/{token}/../secret.txt")).await;
         assert!(forbidden.starts_with("HTTP/1.1 403"), "{forbidden}");

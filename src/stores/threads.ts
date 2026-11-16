@@ -77,7 +77,7 @@ export function buildSidebarGroups(
     (group) =>
       keepEmptyProjects ||
       group.threads.length > 0 ||
-      (query !== "" && group.project!.name.toLowerCase().includes(query)),
+      (opts.filter === "all" && query !== "" && group.project!.name.toLowerCase().includes(query)),
   );
   const orphans = sortGroupThreads(
     threads

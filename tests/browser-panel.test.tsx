@@ -1,4 +1,4 @@
-﻿import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
 
@@ -35,8 +35,9 @@ vi.mock("../src/lib/ipc", async (importOriginal) => ({
 }));
 
 import { BrowserPanel } from "../src/components/browser/BrowserPanel";
-import { useUiStore } from "../src/stores/ui";
+import { useLocaleStore } from "../src/lib/i18n";
 import { useRunsStore } from "../src/stores/runs";
+import { useUiStore } from "../src/stores/ui";
 
 function navigateTo(target: string) {
   const input = screen.getByLabelText("Browser URL");
@@ -55,6 +56,8 @@ describe("BrowserPanel native webview", () => {
     vi.clearAllMocks();
     browserNavigate.mockImplementation(async (target) => target);
     browserState.mockResolvedValue(null);
+    onBrowserNavigated.mockImplementation(async () => () => {});
+    useLocaleStore.getState().setLocale("en");
     useUiStore.setState({
       browserTarget: null,
       rightPanelOpen: true,
@@ -63,6 +66,10 @@ describe("BrowserPanel native webview", () => {
       imagePreview: null,
     });
     useRunsStore.setState({ activeElicitation: null });
+  });
+
+  afterEach(() => {
+    act(() => useLocaleStore.getState().setLocale("en"));
   });
 
   it.each([
@@ -191,5 +198,52 @@ describe("BrowserPanel native webview", () => {
     expect(browserNavigate).toHaveBeenCalledWith("javascript:alert(1)", "th");
     expect(container.querySelector("iframe, [srcdoc]")).toBeNull();
     await expectVisibility(false);
+  });
+
+  it("hides bounds when a DOM dialog is appended to document.body and restores them on removal", async () => {
+    render(<BrowserPanel threadId="th" />);
+    navigateTo("https://example.com");
+    await expectVisibility(true);
+
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    document.body.appendChild(dialog);
+    try {
+      await expectVisibility(false);
+      dialog.remove();
+      await expectVisibility(true);
+    } finally {
+      dialog.remove();
+    }
+  });
+
+  it("calls the unlisten function returned by onBrowserNavigated on unmount", async () => {
+    const unlisten = vi.fn();
+    onBrowserNavigated.mockResolvedValueOnce(unlisten);
+    const { unmount } = render(<BrowserPanel threadId="th" />);
+    await waitFor(() => expect(onBrowserNavigated).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(unlisten).not.toHaveBeenCalled();
+    unmount();
+    await waitFor(() => expect(unlisten).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows localized IPC error messages in English and after switching locale to Russian", async () => {
+    browserNavigate.mockRejectedValueOnce({ code: "browser.local_file", message: "x" });
+    render(<BrowserPanel threadId="th" />);
+
+    navigateTo("C:\\missing.html");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That local file could not be previewed.",
+    );
+
+    act(() => useLocaleStore.getState().setLocale("ru"));
+    browserNavigate.mockRejectedValueOnce({ code: "browser.local_file", message: "x" });
+    const ruInput = screen.getByLabelText("URL в браузере");
+    fireEvent.change(ruInput, { target: { value: "C:\\missing.html" } });
+    fireEvent.submit(ruInput.closest("form")!);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Не удалось открыть локальный файл.",
+    );
   });
 });
