@@ -45,3 +45,5 @@ vitest.config.ts
 *.key
 *.pem
 .env
+
+src-tauri/examples/
