@@ -31,6 +31,37 @@ pub struct ThreadRecord {
     /// Parent repo when the thread works in a `git worktree` (M4).
     pub main_repo: Option<String>,
     pub worktree_name: Option<String>,
+    /// Orchestration lineage: set for app-owned subagent threads.
+    pub parent_thread_id: Option<String>,
+    pub parent_run_id: Option<String>,
+    pub depth: i64,
+    pub lineage_kind: Option<String>,
+    pub child_role: Option<String>,
+}
+
+/// One app-owned delegated task (subagent) in the orchestration log.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DelegatedTaskRecord {
+    pub id: String,
+    pub parent_thread_id: String,
+    pub parent_run_id: String,
+    pub child_thread_id: String,
+    pub child_run_id: Option<String>,
+    pub client_request_id: Option<String>,
+    pub title: String,
+    pub prompt_summary: String,
+    pub role: Option<String>,
+    pub target_instance_id: String,
+    pub target_model: Option<String>,
+    pub isolation: String,
+    pub permission_mode: String,
+    pub status: String,
+    pub summary: Option<String>,
+    pub error: Option<String>,
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    pub usage_json: Option<String>,
 }
 
 /// One agent run within a thread.

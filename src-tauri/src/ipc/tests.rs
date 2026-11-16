@@ -87,6 +87,11 @@ fn seed_worktree_thread(
         workspace: Some(wt_dir.to_string_lossy().into_owned()),
         main_repo: Some(repo.to_string_lossy().into_owned()),
         worktree_name: Some(wt_name.to_string()),
+        parent_thread_id: None,
+        parent_run_id: None,
+        depth: 0,
+        lineage_kind: None,
+        child_role: None,
     };
     runtime.store().create_thread(&record).expect("create thread");
 }

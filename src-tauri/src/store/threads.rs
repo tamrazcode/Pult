@@ -9,14 +9,14 @@ use super::records::ThreadRecord;
 use super::{sql, Store};
 
 const THREAD_COLUMNS: &str =
-    "id, project_id, title, status, pinned, created_at, updated_at, workspace, main_repo, worktree_name";
+    "id, project_id, title, status, pinned, created_at, updated_at, workspace, main_repo, worktree_name, parent_thread_id, parent_run_id, depth, lineage_kind, child_role";
 
 impl Store {
     pub fn create_thread(&self, record: &ThreadRecord) -> Result<(), PultError> {
         self.with_conn(|conn| {
             conn.execute(
-                "INSERT INTO threads (id, project_id, title, status, pinned, created_at, updated_at, workspace, main_repo, worktree_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                "INSERT INTO threads (id, project_id, title, status, pinned, created_at, updated_at, workspace, main_repo, worktree_name, parent_thread_id, parent_run_id, depth, lineage_kind, child_role)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
                 params![
                     record.id,
                     record.project_id,
@@ -28,6 +28,11 @@ impl Store {
                     record.workspace,
                     record.main_repo,
                     record.worktree_name,
+                    record.parent_thread_id,
+                    record.parent_run_id,
+                    record.depth,
+                    record.lineage_kind,
+                    record.child_role,
                 ],
             )
             .map_err(|e| sql("create_thread insert", e))?;
@@ -101,6 +106,13 @@ impl Store {
                 [],
             )
             .map_err(|e| sql("reset_orphaned_run_states clear claims", e))?;
+            conn.execute(
+                "UPDATE delegated_tasks
+                 SET status = 'orphaned', finished_at = COALESCE(finished_at, ?1)
+                 WHERE status IN ('queued', 'running', 'waiting_approval', 'waiting_input')",
+                params![now_millis()],
+            )
+            .map_err(|e| sql("reset_orphaned_run_states delegated_tasks", e))?;
             Ok(changed)
         })
     }
@@ -166,5 +178,10 @@ fn thread_from_row(row: &Row<'_>) -> rusqlite::Result<ThreadRecord> {
         workspace: row.get("workspace")?,
         main_repo: row.get("main_repo")?,
         worktree_name: row.get("worktree_name")?,
+        parent_thread_id: row.get("parent_thread_id")?,
+        parent_run_id: row.get("parent_run_id")?,
+        depth: row.get("depth")?,
+        lineage_kind: row.get("lineage_kind")?,
+        child_role: row.get("child_role")?,
     })
 }

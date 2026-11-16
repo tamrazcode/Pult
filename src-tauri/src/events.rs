@@ -122,6 +122,34 @@ pub enum EventKind {
         added: u64,
         removed: u64,
     },
+    /// App-owned orchestration: a delegated child thread/run was created.
+    SubagentSpawned {
+        task_id: String,
+        child_thread_id: String,
+        child_run_id: Option<String>,
+        title: String,
+        role: Option<String>,
+        target_instance_id: String,
+        target_model: Option<String>,
+        isolation: String,
+    },
+    /// Live status/tool preview for an inline subagent card.
+    SubagentUpdated {
+        task_id: String,
+        status: String,
+        child_run_id: Option<String>,
+        active_tool_title: Option<String>,
+        pending_request_title: Option<String>,
+    },
+    /// Terminal result of a delegated task.
+    SubagentFinished {
+        task_id: String,
+        status: String,
+        summary: Option<String>,
+        error: Option<String>,
+        duration_ms: Option<u64>,
+        usage: Option<serde_json::Value>,
+    },
     /// `error` carries the failure detail for crashed runs (diagnostics UI).
     RunFinished {
         stop_reason: String,

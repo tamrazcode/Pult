@@ -6,6 +6,73 @@ use serde_json::json;
 use super::*;
 use crate::events::{Event, EventKind, PermissionOption, PlanEntry, PlanEntryStatus};
 
+#[test]
+fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
+    let store = Store::open_in_memory().unwrap();
+    let mut parent = thread("parent", 1);
+    parent.status = "working".to_string();
+    store.create_thread(&parent).unwrap();
+    let mut child = thread("child", 2);
+    child.parent_thread_id = Some("parent".to_string());
+    child.parent_run_id = Some("parent-run".to_string());
+    child.depth = 1;
+    child.lineage_kind = Some("subagent".to_string());
+    child.child_role = Some("coder".to_string());
+    store.create_thread(&child).unwrap();
+    store.create_run(&run("parent-run", "parent", 0)).unwrap();
+
+    let loaded = store.get_thread("child").unwrap();
+    assert_eq!(loaded.parent_thread_id.as_deref(), Some("parent"));
+    assert_eq!(loaded.depth, 1);
+    assert_eq!(loaded.child_role.as_deref(), Some("coder"));
+
+    let task = DelegatedTaskRecord {
+        id: "task-1".to_string(),
+        parent_thread_id: "parent".to_string(),
+        parent_run_id: "parent-run".to_string(),
+        child_thread_id: "child".to_string(),
+        child_run_id: None,
+        client_request_id: Some("req-1".to_string()),
+        title: "Implement".to_string(),
+        prompt_summary: "Do the work".to_string(),
+        role: Some("coder".to_string()),
+        target_instance_id: "inst-2".to_string(),
+        target_model: Some("model-2".to_string()),
+        isolation: "shared".to_string(),
+        permission_mode: "supervised".to_string(),
+        status: "queued".to_string(),
+        summary: None,
+        error: None,
+        started_at: 1_200,
+        finished_at: None,
+        usage_json: None,
+    };
+    let (first, deduplicated) = store.insert_or_get_delegated_task(&task).unwrap();
+    assert!(!deduplicated);
+    let (second, deduplicated) = store.insert_or_get_delegated_task(&task).unwrap();
+    assert!(deduplicated);
+    assert_eq!(first.id, second.id);
+    assert_eq!(store.list_delegated_tasks("parent").unwrap().len(), 1);
+
+    store
+        .update_delegated_task_status(
+            "task-1",
+            &DelegatedTaskUpdate {
+                status: "running",
+                child_run_id: Some("child-run"),
+                summary: None,
+                error: None,
+                usage_json: None,
+                finished_at: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(store.get_delegated_task("task-1").unwrap().status, "running");
+
+    store.reset_orphaned_run_states().unwrap();
+    assert_eq!(store.get_delegated_task("task-1").unwrap().status, "orphaned");
+}
+
 fn thread(id: &str, updated_at: i64) -> ThreadRecord {
     ThreadRecord {
         id: id.to_string(),
@@ -18,6 +85,11 @@ fn thread(id: &str, updated_at: i64) -> ThreadRecord {
         workspace: None,
         main_repo: None,
         worktree_name: None,
+        parent_thread_id: None,
+        parent_run_id: None,
+        depth: 0,
+        lineage_kind: None,
+        child_role: None,
     }
 }
 
@@ -486,7 +558,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 5, "migrations applied through v5");
+    assert_eq!(version, 6, "migrations applied through v6");
     drop(first);
 
     let second = Store::open(&path).unwrap();
@@ -769,7 +841,7 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 5, "migrations v4 and v5 should bump user_version to 5");
+    assert_eq!(version, 6, "migrations v4-v6 should bump user_version to 6");
 
     let has_pinned_col: bool = store
         .with_conn(|conn| {

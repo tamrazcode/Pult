@@ -157,6 +157,11 @@ pub(crate) async fn create_thread_with_runtime(
         workspace: workspace_value,
         main_repo,
         worktree_name,
+        parent_thread_id: None,
+        parent_run_id: None,
+        depth: 0,
+        lineage_kind: None,
+        child_role: None,
     };
     runtime.store().create_thread(&record)?;
     runtime.emit_thread_updated(&record.id);

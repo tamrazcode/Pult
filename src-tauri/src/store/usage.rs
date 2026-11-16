@@ -285,6 +285,11 @@ mod tests {
             workspace: None,
             main_repo: None,
             worktree_name: None,
+            parent_thread_id: None,
+            parent_run_id: None,
+            depth: 0,
+            lineage_kind: None,
+            child_role: None,
         }
     }
 

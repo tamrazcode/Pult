@@ -7,6 +7,7 @@
 //! itself plus session refs and settings here.
 
 mod events;
+mod delegated_tasks;
 mod migrations;
 mod projects;
 mod queue;
@@ -17,7 +18,8 @@ pub mod usage;
 #[cfg(test)]
 mod tests;
 
-pub use records::{RunRecord, ThreadRecord};
+pub use records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
+pub use delegated_tasks::DelegatedTaskUpdate;
 
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};

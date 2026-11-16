@@ -26,6 +26,24 @@ impl PermissionMode {
     pub fn from_settings_value(value: &serde_json::Value) -> Option<Self> {
         serde_json::from_value(value.clone()).ok()
     }
+
+    /// Capability rank: a child may never exceed its parent's mode.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Supervised => 0,
+            Self::AutoEdit => 1,
+            Self::Auto => 2,
+            Self::FullAccess => 3,
+        }
+    }
+
+    pub fn min(self, other: Self) -> Self {
+        if self.rank() <= other.rank() {
+            self
+        } else {
+            other
+        }
+    }
 }
 
 /// What the policy decided for one permission request.
@@ -307,6 +325,19 @@ mod tests {
     fn allow_always_kind_is_rememberable() {
         assert!(is_rememberable("allow_always"));
         assert!(!is_rememberable("allow_once"));
+    }
+
+    #[test]
+    fn min_never_escalates_a_child_above_its_parent() {
+        use PermissionMode::*;
+        assert_eq!(Supervised.min(FullAccess), Supervised);
+        assert_eq!(FullAccess.min(Supervised), Supervised);
+        assert_eq!(AutoEdit.min(Auto), AutoEdit);
+        assert_eq!(Auto.min(AutoEdit), AutoEdit);
+        assert_eq!(FullAccess.min(FullAccess), FullAccess);
+        assert!(Supervised.rank() < AutoEdit.rank());
+        assert!(AutoEdit.rank() < Auto.rank());
+        assert!(Auto.rank() < FullAccess.rank());
     }
 
     #[test]

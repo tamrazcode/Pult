@@ -95,6 +95,9 @@ fn is_barrier(kind: &EventKind) -> bool {
             | EventKind::FileChanged { .. }
             | EventKind::ModeChange { .. }
             | EventKind::Usage { .. }
+            | EventKind::SubagentSpawned { .. }
+            | EventKind::SubagentUpdated { .. }
+            | EventKind::SubagentFinished { .. }
             | EventKind::RunFinished { .. }
     )
 }

@@ -437,9 +437,17 @@ impl AcpConn {
     }
 
     pub async fn new_session(&self, cwd: &str) -> Result<NewSessionResult, DriverError> {
+        self.new_session_with_mcp(cwd, Vec::new()).await
+    }
+
+    pub async fn new_session_with_mcp(
+        &self,
+        cwd: &str,
+        mcp_servers: Vec<crate::protocol::types::McpServer>,
+    ) -> Result<NewSessionResult, DriverError> {
         let params = NewSessionParams {
             cwd: cwd.to_string(),
-            mcp_servers: Vec::new(),
+            mcp_servers,
         };
         let value = self
             .request(
@@ -453,10 +461,19 @@ impl AcpConn {
 
     /// §5.3 resume via session/load (capability-gated by the caller).
     pub async fn load_session(&self, session_id: &str, cwd: &str) -> Result<LoadSessionResult, DriverError> {
+        self.load_session_with_mcp(session_id, cwd, Vec::new()).await
+    }
+
+    pub async fn load_session_with_mcp(
+        &self,
+        session_id: &str,
+        cwd: &str,
+        mcp_servers: Vec<crate::protocol::types::McpServer>,
+    ) -> Result<LoadSessionResult, DriverError> {
         let params = LoadSessionParams {
             session_id: session_id.to_string(),
             cwd: cwd.to_string(),
-            mcp_servers: Vec::new(),
+            mcp_servers,
         };
         let value = self
             .request(

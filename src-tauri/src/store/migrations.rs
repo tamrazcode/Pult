@@ -17,6 +17,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_3,
     migration_4,
     migration_5,
+    migration_6,
 ];
 
 /// Applies every migration newer than the stored `user_version`.
@@ -169,4 +170,83 @@ fn migration_5(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 5: queue snapshot + claim", e))
+}
+
+/// Version 6: orchestration lineage (`threads` parent/depth/role),
+/// app-owned delegated tasks with idempotency, and user MCP server configs.
+fn migration_6(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE threads ADD COLUMN parent_thread_id TEXT NULL REFERENCES threads(id) ON DELETE CASCADE;
+        ALTER TABLE threads ADD COLUMN parent_run_id TEXT NULL;
+        ALTER TABLE threads ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE threads ADD COLUMN lineage_kind TEXT NULL;
+        ALTER TABLE threads ADD COLUMN child_role TEXT NULL;
+
+        CREATE INDEX idx_threads_parent ON threads(parent_thread_id);
+
+        CREATE TABLE delegated_tasks (
+            id TEXT PRIMARY KEY,
+            parent_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+            parent_run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+            child_thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+            child_run_id TEXT NULL,
+            client_request_id TEXT NULL,
+            title TEXT NOT NULL,
+            prompt_summary TEXT NOT NULL,
+            role TEXT NULL,
+            target_instance_id TEXT NOT NULL,
+            target_model TEXT NULL,
+            isolation TEXT NOT NULL DEFAULT 'shared',
+            permission_mode TEXT NOT NULL,
+            status TEXT NOT NULL,
+            summary TEXT NULL,
+            error TEXT NULL,
+            started_at INTEGER NOT NULL,
+            finished_at INTEGER NULL,
+            usage_json TEXT NULL
+        );
+
+        CREATE INDEX idx_delegated_tasks_parent_thread ON delegated_tasks(parent_thread_id, started_at);
+        CREATE INDEX idx_delegated_tasks_child_thread ON delegated_tasks(child_thread_id);
+        CREATE UNIQUE INDEX idx_delegated_tasks_idempotency
+            ON delegated_tasks(parent_thread_id, client_request_id)
+            WHERE client_request_id IS NOT NULL;
+
+        CREATE TABLE custom_mcp_servers (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            transport_kind TEXT NOT NULL,
+            transport_config_json TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'global',
+            project_id TEXT NULL REFERENCES projects(id) ON DELETE CASCADE,
+            thread_id TEXT NULL REFERENCES threads(id) ON DELETE CASCADE,
+            provider_ids_json TEXT NOT NULL DEFAULT '[]',
+            tool_allowlist_json TEXT NOT NULL DEFAULT '[]',
+            tool_denylist_json TEXT NOT NULL DEFAULT '[]',
+            timeout_ms INTEGER NOT NULL DEFAULT 30000,
+            allow_localhost INTEGER NOT NULL DEFAULT 1,
+            last_status TEXT NULL,
+            last_error TEXT NULL,
+            last_latency_ms INTEGER NULL,
+            last_checked_at INTEGER NULL,
+            tools_cache_json TEXT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        CREATE INDEX idx_custom_mcp_scope ON custom_mcp_servers(scope, project_id, thread_id);
+
+        CREATE TABLE mcp_server_bindings (
+            scope_type TEXT NOT NULL,
+            scope_id TEXT NOT NULL,
+            server_id TEXT NOT NULL REFERENCES custom_mcp_servers(id) ON DELETE CASCADE,
+            mode TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (scope_type, scope_id, server_id)
+        );
+        "#,
+    )
+    .map_err(|e| sql("migration 6: orchestration + MCP", e))
 }

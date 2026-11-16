@@ -1361,3 +1361,22 @@ mod tests {
         assert_eq!(p.options[0].kind, "allow_once");
     }
 }
+
+    #[test]
+    fn new_session_params_serialize_injected_mcp_servers() {
+        let params = NewSessionParams {
+            cwd: "C:\\work".to_string(),
+            mcp_servers: vec![McpServer::Http {
+                extra: serde_json::json!({
+                    "name": "pult",
+                    "url": "http://127.0.0.1:4321/mcp",
+                    "headers": { "Authorization": "Bearer test" }
+                }),
+            }],
+        };
+        let value = serde_json::to_value(params).unwrap();
+        assert_eq!(value["cwd"], "C:\\work");
+        assert_eq!(value["mcpServers"][0]["type"], "http");
+        assert_eq!(value["mcpServers"][0]["name"], "pult");
+        assert_eq!(value["mcpServers"][0]["url"], "http://127.0.0.1:4321/mcp");
+    }
