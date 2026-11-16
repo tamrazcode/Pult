@@ -771,7 +771,7 @@ export function Sidebar({ width }: { width: number }) {
             </button>
           </Tooltip>
           <span className="flex-1" />
-          <Tooltip label={updateLabel}>
+          <Tooltip label={updateLabel} align="right">
             <button
               type="button"
               aria-label={updateLabel}

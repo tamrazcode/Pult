@@ -5,7 +5,7 @@ import { ArrowLeft, ArrowRight, Check, GitBranch, Globe2, SquareTerminal } from 
 import { RouteHeader } from "../components/layout/WindowChrome";
 import { Button } from "../components/ui/button";
 import { PultLogo } from "../components/ui/PultLogo";
-import { ProviderLogo } from "../components/chat/ProviderLogo";
+import { ProviderLogo, providerIdentity } from "../components/chat/ProviderLogo";
 import { ConnectRow, refreshDetected } from "../components/settings/AgentConnect";
 import { ProfileCard } from "../components/profile/ProfileCard";
 import { isTauri } from "../lib/tauri";
@@ -13,24 +13,12 @@ import { settingsSet } from "../lib/ipc";
 import { useT } from "../lib/i18n";
 import { isValidHandle, sanitizeProfile, useSettingsStore } from "../stores/settings";
 import { useUiStore } from "../stores/ui";
-import type { DetectedAgent, InstanceInfo } from "../lib/types";
+import type { DetectedAgent } from "../lib/types";
 
 export const Route = createFileRoute("/welcome")({ component: WelcomePage });
 
 function shortName(agent: DetectedAgent): string {
   return agent.displayName.replace(/\s+CLI$/i, "");
-}
-
-function providerIdentity(
-  agent: DetectedAgent,
-): Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args"> {
-  return {
-    id: agent.suggestedInstanceId,
-    driver: "acp",
-    displayName: shortName(agent),
-    command: agent.command,
-    args: agent.suggestedCommand ?? [],
-  };
 }
 
 /** Smart scattered layout: 1 left, 2 opposite, 3+ on an ellipse. */

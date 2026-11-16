@@ -6,7 +6,16 @@ import type { ReactNode } from "react";
  * `title` tooltip is too slow and cannot be themed, so every icon button that
  * has no visible text should be wrapped in this.
  */
-export function Tooltip({ label, children }: { label: string; children: ReactNode }) {
+export function Tooltip({
+  label,
+  children,
+  align = "center",
+}: {
+  label: string;
+  children: ReactNode;
+  /** Right-align for controls at the panel edge so the label is not clipped. */
+  align?: "center" | "right";
+}) {
   const [open, setOpen] = useState(false);
   const timer = useRef<number | null>(null);
 
@@ -32,7 +41,9 @@ export function Tooltip({ label, children }: { label: string; children: ReactNod
       {open && (
         <span
           role="tooltip"
-          className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 rounded-(--radius-sm) border border-border-strong bg-surface-raised px-2 py-0.5 text-xs whitespace-nowrap text-text-secondary shadow-(--shadow-composer)"
+          className={`pointer-events-none absolute bottom-full z-50 mb-1.5 rounded-(--radius-sm) border border-border-strong bg-surface-raised px-2 py-0.5 text-xs whitespace-nowrap text-text-secondary shadow-(--shadow-composer) ${
+            align === "right" ? "right-0" : "left-1/2 -translate-x-1/2"
+          }`}
         >
           {label}
         </span>

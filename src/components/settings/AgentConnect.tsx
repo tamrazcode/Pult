@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Loader2, ShieldAlert, TerminalSquare } from "lucide-react";
+import { Check, Loader2, ShieldAlert } from "lucide-react";
 import {
   ipcErrorMessage,
   providersAuthenticate,
@@ -11,6 +11,7 @@ import {
 import { useUiStore } from "../../stores/ui";
 import type { DetectedAgent, PreflightReport } from "../../lib/types";
 import { SignInActions } from "./SignInActions";
+import { ProviderLogo, providerIdentity } from "../chat/ProviderLogo";
 import { useT } from "../../lib/i18n";
 
 /** Appends a detected agent as an instance without touching the others. */
@@ -170,7 +171,7 @@ export function ConnectRow({
   return (
     <div className="rounded-(--radius-md) border border-border-subtle bg-surface-raised">
       <div className="flex items-center gap-3 px-3 py-2">
-        <TerminalSquare size={16} className="shrink-0 text-text-tertiary" />
+        <ProviderLogo instance={providerIdentity(agent)} className="h-4 w-4 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm text-text-primary">{agent.displayName}</p>
           <p className="truncate text-xs text-text-tertiary">

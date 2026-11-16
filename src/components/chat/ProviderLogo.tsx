@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import type { InstanceInfo } from "../../lib/types";
+import type { DetectedAgent, InstanceInfo } from "../../lib/types";
 import claudeLogo from "../../assets/providers/claude.svg";
 import openaiLogo from "../../assets/providers/openai.svg";
 import geminiLogo from "../../assets/providers/gemini.svg";
@@ -8,6 +8,17 @@ import opencodeLogo from "../../assets/providers/opencode.svg";
 export type ProviderBrand = "claude" | "codex" | "gemini" | "opencode" | "mock" | "custom";
 
 type ProviderIdentity = Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args">;
+
+/** Detected CLIs are not instances yet, but the logo only needs their identity. */
+export function providerIdentity(agent: DetectedAgent): ProviderIdentity {
+  return {
+    id: agent.suggestedInstanceId,
+    driver: "acp",
+    displayName: agent.displayName,
+    command: agent.command,
+    args: agent.suggestedCommand ?? [],
+  };
+}
 
 /** Real instances all use driver "acp"; the binary/name identifies the brand. */
 export function detectProviderBrand(inst: ProviderIdentity): ProviderBrand {
