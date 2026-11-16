@@ -218,3 +218,10 @@
     background-clip: content-box;
   }
 }
+
+/* White provider marks disappear on the light canvas; invert only those. */
+[data-theme="light"] img[data-provider-logo="cursor"],
+[data-theme="light"] img[data-provider-logo="grok"],
+[data-theme="light"] img[data-provider-logo="pi"] {
+  filter: invert(1);
+}

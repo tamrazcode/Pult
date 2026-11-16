@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Bot, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import {
+  Bot,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Star,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
 import {
   providersAuthenticate,
   providersConfigStatus,
@@ -13,10 +24,12 @@ import { isTauri } from "../lib/tauri";
 import { preflightInstances, readCachedChecks } from "../lib/providerChecks";
 import type { CachedCheck } from "../lib/providerChecks";
 import { useUiStore } from "../stores/ui";
+import { useSettingsStore } from "../stores/settings";
 import { localizeIpcError, translate, useT } from "../lib/i18n";
 import { AddProviderDialog } from "../components/settings/AddProviderDialog";
 import { SignInActions } from "../components/settings/SignInActions";
 import { ProviderLogo } from "../components/chat/ProviderLogo";
+import { flattenSelectOptions, isModelOption } from "../components/chat/ComposerControls";
 import type { DetectedAgent, InstanceInfo, InstanceSpec, PreflightReport } from "../lib/types";
 
 export const Route = createFileRoute("/settings/providers")({ component: ProvidersSettings });
@@ -164,6 +177,15 @@ function ProvidersSettings() {
   const [adding, setAdding] = useState(false);
   const [runtimeDraft, setRuntimeDraft] = useState<DraftRuntime | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [runtimeOpen, setRuntimeOpen] = useState(false);
+  const [envDraft, setEnvDraft] = useState<Array<{ key: string; value: string }>>([]);
+  const favoriteModels = useSettingsStore((s) => s.favoriteModels);
+  const disabledModels = useSettingsStore((s) => s.disabledModels);
+  const modelOrder = useSettingsStore((s) => s.modelOrder);
+  const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel);
+  const toggleModelEnabled = useSettingsStore((s) => s.toggleModelEnabled);
+  const disableAllModels = useSettingsStore((s) => s.disableAllModels);
+  const setModelOrder = useSettingsStore((s) => s.setModelOrder);
   const [authenticating, setAuthenticating] = useState<Record<string, boolean>>({});
   const [authAttempted, setAuthAttempted] = useState<Record<string, boolean>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -226,6 +248,46 @@ function ProvidersSettings() {
     setRuntimeDraft(null);
     setNameDraft(null);
   }, [selectedId]);
+  useEffect(() => {
+    setEnvDraft(
+      selected ? Object.entries(selected.env).map(([key, value]) => ({ key, value })) : [],
+    );
+  }, [selectedId, selected?.env]);
+
+  const saveEnv = () => {
+    if (!selected) return;
+    const env = Object.fromEntries(
+      envDraft.map((row) => [row.key.trim(), row.value] as const).filter(([key]) => key.length > 0),
+    );
+    setSaveError(null);
+    void saveSpecs(specList(instances, selected.id, { env })).catch((err) =>
+      setSaveError(localizeIpcError(err)),
+    );
+  };
+
+  const modelOption = selected?.configOptions.find(isModelOption) as
+    Extract<InstanceInfo["configOptions"][number], { type: "select" }> | undefined;
+  const modelItems = modelOption ? flattenSelectOptions(modelOption.options) : [];
+  const selectedOrder = selected ? (modelOrder[selected.id] ?? []) : [];
+  const orderedModels = [...modelItems].sort((a, b) => {
+    const ai = selectedOrder.indexOf(a.value);
+    const bi = selectedOrder.indexOf(b.value);
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  const disabled = selected ? (disabledModels[selected.id] ?? []) : [];
+  const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
+  const moveModel = (modelId: string, direction: -1 | 1) => {
+    if (!selected) return;
+    const ids = orderedModels.map((model) => model.value);
+    const index = ids.indexOf(modelId);
+    const target = index + direction;
+    if (index < 0 || target < 0 || target >= ids.length) return;
+    [ids[index], ids[target]] = [ids[target]!, ids[index]!];
+    setModelOrder(selected.id, ids);
+  };
 
   const saveSpecs = async (specs: InstanceSpec[]) => {
     await providersInstancesSave(specs);
@@ -553,54 +615,215 @@ function ProvidersSettings() {
                 )}
               </div>
 
-              <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
-                {t("settings.providers.runtime")}
-              </p>
-              <p className="mt-0.5 text-xs text-text-tertiary">
-                {t("settings.providers.runtimeDesc")}
-              </p>
-              <div className="mt-1.5 space-y-2">
-                <input
-                  value={runtimeDraft ? runtimeDraft.command : selected.command}
-                  onChange={(e) =>
-                    setRuntimeDraft(
-                      runtimeDraft
-                        ? { ...runtimeDraft, command: e.target.value }
-                        : { command: e.target.value, args: selected.args.join(", ") },
+              <button
+                type="button"
+                onClick={() => setRuntimeOpen((open) => !open)}
+                className="mt-5 flex w-full items-center gap-1 text-left"
+              >
+                <span className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                  {t("settings.providers.runtime")}
+                </span>
+                {runtimeOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
+              {runtimeOpen && (
+                <>
+                  <p className="mt-0.5 text-xs text-text-tertiary">
+                    {t("settings.providers.runtimeDesc")}
+                  </p>
+                  <div className="mt-1.5 space-y-2">
+                    <input
+                      value={runtimeDraft ? runtimeDraft.command : selected.command}
+                      onChange={(e) =>
+                        setRuntimeDraft(
+                          runtimeDraft
+                            ? { ...runtimeDraft, command: e.target.value }
+                            : { command: e.target.value, args: selected.args.join(", ") },
+                        )
+                      }
+                      className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                    />
+                    <input
+                      value={runtimeDraft ? runtimeDraft.args : selected.args.join(", ")}
+                      onChange={(e) =>
+                        setRuntimeDraft(
+                          runtimeDraft
+                            ? { ...runtimeDraft, args: e.target.value }
+                            : { command: selected.command, args: e.target.value },
+                        )
+                      }
+                      placeholder={t("settings.providers.args")}
+                      className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                    />
+                    {runtimeDraft &&
+                      (runtimeDraft.command !== selected.command ||
+                        runtimeDraft.args !== selected.args.join(", ")) && (
+                        <div className="flex justify-end gap-2">
+                          <button
+                            onClick={() => setRuntimeDraft(null)}
+                            className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                          >
+                            <X size={12} /> {t("common.cancel")}
+                          </button>
+                          <button
+                            onClick={saveRuntime}
+                            className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                          >
+                            {t("settings.providers.saveRuntime")}
+                          </button>
+                        </div>
+                      )}
+                  </div>
+                </>
+              )}
+
+              <div className="mt-5 flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                    Environment
+                  </p>
+                  <p className="mt-0.5 text-xs text-text-tertiary">
+                    API keys, base URLs, and other per-instance CLI settings.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnvDraft((rows) => [...rows, { key: "", value: "" }])}
+                  className="flex h-7 shrink-0 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
+                >
+                  <Plus size={12} /> Add variable
+                </button>
+              </div>
+              <div className="mt-2 space-y-2">
+                {envDraft.map((row, index) => (
+                  <div key={index} className="flex gap-2">
+                    <input
+                      value={row.key}
+                      onChange={(e) =>
+                        setEnvDraft((rows) =>
+                          rows.map((candidate, i) =>
+                            i === index ? { ...candidate, key: e.target.value } : candidate,
+                          ),
+                        )
+                      }
+                      placeholder="KEY"
+                      className="h-7 w-40 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-xs text-text-primary focus:outline-none"
+                    />
+                    <input
+                      value={row.value}
+                      onChange={(e) =>
+                        setEnvDraft((rows) =>
+                          rows.map((candidate, i) =>
+                            i === index ? { ...candidate, value: e.target.value } : candidate,
+                          ),
+                        )
+                      }
+                      placeholder="value"
+                      className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-xs text-text-primary focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      aria-label="Remove variable"
+                      onClick={() => setEnvDraft((rows) => rows.filter((_, i) => i !== index))}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-danger"
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                ))}
+                {envDraft.length > 0 && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={saveEnv}
+                      className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                    >
+                      {t("common.save")}
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-5 flex items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                    Models
+                  </p>
+                  <p className="mt-0.5 text-xs text-text-tertiary">
+                    {modelItems.length} model{modelItems.length === 1 ? "" : "s"} reported by the
+                    agent.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  disabled={modelItems.length === 0}
+                  onClick={() =>
+                    selected &&
+                    disableAllModels(
+                      selected.id,
+                      modelItems.map((model) => model.value),
                     )
                   }
-                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-                />
-                <input
-                  value={runtimeDraft ? runtimeDraft.args : selected.args.join(", ")}
-                  onChange={(e) =>
-                    setRuntimeDraft(
-                      runtimeDraft
-                        ? { ...runtimeDraft, args: e.target.value }
-                        : { command: selected.command, args: e.target.value },
-                    )
-                  }
-                  placeholder={t("settings.providers.args")}
-                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
-                />
-                {runtimeDraft &&
-                  (runtimeDraft.command !== selected.command ||
-                    runtimeDraft.args !== selected.args.join(", ")) && (
-                    <div className="flex justify-end gap-2">
+                  className="h-7 shrink-0 rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary disabled:opacity-40"
+                >
+                  Disable all
+                </button>
+              </div>
+              <div className="mt-2 space-y-0.5">
+                {orderedModels.map((model) => {
+                  const off = disabled.includes(model.value);
+                  const favorite = favorites.includes(model.value);
+                  return (
+                    <div
+                      key={model.value}
+                      className="flex items-center gap-1.5 rounded-(--radius-sm) px-1.5 py-1 transition hover:bg-hover"
+                    >
                       <button
-                        onClick={() => setRuntimeDraft(null)}
-                        className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                        type="button"
+                        aria-label={
+                          favorite ? `Unfavorite ${model.name}` : `Favorite ${model.name}`
+                        }
+                        onClick={() => selected && toggleFavoriteModel(selected.id, model.value)}
+                        className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) transition hover:bg-active ${
+                          favorite ? "text-warning" : "text-text-tertiary"
+                        }`}
                       >
-                        <X size={12} /> {t("common.cancel")}
+                        <Star size={11} fill={favorite ? "currentColor" : "none"} />
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm text-text-primary">{model.name}</p>
+                        <p className="truncate font-mono text-xs text-text-tertiary">
+                          {model.value}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={`Move ${model.name} up`}
+                        onClick={() => moveModel(model.value, -1)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-active hover:text-text-secondary"
+                      >
+                        <ArrowUp size={11} />
                       </button>
                       <button
-                        onClick={saveRuntime}
-                        className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                        type="button"
+                        aria-label={`Move ${model.name} down`}
+                        onClick={() => moveModel(model.value, 1)}
+                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-active hover:text-text-secondary"
                       >
-                        {t("settings.providers.saveRuntime")}
+                        <ArrowDown size={11} />
                       </button>
+                      <Toggle
+                        on={!off}
+                        label={`${off ? "Enable" : "Disable"} ${model.name}`}
+                        onClick={() => selected && toggleModelEnabled(selected.id, model.value)}
+                      />
                     </div>
-                  )}
+                  );
+                })}
+                {modelItems.length === 0 && (
+                  <p className="rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-2 text-xs text-text-tertiary">
+                    This provider has not reported a model list yet. Check the connection first.
+                  </p>
+                )}
               </div>
 
               <div className="mt-6 flex items-center gap-2 border-t border-border-subtle pt-4">

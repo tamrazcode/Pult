@@ -422,10 +422,22 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const favoriteModels = useSettingsStore((s) => s.favoriteModels);
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel);
   const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
+  const allDisabledModels = useSettingsStore((s) => s.disabledModels);
+  const allModelOrder = useSettingsStore((s) => s.modelOrder);
+  const disabledModels = selected ? (allDisabledModels[selected.id] ?? []) : [];
+  const modelOrder = selected ? (allModelOrder[selected.id] ?? []) : [];
   const modelItems = modelOption ? flattenSelectOptions(modelOption.options) : [];
-  const visibleModels = modelItems.filter((item) =>
-    item.name.toLowerCase().includes(modelQuery.trim().toLowerCase()),
-  );
+  const orderedModels = [...modelItems].sort((a, b) => {
+    const ai = modelOrder.indexOf(a.value);
+    const bi = modelOrder.indexOf(b.value);
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+    return ai - bi;
+  });
+  const visibleModels = orderedModels
+    .filter((item) => !disabledModels.includes(item.value))
+    .filter((item) => item.name.toLowerCase().includes(modelQuery.trim().toLowerCase()));
   // Codex exposes a boolean "fast" switch; surface it as a lightning bolt
   // beside the picker instead of hiding it in an overflow menu.
   const fastOption = options.find(

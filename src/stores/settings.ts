@@ -74,6 +74,8 @@ interface SettingsState {
   keybindings: Record<string, string>;
   /** Starred model ids per provider instance (composer picker). */
   favoriteModels: Record<string, string[]>;
+  disabledModels: Record<string, string[]>;
+  modelOrder: Record<string, string[]>;
   setTheme: (theme: ThemeName) => void;
   setAccentHue: (hue: number | null) => void;
   setPermissionMode: (mode: PermissionMode) => void;
@@ -88,6 +90,9 @@ interface SettingsState {
   setPreferredEditor: (editor: EditorId) => void;
   setKeybinding: (commandId: string, binding: string) => void;
   toggleFavoriteModel: (instanceId: string, modelId: string) => void;
+  toggleModelEnabled: (instanceId: string, modelId: string) => void;
+  disableAllModels: (instanceId: string, modelIds: string[]) => void;
+  setModelOrder: (instanceId: string, order: string[]) => void;
   /** Loads persisted appearance + permission settings once at boot. */
   hydrate: () => Promise<void>;
 }
@@ -146,6 +151,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   preferredEditor: "zed",
   keybindings: {},
   favoriteModels: {},
+  disabledModels: {},
+  modelOrder: {},
   setTheme: (theme) => {
     set({ theme });
     applyTheme(theme, get().accentHue);
@@ -227,6 +234,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ favoriteModels });
     if (isTauri()) void settingsSet("favorite_models", favoriteModels).catch(() => {});
   },
+  toggleModelEnabled: (instanceId, modelId) => {
+    const current = get().disabledModels[instanceId] ?? [];
+    const next = current.includes(modelId)
+      ? current.filter((id) => id !== modelId)
+      : [...current, modelId];
+    const disabledModels = { ...get().disabledModels, [instanceId]: next };
+    set({ disabledModels });
+    if (isTauri()) void settingsSet("disabled_models", disabledModels).catch(() => {});
+  },
+  disableAllModels: (instanceId, modelIds) => {
+    const disabledModels = { ...get().disabledModels, [instanceId]: [...modelIds] };
+    set({ disabledModels });
+    if (isTauri()) void settingsSet("disabled_models", disabledModels).catch(() => {});
+  },
+  setModelOrder: (instanceId, order) => {
+    const modelOrder = { ...get().modelOrder, [instanceId]: order };
+    set({ modelOrder });
+    if (isTauri()) void settingsSet("model_order", modelOrder).catch(() => {});
+  },
   hydrate: async () => {
     if (!isTauri()) return;
     const [
@@ -235,6 +261,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       permissionMode,
       keybindings,
       favoriteModels,
+      disabledModels,
+      modelOrder,
       confirmDelete,
       sendKey,
       showTimestamps,
@@ -252,6 +280,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("permission_mode").catch(() => null),
       settingsGet("keybindings").catch(() => null),
       settingsGet("favorite_models").catch(() => null),
+      settingsGet("disabled_models").catch(() => null),
+      settingsGet("model_order").catch(() => null),
       settingsGet("confirm_delete_thread").catch(() => null),
       settingsGet("send_key").catch(() => null),
       settingsGet("show_timestamps").catch(() => null),
@@ -300,6 +330,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       favoriteModels:
         favoriteModels && typeof favoriteModels === "object"
           ? (favoriteModels as Record<string, string[]>)
+          : {},
+      disabledModels:
+        disabledModels && typeof disabledModels === "object"
+          ? (disabledModels as Record<string, string[]>)
+          : {},
+      modelOrder:
+        modelOrder && typeof modelOrder === "object"
+          ? (modelOrder as Record<string, string[]>)
           : {},
     });
     applyTheme(resolvedTheme, resolvedHue);

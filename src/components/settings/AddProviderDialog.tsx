@@ -3,12 +3,26 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, Check, X } from "lucide-react";
 import { ProviderLogo } from "../chat/ProviderLogo";
 import { PROVIDER_CATALOG, type ProviderCatalogEntry } from "../../lib/providerCatalog";
-import { providersInstancesList, providersInstancesSave } from "../../lib/ipc";
+import { providersInstancesList, providersInstancesSave, providersPreflight } from "../../lib/ipc";
 import { localizeIpcError } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
 import type { DetectedAgent, InstanceInfo } from "../../lib/types";
 
 const ID_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/;
+
+function fieldsFor(entry: ProviderCatalogEntry, detected: DetectedAgent[]) {
+  const agent = detected.find(
+    (candidate) =>
+      candidate.suggestedInstanceId === entry.detectedId || candidate.id === entry.detectedId,
+  );
+  const suggested = agent?.suggestedCommand;
+  return {
+    label: agent ? agent.displayName : entry.displayName,
+    id: agent?.suggestedInstanceId ?? entry.id,
+    command: suggested?.[0] ?? entry.command,
+    args: (suggested ? suggested.slice(1) : entry.args).join("\n"),
+  };
+}
 
 /** Three-step Add provider wizard with a blurred app-wide backdrop. */
 export function AddProviderDialog({
@@ -24,14 +38,17 @@ export function AddProviderDialog({
 }) {
   const [step, setStep] = useState(0);
   const [entry, setEntry] = useState<ProviderCatalogEntry>(PROVIDER_CATALOG[0]!);
-  const [label, setLabel] = useState("");
-  const [id, setId] = useState("");
-  const [command, setCommand] = useState("");
-  const [args, setArgs] = useState("");
+  const initial = fieldsFor(PROVIDER_CATALOG[0]!, detected);
+  const [label, setLabel] = useState(initial.label);
+  const [id, setId] = useState(initial.id);
+  const [command, setCommand] = useState(initial.command);
+  const [args, setArgs] = useState(initial.args);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const detectedAgent = useMemo(
     () =>
@@ -46,7 +63,7 @@ export function AddProviderDialog({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab" || !panelRef.current) return;
@@ -56,7 +73,10 @@ export function AddProviderDialog({
       if (focusable.length === 0) return;
       const first = focusable[0]!;
       const last = focusable[focusable.length - 1]!;
-      if (event.shiftKey && document.activeElement === first) {
+      if (!panelRef.current.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -66,19 +86,15 @@ export function AddProviderDialog({
     };
     window.addEventListener("keydown", onKey, { capture: true });
     return () => window.removeEventListener("keydown", onKey, { capture: true });
-  }, [onClose]);
+  }, []);
 
   const choose = (next: ProviderCatalogEntry) => {
-    const agent = detected.find(
-      (candidate) =>
-        candidate.suggestedInstanceId === next.detectedId || candidate.id === next.detectedId,
-    );
-    const suggested = agent?.suggestedCommand;
+    const fields = fieldsFor(next, detected);
     setEntry(next);
-    setLabel(agent ? agent.displayName : next.displayName);
-    setId(agent?.suggestedInstanceId ?? next.id);
-    setCommand(suggested?.[0] ?? next.command);
-    setArgs((suggested ? suggested.slice(1) : next.args).join("\n"));
+    setLabel(fields.label);
+    setId(fields.id);
+    setCommand(fields.command);
+    setArgs(fields.args);
     setError(null);
   };
 
@@ -120,6 +136,10 @@ export function AddProviderDialog({
     setError(null);
     try {
       const all = await providersInstancesList();
+      if (all.some((instance) => instance.id === id.trim())) {
+        setError("That instance ID is taken.");
+        return;
+      }
       const next = all
         .filter((instance) => instance.id !== id.trim())
         .map((instance) => ({
@@ -144,6 +164,23 @@ export function AddProviderDialog({
         enabled: true,
       });
       await providersInstancesSave(next);
+      try {
+        await providersPreflight(id.trim());
+      } catch (err) {
+        await providersInstancesSave(
+          all.map((instance) => ({
+            id: instance.id,
+            displayName: instance.displayName,
+            driver: instance.driver,
+            command: instance.command,
+            args: instance.args,
+            env: instance.env,
+            enabled: instance.enabled,
+          })),
+        );
+        setError(`Connection failed: ${localizeIpcError(err)}`);
+        return;
+      }
       await useUiStore.getState().loadInstances();
       onAdded(id.trim());
       onClose();

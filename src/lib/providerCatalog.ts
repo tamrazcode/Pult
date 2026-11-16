@@ -22,8 +22,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: "OpenAI's coding agent through the official ACP bridge.",
     brand: "codex",
     detectedId: "codex",
-    command: "codex",
-    args: [],
+    command: "npx",
+    args: ["-y", "@agentclientprotocol/codex-acp"],
   },
   {
     id: "claude-code",
@@ -31,8 +31,8 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     description: "Anthropic's Claude Code through the community ACP adapter.",
     brand: "claude",
     detectedId: "claude-code",
-    command: "claude",
-    args: [],
+    command: "npx",
+    args: ["-y", "@zed-industries/claude-code-acp"],
   },
   {
     id: "cursor",

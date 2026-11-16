@@ -209,7 +209,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     setValue(composerPrefill);
     useUiStore.getState().setComposerPrefill(null);
     requestAnimationFrame(() => textareaRef.current?.focus());
-  }, [composerPrefill]);
+  }, [composerPrefill, setValue]);
 
   // Reopening a thread restores the provider it last used; a stale send error
   // from another thread must not leak into this composer.
@@ -337,10 +337,13 @@ export function Composer({ threadId }: { threadId?: string }) {
     requestAnimationFrame(autosize);
   }, [autosize, setValue]);
 
-  const pickSlash = useCallback((command: CommandInfo) => {
-    setValue(formatSlashInsertion(command));
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  }, []);
+  const pickSlash = useCallback(
+    (command: CommandInfo) => {
+      setValue(formatSlashInsertion(command));
+      requestAnimationFrame(() => textareaRef.current?.focus());
+    },
+    [setValue],
+  );
 
   const pickMention = useCallback(
     (path: string) => {
@@ -359,7 +362,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         autosize();
       });
     },
-    [mention, value, autosize],
+    [mention, value, autosize, setValue],
   );
 
   const handleSend = useCallback(() => {
@@ -510,7 +513,7 @@ export function Composer({ threadId }: { threadId?: string }) {
       })
       .catch((err) => setError(localizeIpcError(err)))
       .finally(() => setBusy(false));
-  }, [threadId, editingQueueId, value, autosize]);
+  }, [threadId, editingQueueId, value, autosize, setValue]);
 
   const startQueueEdit = useCallback(
     (item: { id: string; text: string }) => {
@@ -522,7 +525,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         autosize();
       });
     },
-    [value, autosize],
+    [value, autosize, setValue],
   );
 
   const cancelQueueEdit = useCallback(() => {
@@ -530,7 +533,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     setValue(queueDraftRef.current);
     queueDraftRef.current = "";
     requestAnimationFrame(autosize);
-  }, [autosize]);
+  }, [autosize, setValue]);
 
   const moveQueueItem = useCallback(
     (from: number, to: number) => {

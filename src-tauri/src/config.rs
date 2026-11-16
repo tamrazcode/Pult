@@ -195,20 +195,6 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
             "xAI's CLI speaks ACP (`grok agent stdio`) — sign in with `grok` first.",
         ),
         (
-            "cursor-agent",
-            "cursor",
-            "Cursor",
-            Some(vec!["cursor-agent".to_string(), "acp".to_string()]),
-            "Cursor CLI ACP mode; experimental until the CLI ships a stable `acp` command.",
-        ),
-        (
-            "muse",
-            "muse",
-            "Muse Code",
-            Some(vec!["muse".to_string(), "acp".to_string()]),
-            "Muse Code ACP (>= 1.4.16) — experimental; sign in with `muse login`.",
-        ),
-        (
             "dsh",
             "dsh",
             "dsh",
@@ -400,7 +386,7 @@ mod tests {
         for agent in detect_installed() {
             assert!(matches!(
                 agent.id.as_str(),
-                "claude-code" | "gemini-cli" | "codex" | "opencode" | "dsh" | "antigravity" | "grok" | "cursor" | "muse"
+                "claude-code" | "gemini-cli" | "codex" | "opencode" | "dsh" | "antigravity" | "grok"
             ));
             assert!(
                 agent.suggested_command.is_some(),
