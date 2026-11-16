@@ -153,7 +153,7 @@ export const fr: Record<string, string> = {
   "chat.thinking": "Réflexion",
   "chat.thoughtFor": "A réfléchi pendant {{duration}}",
   "chat.workingFor": "Travaille depuis {{duration}}",
-  "chat.thinkingWithDuration": "Réflexion · {{duration}}",
+  "chat.thinkingWithDuration": "Réfléchit · {{duration}}",
   "chat.approvalNeeded": "Approbation requise",
   "chat.approvalAlwaysScope":
     "« Toujours » s’applique uniquement à cet agent et ce projet — révoquez-le dans Paramètres ▸ Général.",

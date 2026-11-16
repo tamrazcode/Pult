@@ -151,10 +151,10 @@ export const ru: Record<string, string> = {
 
   // chat
   "chat.newThread": "Новый тред",
-  "chat.thinking": "Рассуждение",
+  "chat.thinking": "Думает…",
   "chat.thoughtFor": "Рассуждал {{duration}}",
   "chat.workingFor": "Работает {{duration}}",
-  "chat.thinkingWithDuration": "Рассуждение · {{duration}}",
+  "chat.thinkingWithDuration": "Думает · {{duration}}",
   "chat.approvalNeeded": "Требуется подтверждение",
   "chat.approvalAlwaysScope":
     "«Всегда» действует только для этого агента и проекта — отозвать можно в Настройки ▸ Основные.",

@@ -25,11 +25,22 @@
 
 - [ ] `PRODUCT.md` / `DESIGN.md` отсутствуют: зафиксировать токены, компоненты и состояния.
 - [ ] Скрипты проектов хранятся в localStorage, а не в SQLite (осознанный shortcut).
-- [ ] Встроенный браузер — sandbox-iframe: сайты с `X-Frame-Options`/CSP открываются в системном
-      браузере; локальный HTML с относительными внешними ассетами может их не подтянуть.
+- [ ] Встроенный браузер: нативный child webview работает, но страницы с `target=_blank` и
+      скачивания пока не перехватываются; нужен `on_new_window`/download handler, если понадобится.
 - [ ] История чата грузится целиком: добавлена бюджетная обрезка IPC (16 МБ) и one-pass
       `hydrateThread`, но постраничная загрузка появится после измерения на реальных объёмах.
 - [ ] Проверить и при необходимости ускорить ConPTY-тест (флейк на медленной машине).
+
+## Публикация на GitHub (open source)
+
+- [ ] Создать репозиторий (без README/LICENSE), добавить remote и запушить `main`.
+- [ ] Заполнить `repository`/`homepage`/`bugs` в `package.json` и `Cargo.toml` реальным URL.
+- [ ] Включить Issues, branch protection для `main`, Dependabot.
+- [ ] Секреты репозитория: `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`;
+      заменить `releases.pult.local` на реальный HTTPS-endpoint апдейтера.
+- [ ] Windows Authenticode + macOS `codesign`/`notarytool` для релизных артефактов.
+- [ ] Тег `v0.1.0` и GitHub Release с NSIS/dmg/AppImage + `.sig`.
+- [ ] Проверить, что в истории нет `pult.db`, `outputs/`, `docs/reviews/`, ключей (уже в `.gitignore`).
 
 ## Отклонено осознанно
 
