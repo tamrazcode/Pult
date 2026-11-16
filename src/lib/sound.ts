@@ -20,7 +20,7 @@ function audioContext(): AudioContext | null {
 export function playNotificationSound(kind: NotificationSound): void {
   const audio = audioContext();
   if (!audio) return;
-  void audio.resume();
+  void audio.resume().catch(() => {});
   const notes = kind === "error" ? [392, 311.13] : kind === "cancelled" ? [440] : [523.25, 659.25];
   notes.forEach((frequency, index) => {
     const start = audio.currentTime + index * 0.16;

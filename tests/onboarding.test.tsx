@@ -144,8 +144,8 @@ describe("Onboarding wizard (WelcomePage)", () => {
     expect(settingsSet).toHaveBeenCalledWith("profile", expectedProfile);
     expect(settingsSet).toHaveBeenCalledWith("onboarding_completed", true);
 
-    act(() => {
-      vi.advanceTimersByTime(520);
+    await act(async () => {
+      await vi.runAllTimersAsync();
     });
     expect(navigate).toHaveBeenCalledWith({ to: "/chat", replace: true });
   });

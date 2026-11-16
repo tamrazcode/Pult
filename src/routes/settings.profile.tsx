@@ -200,7 +200,7 @@ function ProfileSettings() {
           <p className="mb-2 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
             {t("profile.preview")}
           </p>
-          <ProfileCard profile={profile ?? draft} />
+          <ProfileCard profile={draft} />
         </div>
       </div>
     </div>

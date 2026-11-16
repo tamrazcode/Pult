@@ -10,6 +10,7 @@ import { isTauri } from "../lib/tauri";
 import { settingsSet } from "../lib/ipc";
 import { useT } from "../lib/i18n";
 import { isValidHandle, sanitizeProfile, useSettingsStore } from "../stores/settings";
+import { useUiStore } from "../stores/ui";
 import type { DetectedAgent } from "../lib/types";
 
 export const Route = createFileRoute("/welcome")({ component: WelcomePage });
@@ -37,6 +38,7 @@ export function WelcomePage() {
   const t = useT();
   const router = useRouter();
   const profile = useSettingsStore((s) => s.profile);
+  const instances = useUiStore((s) => s.instances);
   const setProfile = useSettingsStore((s) => s.setProfile);
   const [step, setStep] = useState(0);
   const [detected, setDetected] = useState<DetectedAgent[]>([]);
@@ -66,6 +68,7 @@ export function WelcomePage() {
   );
 
   const finish = () => {
+    if (finishing) return;
     const candidate = sanitizeProfile({
       ...draft,
       nickname: nickname.trim(),
@@ -80,9 +83,12 @@ export function WelcomePage() {
       return;
     }
     setProfile(candidate);
-    void settingsSet("onboarding_completed", true).catch(() => {});
     setFinishing(true);
-    window.setTimeout(() => void router.navigate({ to: "/chat", replace: true }), 520);
+    void settingsSet("onboarding_completed", true)
+      .catch(() => {})
+      .finally(() => {
+        window.setTimeout(() => void router.navigate({ to: "/chat", replace: true }), 520);
+      });
   };
 
   const nodes = detected.slice(0, NODE_POSITIONS.length);
@@ -203,7 +209,11 @@ export function WelcomePage() {
                   >
                     <ConnectRow
                       agent={agent}
-                      alreadyAdded={false}
+                      alreadyAdded={instances.some(
+                        (instance) =>
+                          instance.id === agent.suggestedInstanceId ||
+                          instance.command === agent.command,
+                      )}
                       onAdded={() => void refreshDetected(setDetected)}
                     />
                   </div>
@@ -317,7 +327,7 @@ export function WelcomePage() {
                       <input
                         type="file"
                         accept="image/*"
-                        className="hidden"
+                        className="sr-only"
                         onChange={(event) => {
                           const file = event.target.files?.[0];
                           if (!file || file.size > 1_500_000) return;
@@ -337,7 +347,7 @@ export function WelcomePage() {
                   )}
                 </div>
                 <div className="space-y-3">
-                  <ProfileCard profile={profile ?? draft} />
+                  <ProfileCard profile={draft} />
                   <div className="flex justify-end gap-2">
                     <Button variant="ghost" size="sm" onClick={() => setStep(2)}>
                       <ArrowLeft size={13} /> {t("onboarding.back")}

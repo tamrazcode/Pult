@@ -27,6 +27,7 @@ function PluginsSettings() {
 
   const toggle = (plugin: PluginInfo) => {
     const enabled = !plugin.enabled;
+    setError(null);
     setPlugins((items) =>
       items.map((item) => (item.id === plugin.id ? { ...item, enabled } : item)),
     );

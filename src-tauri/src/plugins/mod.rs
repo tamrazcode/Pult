@@ -48,15 +48,16 @@ fn enabled_map(runtime: &AgentRuntime) -> serde_json::Map<String, serde_json::Va
 fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 64
-        && id
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_')
+        && id.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_' || c == '.'
+        })
 }
 
 #[tauri::command]
 pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> Result<PluginList, PultError> {
     let dir = plugins_dir();
     let state = enabled_map(&runtime);
+    let mut seen = std::collections::HashSet::new();
     let mut plugins = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.flatten() {
@@ -72,7 +73,10 @@ pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> 
                 continue;
             };
             let id = manifest.get("id").and_then(|v| v.as_str()).unwrap_or("");
-            if !valid_id(id) {
+            if !valid_id(id) || !seen.insert(id.to_owned()) {
+                continue;
+            }
+            if entry.file_name().to_str() != Some(id) {
                 continue;
             }
             let string = |key: &str| manifest.get(key).and_then(|v| v.as_str()).map(str::to_owned);
@@ -107,7 +111,7 @@ pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> 
             });
         }
     }
-    plugins.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    plugins.sort_by_key(|plugin| plugin.name.to_lowercase());
     Ok(PluginList {
         dir: dir.display().to_string(),
         plugins,

@@ -72,11 +72,19 @@ function RootLayout() {
     let cancelled = false;
     void (async () => {
       const [done, threads, projects] = await Promise.all([
-        settingsGet("onboarding_completed").catch(() => null),
-        threadsList().catch(() => []),
-        projectsList().catch(() => []),
+        settingsGet("onboarding_completed").catch(() => undefined),
+        threadsList().catch(() => undefined),
+        projectsList().catch(() => undefined),
       ]);
-      if (cancelled || done === true) return;
+      if (
+        cancelled ||
+        done === undefined ||
+        threads === undefined ||
+        projects === undefined ||
+        done === true
+      ) {
+        return;
+      }
       if (threads.length === 0 && projects.length === 0) {
         void router.navigate({ to: "/welcome", replace: true });
       } else {
