@@ -25,6 +25,22 @@ fixtures/gh-mock-log.txt
 outputs/
 docs/reviews/
 
+# Development-only material: kept locally, never published
+tests/
+docs/
+fixtures/
+scripts/
+protocol/
+.github/
+AGENTS.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+TODO.md
+DEVLOG.md
+playwright.config.ts
+vitest.config.ts
+
 # Signing / updater secrets
 *.key
 *.pem
