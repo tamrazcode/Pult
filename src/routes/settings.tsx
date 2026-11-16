@@ -11,9 +11,12 @@ import {
   Palette,
   Search,
   Settings2,
+  UserRound,
 } from "lucide-react";
 import { RouteHeader } from "../components/layout/WindowChrome";
+import { ProfileAvatar } from "../components/profile/ProfileCard";
 import { useT } from "../lib/i18n";
+import { useSettingsStore } from "../stores/settings";
 
 export const Route = createFileRoute("/settings")({ component: SettingsLayout });
 
@@ -26,6 +29,7 @@ interface NavItem {
 const NAV_GROUPS: { titleKey?: string; items: NavItem[] }[] = [
   {
     items: [
+      { to: "/settings/profile", labelKey: "settings.nav.profile", icon: UserRound },
       { to: "/settings/general", labelKey: "settings.nav.general", icon: Settings2 },
       { to: "/settings/appearance", labelKey: "settings.nav.appearance", icon: Palette },
       { to: "/settings/chat", labelKey: "settings.nav.chat", icon: MessageSquare },
@@ -59,6 +63,7 @@ export function SettingsLayout() {
   const activeItem = NAV_GROUPS.flatMap((group) => group.items).find(
     (item) => item.to === pathname,
   );
+  const profile = useSettingsStore((s) => s.profile);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -141,21 +146,25 @@ export function SettingsLayout() {
 
           <div className="border-t border-border-subtle px-1 pt-2">
             <Link
-              to="/settings/general"
+              to="/settings/profile"
               className="flex items-center gap-2 rounded-(--radius-sm) px-1 py-1 text-text-secondary transition hover:bg-hover"
             >
-              <span
-                aria-hidden
-                className="flex h-6 w-6 items-center justify-center rounded-full bg-active text-xs font-semibold text-text-secondary"
-              >
-                P
-              </span>
+              {profile ? (
+                <ProfileAvatar profile={profile} size={24} />
+              ) : (
+                <span
+                  aria-hidden
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-active text-xs font-semibold text-text-secondary"
+                >
+                  P
+                </span>
+              )}
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs text-text-primary">
-                  {t("settings.footer.localUser")}
+                  {profile?.nickname ?? t("settings.footer.localUser")}
                 </span>
                 <span className="block truncate text-xs text-text-tertiary">
-                  {t("settings.footer.onThisComputer")}
+                  {profile ? `@${profile.handle}` : t("settings.footer.onThisComputer")}
                 </span>
               </span>
             </Link>

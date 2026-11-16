@@ -27,10 +27,28 @@ export const PERMISSION_MODE_DESCRIPTIONS: Record<PermissionMode, string> = {
   full_access: "Never asks. The agent still runs as you, with your file and network access.",
 };
 
+export interface LocalProfileAvatar {
+  kind: "initials" | "image";
+  /** Data URL for an uploaded avatar; empty for initials. */
+  value: string;
+  /** Accent hue (0–360) for the initials avatar ring. */
+  hue: number;
+}
+
+export interface LocalProfile {
+  version: 1;
+  nickname: string;
+  handle: string;
+  avatar: LocalProfileAvatar;
+}
+
 interface SettingsState {
   theme: ThemeName;
   accentHue: number | null;
   permissionMode: PermissionMode;
+  /** Local-only identity used by the profile card and notifications. */
+  profile: LocalProfile | null;
+  setProfile: (profile: LocalProfile | null) => void;
   /** UI language; English is the default and the fallback catalog. */
   language: LocaleId;
   setLanguage: (language: LocaleId) => void;
@@ -77,10 +95,45 @@ interface SettingsState {
 const isThemeName = (v: unknown): v is ThemeName =>
   v === "dark" || v === "light" || v === "graphite" || v === "liquid";
 
+/** Lowercase handle without the leading @; 2–24 letters, digits or underscores. */
+export function isValidHandle(value: string): boolean {
+  return /^[a-z0-9_]{2,24}$/.test(value);
+}
+
+export function sanitizeProfile(value: unknown): LocalProfile | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const nickname = typeof record.nickname === "string" ? record.nickname.trim().slice(0, 40) : "";
+  const handle =
+    typeof record.handle === "string"
+      ? record.handle.replace(/^@/, "").toLowerCase().slice(0, 24)
+      : "";
+  if (!nickname || !isValidHandle(handle)) return null;
+  const avatar =
+    record.avatar && typeof record.avatar === "object"
+      ? (record.avatar as Record<string, unknown>)
+      : {};
+  const rawValue = typeof avatar.value === "string" ? avatar.value : "";
+  const image = rawValue.startsWith("data:image/") && rawValue.length < 2_500_000;
+  const hue =
+    typeof avatar.hue === "number" && Number.isFinite(avatar.hue) ? avatar.hue % 360 : 215;
+  return {
+    version: 1,
+    nickname,
+    handle,
+    avatar: {
+      kind: image ? "image" : "initials",
+      value: image ? rawValue : "",
+      hue: Math.max(0, hue),
+    },
+  };
+}
+
 export const useSettingsStore = create<SettingsState>((set, get) => ({
   theme: "dark",
   accentHue: null,
   permissionMode: "supervised",
+  profile: null,
   language: "en",
   confirmDeleteThread: true,
   sendKey: "enter",
@@ -106,6 +159,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setPermissionMode: (permissionMode) => {
     set({ permissionMode });
     if (isTauri()) void settingsSet("permission_mode", permissionMode).catch(() => {});
+  },
+  setProfile: (profile) => {
+    set({ profile });
+    if (isTauri()) void settingsSet("profile", profile).catch(() => {});
   },
   setLanguage: (language) => {
     set({ language });
@@ -188,6 +245,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       preferredEditor,
       glassOpacity,
       language,
+      profile,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -204,6 +262,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("preferred_editor").catch(() => null),
       settingsGet("glass_opacity").catch(() => null),
       settingsGet("language").catch(() => null),
+      settingsGet("profile").catch(() => null),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "dark";
     const resolvedHue =
@@ -216,12 +275,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         ? permissionMode
         : "supervised";
     const resolvedLanguage: LocaleId = isLocaleId(language) ? language : "en";
+    const resolvedProfile = sanitizeProfile(profile);
     applyLocale(resolvedLanguage);
     set({
       theme: resolvedTheme,
       accentHue: resolvedHue,
       permissionMode: resolvedMode,
       language: resolvedLanguage,
+      profile: resolvedProfile,
       confirmDeleteThread: confirmDelete !== false,
       sendKey: sendKey === "mod-enter" ? "mod-enter" : "enter",
       showTimestamps: showTimestamps !== false,

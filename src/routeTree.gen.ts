@@ -22,6 +22,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsDiffsRouteImport } from './routes/settings.diffs'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
 import { Route as SettingsProvidersRouteImport } from './routes/settings.providers'
 import { Route as ThreadThreadIdRouteImport } from './routes/thread.$threadId'
@@ -91,6 +92,11 @@ const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   path: '/keybindings',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsProfileRoute = SettingsProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsProjectsRoute = SettingsProjectsRouteImport.update({
   id: '/projects',
   path: '/projects',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
@@ -139,6 +146,7 @@ export interface FileRoutesByTo {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
   '/settings/providers': typeof SettingsProvidersRoute
   '/thread/$threadId': typeof ThreadThreadIdRoute
@@ -178,6 +187,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
@@ -196,6 +206,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
@@ -214,6 +225,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/profile'
     | '/settings/projects'
     | '/settings/providers'
     | '/thread/$threadId'
@@ -322,6 +334,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/profile': {
+      id: '/settings/profile'
+      path: '/profile'
+      fullPath: '/settings/profile'
+      preLoaderRoute: typeof SettingsProfileRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/projects': {
       id: '/settings/projects'
       path: '/projects'
@@ -354,6 +373,7 @@ interface SettingsRouteChildren {
   SettingsDiffsRoute: typeof SettingsDiffsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsProfileRoute: typeof SettingsProfileRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
   SettingsProvidersRoute: typeof SettingsProvidersRoute
 }
@@ -366,6 +386,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsDiffsRoute: SettingsDiffsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsProfileRoute: SettingsProfileRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
 }
