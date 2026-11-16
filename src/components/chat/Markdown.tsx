@@ -17,7 +17,7 @@ import rehypeKatex from "rehype-katex";
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import type { HighlighterCore } from "shiki/core";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, File, Folder } from "lucide-react";
 import { ipcErrorMessage, openExternalUrl, openInEditor, readImageDataUrl } from "../../lib/ipc";
 import { activeWorkspaceRoot } from "../../lib/activeWorkspace";
 import { useT } from "../../lib/i18n";
@@ -378,76 +378,119 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
   );
 }
 
-const COMPONENTS: Components = {
-  a: ({ href, children, node, ...props }) => {
-    void node;
-    const desktop = isTauri();
-    // Classify at click time: the global workspace root hydrates after mount.
-    const classify = () => classifyMarkdownHref(href, activeWorkspaceRoot());
-    const openWorkspace = (link: ClassifiedLink) => {
-      if (link.kind !== "workspace") return;
-      if (link.isDir) {
-        void openInEditor(link.fullPath, "explorer").catch((err) =>
-          useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
-        );
-      } else if (/\.html?$/i.test(link.relativePath)) {
-        useUiStore.getState().openInBrowserPanel(link.relativePath);
-      } else {
-        useUiStore.getState().openFilePreview(link.relativePath);
-      }
-    };
-    const openExternal = (link: ClassifiedLink) => {
-      if (link.kind !== "external") return;
-      void openExternalUrl(link.url).catch((err) =>
+function fileName(path: string): string {
+  const clean = path.replace(/[\\/]+$/, "");
+  return clean.split(/[\\/]/).pop() || clean;
+}
+
+const MarkdownLink: Components["a"] = ({ href, children, node, ...props }) => {
+  void node;
+  const desktop = isTauri();
+  // Subscribe so the chip appears once the global workspace root hydrates.
+  const globalRoot = useUiStore((s) => s.globalWorkspaceRoot);
+  void globalRoot;
+  const displayLink = classifyMarkdownHref(href, activeWorkspaceRoot());
+  const localPath = localFilePath(href);
+  const chipPath =
+    displayLink.kind === "workspace" ? displayLink.relativePath : (localPath ?? null);
+  const chipLabel = chipPath ? fileName(chipPath) : null;
+  const chipTitle =
+    displayLink.kind === "workspace" ? displayLink.fullPath : (localPath ?? undefined);
+  const chipDir = displayLink.kind === "workspace" && displayLink.isDir;
+  // Classify at click time: the global workspace root hydrates after mount.
+  const classify = () => classifyMarkdownHref(href, activeWorkspaceRoot());
+  const openWorkspace = (link: ClassifiedLink) => {
+    if (link.kind !== "workspace") return;
+    if (link.isDir) {
+      void openInEditor(link.fullPath, "explorer").catch((err) =>
         useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
       );
-    };
-    return (
-      <a
-        {...props}
-        href={href}
-        data-link-href={href}
-        target={desktop ? undefined : "_blank"}
-        rel="noreferrer noopener"
-        onClick={(event) => {
-          if (!href) return;
-          const link = classify();
-          if (link.kind === "external") {
-            if (!desktop) return;
-            event.preventDefault();
-            openExternal(link);
-            return;
-          }
-          if (link.kind === "workspace") {
-            event.preventDefault();
-            openWorkspace(link);
-            return;
-          }
-          if (link.kind === "unsupported") {
-            event.preventDefault();
-          }
-        }}
-        onAuxClick={(event) => {
-          if (!desktop) return;
-          const link = classify();
-          if (link.kind === "unsupported") {
-            event.preventDefault();
-            return;
-          }
-          if (event.button !== 1) return;
-          if (link.kind === "external") {
-            event.preventDefault();
-            openExternal(link);
-          } else if (link.kind === "workspace") {
-            event.preventDefault();
-            openWorkspace(link);
-          }
-        }}
-      >
-        {children}
-      </a>
+    } else if (/\.html?$/i.test(link.relativePath)) {
+      useUiStore.getState().openInBrowserPanel(link.relativePath);
+    } else {
+      useUiStore.getState().openFilePreview(link.relativePath);
+    }
+  };
+  const openExternal = (link: ClassifiedLink) => {
+    if (link.kind !== "external") return;
+    void openExternalUrl(link.url).catch((err) =>
+      useUiStore.getState().setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
     );
-  },
+  };
+  return (
+    <a
+      {...props}
+      href={href}
+      data-link-href={href}
+      title={chipTitle}
+      target={desktop ? undefined : "_blank"}
+      rel="noreferrer noopener"
+      className={
+        chipLabel
+          ? "inline-flex max-w-full items-center gap-1 align-baseline text-accent hover:underline"
+          : undefined
+      }
+      onClick={(event) => {
+        if (!href) return;
+        const link = classify();
+        if (link.kind === "external") {
+          if (!desktop) return;
+          event.preventDefault();
+          openExternal(link);
+          return;
+        }
+        if (link.kind === "workspace") {
+          event.preventDefault();
+          openWorkspace(link);
+          return;
+        }
+        if (link.kind === "unsupported") {
+          event.preventDefault();
+          const path = localFilePath(href);
+          if (path) {
+            void openInEditor(path, "explorer").catch((err) =>
+              useUiStore
+                .getState()
+                .setGlobalError({ kind: "protocol", message: ipcErrorMessage(err) }),
+            );
+          }
+        }
+      }}
+      onAuxClick={(event) => {
+        if (!desktop) return;
+        const link = classify();
+        if (link.kind === "unsupported") {
+          event.preventDefault();
+          return;
+        }
+        if (event.button !== 1) return;
+        if (link.kind === "external") {
+          event.preventDefault();
+          openExternal(link);
+        } else if (link.kind === "workspace") {
+          event.preventDefault();
+          openWorkspace(link);
+        }
+      }}
+    >
+      {chipLabel ? (
+        <>
+          {chipDir ? (
+            <Folder size={12} className="shrink-0 text-text-tertiary" />
+          ) : (
+            <File size={12} className="shrink-0 text-text-tertiary" />
+          )}
+          <span className="min-w-0 truncate">{chipLabel}</span>
+        </>
+      ) : (
+        children
+      )}
+    </a>
+  );
+};
+
+const COMPONENTS: Components = {
+  a: MarkdownLink,
   img: ({ src, alt }) => <LocalImage src={src} alt={alt} />,
   pre: ({ children }) => {
     const { code, lang } = extractCode(children);
