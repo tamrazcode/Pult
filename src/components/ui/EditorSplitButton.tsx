@@ -48,13 +48,14 @@ export function EditorSplitButton({
   };
 
   const compact = variant === "compact";
+  const openLabel = t("panels.files.openIn", { editor: active.label });
 
   return (
     <div ref={containerRef} className={`relative flex shrink-0 ${className}`}>
       <button
         type="button"
-        title={`Open in ${active.label}`}
-        aria-label={`Open in ${active.label}`}
+        title={openLabel}
+        aria-label={openLabel}
         onClick={() => onOpen(preferred)}
         className={
           compact
@@ -63,7 +64,7 @@ export function EditorSplitButton({
         }
       >
         <EditorLogo editor={active} className={compact ? "h-3.5 w-3.5" : "h-3 w-3"} />
-        <span className="truncate">{compact ? active.label : `Open in ${active.label}`}</span>
+        <span className="truncate">{compact ? active.label : openLabel}</span>
       </button>
       <button
         type="button"
