@@ -19,7 +19,7 @@ function fileUrlToPath(raw: string): string {
 export function localFilePath(rawHref: string | null | undefined): string | null {
   const raw = (rawHref ?? "").trim();
   if (!raw) return null;
-  if (/(^|[\\/])\.\.([\\/]|$)/.test(raw.replace(/%2e/gi, "."))) return null;
+  if (/(^|[\\/])\.\.([\\/?#]|$)/.test(raw.replace(/%2e/gi, "."))) return null;
   let path = raw;
   if (/^file:\/\//i.test(raw)) {
     try {
