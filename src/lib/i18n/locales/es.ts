@@ -276,7 +276,6 @@ export const es: Record<string, string> = {
   "composer.approval.allowAlways": "Permitir siempre",
   "composer.approval.reject": "Rechazar",
   "composer.approval.cancel": "Cancelar",
-  "composer.optionsMenu": "Opciones del editor",
   "composer.commitCommand": "Hacer commit de los cambios de este hilo — /commit <mensaje>",
   "composer.agentCommands": "Comandos del agente",
   "composer.noAgentShort": "Sin agente",

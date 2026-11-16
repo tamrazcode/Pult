@@ -270,7 +270,6 @@ export const zh: Record<string, string> = {
   "composer.approval.allowAlways": "始终允许",
   "composer.approval.reject": "拒绝",
   "composer.approval.cancel": "取消",
-  "composer.optionsMenu": "输入框选项",
   "composer.commitCommand": "提交此线程的更改 — /commit <message>",
   "composer.agentCommands": "智能体命令",
   "composer.noAgentShort": "无智能体",

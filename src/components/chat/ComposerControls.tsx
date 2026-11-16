@@ -439,6 +439,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     (option) =>
       option.id !== "mode" &&
       option.category !== "mode" &&
+      option.id !== fastOption?.id &&
       !isModelOption(option) &&
       !isReasoningOption(option),
   );
@@ -451,10 +452,13 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     threadId ? s.desiredModeByThread[threadId] : s.desiredModeByThread[""],
   );
   const currentModeId = pickerModeId(activeRun, liveModeId, desiredModeId);
+  const modeValue = modes.some((mode) => mode.id === currentModeId)
+    ? (currentModeId ?? "")
+    : (modes[0]?.id ?? "");
   const hasExtraOptions = extraOptions.length > 0 || modes.length > 0;
   const pickMode = (modeId: string) => {
     useRunsStore.getState().setDesiredMode(threadId ?? "", modeId);
-    if (threadId && isTauri()) {
+    if (threadId && isTauri() && (!hasLiveRun || liveOnSelected)) {
       runsSetMode(threadId, modeId).catch((err) => console.error("runs_set_mode failed", err));
     }
   };
@@ -698,7 +702,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
                     <span className="text-xs text-text-secondary">{t("composer.sessionMode")}</span>
                     <select
                       aria-label={t("composer.sessionMode")}
-                      value={currentModeId ?? modes[0]?.id ?? ""}
+                      value={modeValue}
                       onChange={(event) => pickMode(event.target.value)}
                       className="h-6 max-w-[150px] rounded-(--radius-sm) border border-border-subtle bg-surface px-1.5 text-xs text-text-secondary focus:border-border-strong focus:outline-none"
                     >

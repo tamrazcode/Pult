@@ -22,51 +22,51 @@
 
 ## T01 — Композер: стоп и градиент
 
-- [ ] `Composer.tsx`: заменить `<Square />` на заливной белый скруглённый квадрат (`span` 10×10, `rounded-[2px]`, `bg-white`), по центру круга.
-- [ ] Усилить градиент: `from-white/35 via-white/10 to-black/15` (плюс мягкий верхний внутренний блик) для Send, Queue, Stop; disabled Send/Queue — без градиента.
-- [ ] Тест: кнопка Stop содержит заливной индикатор; градиентные классы присутствуют на всех вариантах.
-- [ ] Проверка: `pnpm test tests/composer.test.tsx`.
+- [x] `Composer.tsx`: заменить `<Square />` на заливной белый скруглённый квадрат (`span` 10×10, `rounded-[2px]`, `bg-white`), по центру круга.
+- [x] Усилить градиент: `from-white/35 via-white/10 to-black/15` (плюс мягкий верхний внутренний блик) для Send, Queue, Stop; disabled Send/Queue — без градиента.
+- [x] Тест: кнопка Stop содержит заливной индикатор; градиентные классы присутствуют на всех вариантах.
+- [x] Проверка: `pnpm test tests/composer.test.tsx`.
 
 ## T02 — ASCII-фон: шлейф, покой, клик
 
 Файлы: `src/lib/asciiWave.ts`, `src/components/chat/LivingAscii.tsx`, `tests/ascii-wave.test.ts`.
 
-- [ ] `asciiWave.ts`:
+- [x] `asciiWave.ts`:
   - `rippleValue`: медленный неровный пульс — сумма двух синусов с несоизмеримыми частотами (период ~3.5–5 с), без резких колец.
   - Новый `trailValue(x, y, point, now)`: мягкое затухающее пятно от точки шлейфа (age ~600–900 мс, радиус ~40–60 px).
   - `pulseValue`: плавный bloom — сила нарастает ~600 мс, radius растёт с 6 px, жизнь ~2.6 с, лёгкая угловая неровность; в момент 0 вклад = 0 (никакого мгновенного диска).
   - `cellBrightness` принимает `trail: Ripple[]` и учитывает его.
-- [ ] `LivingAscii.tsx`:
+- [x] `LivingAscii.tsx`:
   - `trailRef`: точки указателя (не чаще ~35 мс / 6 px, максимум 16), затухают ~800 мс.
   - `pointerRef` остаётся для медленного пульса в покое; на `pointerleave` пульс гаснет, шлейф доигрывает.
   - Клик добавляет `pulse` со strength ~0.9; расчёт только в bounding box точки (быстрый отсев по квадрату расстояния).
-- [ ] Тесты: `pulseValue` в 0 мс ≈ 0, максимум позже, ноль после ~2.6 с; `trailValue` спадает с возрастом и расстоянием; `rippleValue` меняется медленно.
-- [ ] Проверка: `pnpm test tests/ascii-wave.test.ts`.
+- [x] Тесты: `pulseValue` в 0 мс ≈ 0, максимум позже, ноль после ~2.6 с; `trailValue` спадает с возрастом и расстоянием; `rippleValue` меняется медленно.
+- [x] Проверка: `pnpm test tests/ascii-wave.test.ts`.
 
 ## T03 — Извлечение деталей инструментов
 
 Новый `src/lib/toolDetails.ts` (чистые функции) + `tests/tool-details.test.ts`.
 
-- [ ] `toolPath(item)`: `locations[0]` → `rawInput` (`path`, `file_path`, `filePath`, `target_file`, `filename`) → путь из title.
-- [ ] `toolLineRange(item)`: `rawInput` (`offset`+`limit`, `start_line`+`end_line`, `line`) → `{ start, end }`; fallback — regex `lines? (\d+)(?:-(\d+))?` из title/вывода.
-- [ ] `toolCommand(item)`, `toolQuery(item)`: `command|cmd|script`, `query|pattern|regex|q`; fallback title.
-- [ ] `toolOutputText(item)`: `rawOutput`/`content` через `readableToolValue`, срезать служебные `^\s*\d+[→\t]` префиксы.
-- [ ] `numberedExcerpt(text, start, maxLines=40)`: массив `{ n, text }`, обрезка и признак `truncated`.
-- [ ] Тесты на все экстракторы и нумерацию.
+- [x] `toolPath(item)`: `locations[0]` → `rawInput` (`path`, `file_path`, `filePath`, `target_file`, `filename`) → путь из title.
+- [x] `toolLineRange(item)`: `rawInput` (`offset`+`limit`, `start_line`+`end_line`, `line`) → `{ start, end }`; fallback — regex `lines? (\d+)(?:-(\d+))?` из title/вывода.
+- [x] `toolCommand(item)`, `toolQuery(item)`: `command|cmd|script`, `query|pattern|regex|q`; fallback title.
+- [x] `toolOutputText(item)`: `rawOutput`/`content` через `readableToolValue`, срезать служебные `^\s*\d+[→\t]` префиксы.
+- [x] `numberedExcerpt(text, start, maxLines=40)`: массив `{ n, text }`, обрезка и признак `truncated`.
+- [x] Тесты на все экстракторы и нумерацию.
 
 ## T04 — Умная строка активности
 
 Файл: `src/components/chat/MessagesTimeline.tsx`.
 
-- [ ] `TimelineRows`: группа из **1+** подряд идущих tool/thought/trace рендерится одним `ActionGroupRow`; 0s-thought по-прежнему отфильтрованы.
-- [ ] `ActionGroupRow`:
+- [x] `TimelineRows`: группа из **1+** подряд идущих tool/thought/trace рендерится одним `ActionGroupRow`; 0s-thought по-прежнему отфильтрованы.
+- [x] `ActionGroupRow`:
   - `active` = streaming thought или tool pending/in_progress.
   - `open` стартует как `active`; при смене `active` авто-открытие/закрытие; ручной toggle сохраняется до следующей смены.
   - активная подпись по kind: thought → `Thinking · Ns`; read → «Reading file»; edit/write/move/delete → «Editing file»; execute → «Running command»; search → «Searching files»; fetch → «Fetching»; иначе → `Working` / title.
   - завершённая: одиночная мысль → `Thought for Ns`, иначе `summarizeActionGroup`.
   - слева: ASCII-спиннер при active, иначе иконка; подпись с классом свечения при active.
   - раскрытие: хронологический список деталей без вложенных кнопок-аккордеонов.
-- [ ] `ActionDetail` (внутри файла или отдельный компонент):
+- [x] `ActionDetail` (внутри файла или отдельный компонент):
   - read: заголовок «Read <path>», диапазон строк, нумерованный `<pre>` (до 40 строк), `+N more lines`.
   - edit/write/delete/move: путь + кнопка «Open diff» (открывает правую панель на вкладке diff); вывод, если есть.
   - execute: `$ command` + stdout/stderr.
@@ -74,19 +74,19 @@
   - thought: текст мысли.
   - fallback: title + читаемый вывод; маленький Raw-toggle на случай сырых данных.
   - изображения из payload сохранить.
-- [ ] Убрать отдельный `ToolRow`/`ThoughtGroup` из основного потока (оставить только внутри раскрытия).
-- [ ] Тесты: одиночный tool сворачивается; активная группа авто-раскрыта и показывает детали; после завершения авто-свернута; подписи по kind; read-экспонат с номерами строк; edit показывает Open diff; мысль видна в раскрытии; Raw скрыт по умолчанию.
-- [ ] Обновить существующие тесты, которые ждут отдельных строк/ручных аккордеонов.
+- [x] Убрать отдельный `ToolRow`/`ThoughtGroup` из основного потока (оставить только внутри раскрытия).
+- [x] Тесты: одиночный tool сворачивается; активная группа авто-раскрыта и показывает детали; после завершения авто-свернута; подписи по kind; read-экспонат с номерами строк; edit показывает Open diff; мысль видна в раскрытии; Raw скрыт по умолчанию.
+- [x] Обновить существующие тесты, которые ждут отдельных строк/ручных аккордеонов.
 
 ## T05 — i18n
 
-- [ ] Добавить ключи (en): `chat.action.reading`, `editing`, `running`, `searching`, `fetching`, `readFile`, `editedFile`, `openDiff`, `moreLines`, `command`, `output`.
-- [ ] Перевести на ru/de/es/fr/ja/zh; паритет и плейсхолдеры проверить `tests/i18n.test.ts`.
+- [x] Добавить ключи (en): `chat.action.reading`, `editing`, `running`, `searching`, `fetching`, `readFile`, `editedFile`, `openDiff`, `moreLines`, `command`, `output`.
+- [x] Перевести на ru/de/es/fr/ja/zh; паритет и плейсхолдеры проверить `tests/i18n.test.ts`.
 
 ## T06 — Свечение
 
-- [ ] `src/styles/index.css`: `.activity-shimmer` — градиент `text-tertiary → text-primary/accent → text-tertiary`, `background-size: 220%`, `background-clip: text`, медленная анимация 4–6 с, `ease-in-out`; `prefers-reduced-motion` → без анимации и прозрачности.
-- [ ] Применять только к подписи активной строки.
+- [x] `src/styles/index.css`: `.activity-shimmer` — градиент `text-tertiary → text-primary/accent → text-tertiary`, `background-size: 220%`, `background-clip: text`, медленная анимация 4–6 с, `ease-in-out`; `prefers-reduced-motion` → без анимации и прозрачности.
+- [x] Применять только к подписи активной строки.
 
 ## T07 — Гейты и ревью
 

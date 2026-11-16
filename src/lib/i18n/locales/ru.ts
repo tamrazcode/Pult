@@ -290,7 +290,6 @@ export const ru: Record<string, string> = {
   "composer.approval.allowAlways": "Разрешать всегда",
   "composer.approval.reject": "Отклонить",
   "composer.approval.cancel": "Отмена",
-  "composer.optionsMenu": "Параметры поля ввода",
   "composer.commitCommand": "Закоммитить изменения этого треда — /commit <message>",
   "composer.agentCommands": "Команды агента",
   "composer.noAgentShort": "Нет агента",

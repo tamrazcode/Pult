@@ -438,6 +438,12 @@ function TimelineRows({ entries }: { entries: TimelineEntry[] }) {
   return <>{rows}</>;
 }
 
+/** One tool payload cannot monopolize the DOM; the Raw toggle shows the rest. */
+const MAX_DETAIL_CHARS = 12_000;
+
+const clipDetail = (text: string): string =>
+  text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS)}\n…` : text;
+
 const ACTION_LABEL_KEYS: Record<string, string> = {
   read: "chat.action.reading",
   edit: "chat.action.editing",
@@ -561,7 +567,7 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
   const Icon = toolIcon(item.kind);
   const path = toolPath(item);
   const range = toolLineRange(item);
-  const output = toolOutputText(item);
+  const output = clipDetail(toolOutputText(item));
   const image = findImageCandidate(item.rawOutput ?? item.content ?? item.rawInput);
   const excerpt =
     item.kind === "read" && output ? numberedExcerpt(output, range?.start ?? 1) : null;
@@ -646,10 +652,12 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
       )}
       {raw && (
         <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
-          {JSON.stringify(
-            { input: item.rawInput, output: item.rawOutput ?? item.content },
-            null,
-            2,
+          {clipDetail(
+            JSON.stringify(
+              { input: item.rawInput, output: item.rawOutput ?? item.content },
+              null,
+              2,
+            ),
           )}
         </pre>
       )}

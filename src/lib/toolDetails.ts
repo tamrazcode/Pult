@@ -46,7 +46,7 @@ export function toolPath(item: ToolChatItem): string | null {
     /(?:[A-Za-z]:\\[^\s"']+|\/[^\s"']+|[A-Za-z0-9_.@-]+(?:[/\\][A-Za-z0-9_.@-]+)+|[A-Za-z0-9_-]+\.[A-Za-z0-9]{1,8})/.exec(
       item.title,
     );
-  return match ? match[0] : null;
+  return match ? match[0].replace(/[,.;:]+$/, "") : null;
 }
 
 /** Requested line range, either explicit or encoded in the title. */
@@ -84,7 +84,7 @@ const stripGutter = (text: string): string => {
   const lines = text.split("\n");
   const numbered = lines.filter((line) => /^\s*\d+[→\t]/.test(line)).length;
   if (numbered === 0 || numbered < lines.length / 2) return text;
-  return lines.map((line) => line.replace(/^\s*\d+[→\t]\s?/, "")).join("\n");
+  return lines.map((line) => line.replace(/^\s*\d+[→\t]/, "")).join("\n");
 };
 
 const textFromValue = (value: unknown, depth = 0): string => {
@@ -110,10 +110,13 @@ const textFromValue = (value: unknown, depth = 0): string => {
 /** Human-readable output for a tool call; empty when the agent sent none. */
 export function toolOutputText(item: ToolChatItem): string {
   const raw = item.rawOutput ?? item.content;
-  const text = textFromValue(raw).trim();
+  const text = textFromValue(raw).trimEnd();
   if (text) return stripGutter(text);
-  if (raw !== undefined) return JSON.stringify(raw, null, 2);
-  return "";
+  if (raw === null || raw === undefined) return "";
+  if (typeof raw === "string" || (Array.isArray(raw) && raw.length === 0)) return "";
+  if (typeof raw === "object" && Object.keys(raw as Record<string, unknown>).length === 0)
+    return "";
+  return JSON.stringify(raw, null, 2);
 }
 
 /** Numbered excerpt for read tools, capped so a huge file cannot flood the chat. */

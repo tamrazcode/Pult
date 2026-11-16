@@ -107,20 +107,17 @@ export function LivingAscii() {
       const y = event.clientY - rect.top;
       if (x < 0 || y < 0 || x > width || y > height) return;
       const previous = pointerRef.current;
+      const now = performance.now();
       pointerRef.current = {
         x,
         y,
-        startedAt: event.timeStamp,
+        startedAt: now,
         strength: Math.min(0.9, (previous?.strength ?? 0.45) + 0.12),
       };
       const trail = trailRef.current;
       const tail = trail[trail.length - 1];
-      if (
-        !tail ||
-        Math.hypot(x - tail.x, y - tail.y) > 6 ||
-        event.timeStamp - tail.startedAt > 35
-      ) {
-        trail.push({ x, y, startedAt: event.timeStamp, strength: 0.8 });
+      if (!tail || Math.hypot(x - tail.x, y - tail.y) > 6 || now - tail.startedAt > 35) {
+        trail.push({ x, y, startedAt: now, strength: 0.8 });
         if (trail.length > 16) trail.splice(0, trail.length - 16);
       }
     };

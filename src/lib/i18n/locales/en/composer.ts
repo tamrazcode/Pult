@@ -40,7 +40,6 @@ export const composer = {
   "composer.approval.allowAlways": "Always allow",
   "composer.approval.reject": "Reject",
   "composer.approval.cancel": "Cancel",
-  "composer.optionsMenu": "Composer options",
   "composer.commitCommand": "Commit this thread's changes — /commit <message>",
   "composer.agentCommands": "Agent commands",
   "composer.noAgentShort": "No agent",

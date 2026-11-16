@@ -276,7 +276,6 @@ export const ja: Record<string, string> = {
   "composer.approval.allowAlways": "常に許可",
   "composer.approval.reject": "拒否",
   "composer.approval.cancel": "キャンセル",
-  "composer.optionsMenu": "入力欄オプション",
   "composer.commitCommand": "このスレッドの変更をコミット — /commit <message>",
   "composer.agentCommands": "エージェントコマンド",
   "composer.noAgentShort": "エージェントなし",
