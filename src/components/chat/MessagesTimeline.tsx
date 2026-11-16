@@ -157,9 +157,24 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     return () => observer.disconnect();
   }, [threadId, hasView, entries.length, followStreaming]);
 
-  if (!threadId || !view) return <EmptyState />;
+  if (!threadId) return <EmptyState />;
+
+  if (!view) {
+    if (!pendingUser) return <EmptyState />;
+    return (
+      <div className="relative flex min-h-0 flex-1">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
+            <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
+            <ThinkingRow />
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const hasContent =
+    pendingUser !== undefined ||
     entries.length > 0 ||
     (view.plan?.length ?? 0) > 0 ||
     view.pendingApproval !== undefined ||
@@ -213,7 +228,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     setActiveHistoryKey((previous) => (previous === current ? previous : current));
   };
 
-  const hasActionItems = entries.some((entry) => isActionItem(entry.item));
+  // Only the active run's actions replace the Working row; a previous run's
+  // action group must not hide the indicator for a fresh run.
+  const hasActionItems = entries.some((entry) => entry.runId === runId && isActionItem(entry.item));
 
   return (
     <div className="relative flex min-h-0 flex-1">
@@ -245,6 +262,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
             </div>
           )}
+
+          {pendingUser && !view.streaming && <ThinkingRow />}
 
           {view.streaming && activeRun?.startedAt !== undefined && !hasActionItems && (
             <WorkingTimer startedAt={activeRun.startedAt} />
@@ -702,6 +721,17 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
     </div>
   );
 });
+
+/** Immediate optimistic state between send and the first run event. */
+function ThinkingRow() {
+  const t = useT();
+  return (
+    <div className="flex items-center gap-2 py-1 text-sm text-text-tertiary">
+      <ThinkingAscii />
+      <span className="activity-shimmer">{t("chat.thinking")}…</span>
+    </div>
+  );
+}
 
 /** Live elapsed-time line under a streaming run ("Working for 4s"). */
 function WorkingTimer({ startedAt }: { startedAt: number }) {

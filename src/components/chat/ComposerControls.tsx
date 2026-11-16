@@ -140,6 +140,11 @@ const REASONING_OPTION_IDS = new Set([
   "reasoning",
 ]);
 
+function modelLabelName(name: string): string {
+  const slash = name.indexOf("/");
+  return slash >= 0 ? name.slice(slash + 1) : name;
+}
+
 export function isModelOption(option: SessionConfigOption): boolean {
   return option.type === "select" && (option.id === "model" || option.category === "model");
 }
@@ -389,9 +394,11 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     ? String(pickerConfigValue(modelOption, activeRun, liveOptions, desired))
     : null;
   const modelLabel = modelOption
-    ? (flattenSelectOptions(modelOption.options).find((item) => item.value === modelValue)?.name ??
-      modelValue ??
-      t("composer.model"))
+    ? modelLabelName(
+        flattenSelectOptions(modelOption.options).find((item) => item.value === modelValue)?.name ??
+          modelValue ??
+          t("composer.model"),
+      )
     : (selected?.displayName ?? t("composer.model"));
   const reasoningLabel = reasoningOptions[0]
     ? reasoningLabelFor(
