@@ -40,6 +40,12 @@ pub struct IdleConn {
     pub spawn_sig: SpawnSig,
     pub applied_config: DesiredConfigMap,
     pub applied_mode: Option<String>,
+    /// Orchestration bearer issued for this ACP session, if any.
+    pub mcp_token: Option<String>,
+    /// `<pult_instructions>` already traveled on the wire for this session.
+    pub instructions_injected: bool,
+    /// Compaction generation the injection belongs to.
+    pub compaction_epoch: u64,
     pub last_used: Instant,
 }
 
@@ -56,6 +62,8 @@ pub struct IdlePool {
     expired: AtomicU64,
     /// Agent terminals belong to a session; killing the session releases them.
     terminals: Arc<TerminalRegistry>,
+    /// Bearer tokens are revoked the moment their ACP session dies.
+    mcp_registry: Option<Arc<crate::orchestrator::McpTokenRegistry>>,
 }
 
 impl IdlePool {
@@ -71,13 +79,23 @@ impl IdlePool {
             evicted: AtomicU64::new(0),
             expired: AtomicU64::new(0),
             terminals,
+            mcp_registry: None,
         }
+    }
+
+    /// Production pool also revokes orchestration tokens on eviction.
+    pub fn with_mcp_registry(mut self, registry: Arc<crate::orchestrator::McpTokenRegistry>) -> Self {
+        self.mcp_registry = Some(registry);
+        self
     }
 
     /// Kill a warm session and everything it still owns.
     fn kill_idle(&self, entry: IdleConn) {
         entry.conn.kill();
         self.terminals.release_owner(&entry.owner_token);
+        if let Some(registry) = &self.mcp_registry {
+            registry.revoke(&entry.owner_token);
+        }
     }
 
     pub fn take_matching(
@@ -219,6 +237,9 @@ impl Drop for IdlePool {
             for entry in entries.values() {
                 entry.conn.kill();
                 self.terminals.release_owner(&entry.owner_token);
+                if let Some(registry) = &self.mcp_registry {
+                    registry.revoke(&entry.owner_token);
+                }
             }
         }
     }
@@ -294,6 +315,9 @@ mod tests {
             spawn_sig: sig.clone(),
             applied_config: DesiredConfigMap::new(),
             applied_mode: None,
+            mcp_token: None,
+            instructions_injected: false,
+            compaction_epoch: 0,
             last_used,
         }
     }
@@ -459,6 +483,28 @@ mod tests {
         assert!(!taken.conn.is_dead());
         assert_eq!(pool.stats().idle, 0);
         assert!(pool.take_matching("th-live", "mock", &root, &sig).is_none());
+    }
+
+    #[tokio::test]
+    async fn invalidating_a_session_revokes_its_orchestration_token() {
+        let _env = env_lock();
+        let registry = Arc::new(crate::orchestrator::McpTokenRegistry::new());
+        let pool = IdlePool::new().with_mcp_registry(Arc::clone(&registry));
+        let root = std::env::temp_dir().join("pult-pool-token");
+        let sig = mock_sig();
+        let entry = spawn_idle_conn("th-token", "mock", &root, &sig, Instant::now());
+        let token = registry.issue(crate::orchestrator::McpScope::new(
+            "owner-th-token",
+            "th-token",
+            0,
+        ));
+        pool.park("th-token".to_string(), entry);
+        assert!(registry.resolve(&token).is_some());
+
+        pool.invalidate_thread("th-token");
+
+        assert!(registry.resolve(&token).is_none());
+        assert!(pool.stats().idle == 0);
     }
 
     #[tokio::test]

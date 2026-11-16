@@ -2478,6 +2478,11 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 applied_config,
                 // Re-applied next turn: live mode changes are not tracked here.
                 applied_mode: None,
+                // T05 issues the token when it opens the session; the token
+                // lives for the ACP connection and is revoked on kill.
+                mcp_token: None,
+                instructions_injected: false,
+                compaction_epoch: 0,
                 last_used: std::time::Instant::now(),
             },
         );

@@ -7,6 +7,7 @@ pub mod drivers;
 pub mod events;
 pub mod git;
 pub mod ipc;
+pub mod orchestrator;
 pub mod plugins;
 pub mod protocol;
 pub mod runtime;
@@ -145,6 +146,10 @@ fn register_toast_app_id() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // `pult mcp-stdio` must never create a window or a Tauri runtime.
+    if let Some(code) = orchestrator::stdio::handle_cli() {
+        std::process::exit(code);
+    }
     init_tracing();
     tracing::info!("pult starting");
 
