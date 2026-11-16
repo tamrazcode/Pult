@@ -132,6 +132,7 @@ export const ru: Record<string, string> = {
   "sidebar.worktree": "worktree",
   "sidebar.worktreeBadge": "Изолированный git worktree: {{name}}",
   "sidebar.unreadThread": "Непрочитано",
+  "sidebar.hasDraft": "Есть черновик",
   "sidebar.status.working": "в работе",
   "sidebar.status.waiting": "ожидает",
   "sidebar.time.now": "сейчас",

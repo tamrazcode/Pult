@@ -31,6 +31,7 @@ import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
+import { useDraftsStore } from "../../stores/drafts";
 import { useUiStore } from "../../stores/ui";
 import type {
   CommandInfo,
@@ -165,7 +166,12 @@ function withFileAttachments(text: string, files: FileChip[]): string {
 
 export function Composer({ threadId }: { threadId?: string }) {
   const t = useT();
-  const [value, setValue] = useState("");
+  const draftKey = threadId ?? "new";
+  const value = useDraftsStore((s) => s.byThread[draftKey] ?? "");
+  const setValue = useCallback(
+    (text: string) => useDraftsStore.getState().setDraft(draftKey, text),
+    [draftKey],
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [chips, setChips] = useState<ImageChip[]>([]);
@@ -329,7 +335,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     setMention(null);
     setMentionFiles([]);
     requestAnimationFrame(autosize);
-  }, [autosize]);
+  }, [autosize, setValue]);
 
   const pickSlash = useCallback((command: CommandInfo) => {
     setValue(formatSlashInsertion(command));

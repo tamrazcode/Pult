@@ -33,6 +33,7 @@ import { useUiStore } from "../../stores/ui";
 import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../stores/threads";
 import { useProjectsStore } from "../../stores/projects";
 import { useSettingsStore } from "../../stores/settings";
+import { useDraftsStore } from "../../stores/drafts";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import type { Project, Thread, WorktreeDirtyStatus } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
@@ -69,6 +70,7 @@ function ThreadRow({
   thread,
   active,
   unread,
+  draft,
   onNavigate,
   onStar,
   renaming,
@@ -78,6 +80,7 @@ function ThreadRow({
   thread: Thread;
   active: boolean;
   unread: boolean;
+  draft: boolean;
   onNavigate: () => void;
   onStar: () => void;
   renaming: boolean;
@@ -131,18 +134,20 @@ function ThreadRow({
           }}
           className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-1 pl-9 text-sm"
         >
-          {unread ? (
+          {draft && !active ? (
+            <span
+              data-draft="true"
+              aria-label={t("sidebar.hasDraft")}
+              title={t("sidebar.hasDraft")}
+              className="flex shrink-0"
+            >
+              <SquarePen size={12} className="text-warning" />
+            </span>
+          ) : unread ? (
             <span
               data-unread="true"
               aria-label={t("sidebar.unreadThread")}
               className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-            />
-          ) : working ? (
-            <span
-              aria-label={t(`sidebar.status.${thread.status}`)}
-              className={`h-1.5 w-1.5 shrink-0 rounded-full ${
-                thread.status === "working" ? "bg-accent" : "bg-warning"
-              }`}
             />
           ) : null}
           <FadeText text={thread.title || t("sidebar.untitled")} className="min-w-0" />
@@ -179,7 +184,6 @@ function ThreadRow({
 function ProjectRow({
   project,
   collapsed,
-  threadCount,
   onToggle,
   onNewThread,
   onStar,
@@ -187,7 +191,6 @@ function ProjectRow({
 }: {
   project: Project;
   collapsed: boolean;
-  threadCount: number;
   onToggle: () => void;
   onNewThread: () => void;
   onStar: () => void;
@@ -233,7 +236,6 @@ function ProjectRow({
         <Star size={10} fill={project.pinned ? "currentColor" : "none"} />
       </button>
       <span className="flex-1" />
-      <span className="tnum text-xs text-text-tertiary">{threadCount}</span>
       <button
         type="button"
         aria-label={t("sidebar.newThreadInProject")}
@@ -266,6 +268,7 @@ export function Sidebar({ width }: { width: number }) {
   const threads = useThreadsStore((s) => s.threads);
   const unreadIds = useThreadsStore((s) => s.unreadIds);
   const collapsedProjects = useUiStore((s) => s.collapsedProjects);
+  const drafts = useDraftsStore((s) => s.byThread);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -680,14 +683,16 @@ export function Sidebar({ width }: { width: number }) {
       <nav className="min-h-0 flex-1 overflow-y-auto px-2 pb-4" aria-label={t("sidebar.threads")}>
         {groups.map((group) => {
           const key = group.project?.id ?? "__none__";
-          const isCollapsed = group.project ? collapsedProjects.includes(group.project.id) : false;
+          const noProjectCollapsed = collapsedProjects.includes("__none__");
+          const isCollapsed = group.project
+            ? collapsedProjects.includes(group.project.id)
+            : noProjectCollapsed;
           return (
             <section key={key} className="mb-3">
               {group.project ? (
                 <ProjectRow
                   project={group.project}
                   collapsed={isCollapsed}
-                  threadCount={group.threads.length}
                   onToggle={() => useUiStore.getState().toggleProjectCollapsed(group.project!.id)}
                   onNewThread={() => newThread(group.project)}
                   onStar={() => void useProjectsStore.getState().togglePin(group.project!.id)}
@@ -697,15 +702,30 @@ export function Sidebar({ width }: { width: number }) {
                   }}
                 />
               ) : (
-                <div className="flex items-center gap-2 rounded-(--radius-sm) py-1.5 pr-2 pl-3">
+                <div className="flex items-center gap-2 rounded-(--radius-sm) py-1.5 pr-2 pl-3 transition hover:bg-hover">
                   <span className="flex h-4 w-4 shrink-0 items-center justify-center text-text-tertiary">
                     <SquareDashed size={14} />
                   </span>
-                  <span className="text-sm font-medium text-text-primary">
+                  <button
+                    type="button"
+                    aria-expanded={!noProjectCollapsed}
+                    onClick={() => useUiStore.getState().toggleProjectCollapsed("__none__")}
+                    className="min-w-0 flex-1 truncate text-left text-sm font-medium text-text-primary"
+                  >
                     {t("sidebar.noProject")}
-                  </span>
-                  <span className="flex-1" />
-                  <span className="tnum text-xs text-text-tertiary">{group.threads.length}</span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={
+                      noProjectCollapsed ? t("sidebar.expandProject") : t("sidebar.collapseProject")
+                    }
+                    aria-expanded={!noProjectCollapsed}
+                    data-project-chevron="right"
+                    onClick={() => useUiStore.getState().toggleProjectCollapsed("__none__")}
+                    className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    {noProjectCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+                  </button>
                 </div>
               )}
               {!isCollapsed && (
@@ -716,6 +736,7 @@ export function Sidebar({ width }: { width: number }) {
                       thread={thread}
                       active={pathname === `/thread/${thread.id}` || activeThreadId === thread.id}
                       unread={unreadSet.has(thread.id)}
+                      draft={Boolean(drafts[thread.id]?.trim())}
                       onNavigate={() => openThread(thread)}
                       onStar={() =>
                         void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned)

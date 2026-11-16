@@ -132,6 +132,7 @@ export const zh: Record<string, string> = {
   "sidebar.worktree": "worktree",
   "sidebar.worktreeBadge": "独立的 git worktree: {{name}}",
   "sidebar.unreadThread": "未读",
+  "sidebar.hasDraft": "草稿",
   "sidebar.status.working": "处理中",
   "sidebar.status.waiting": "等待中",
   "sidebar.time.now": "刚刚",

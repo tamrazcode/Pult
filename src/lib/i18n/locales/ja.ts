@@ -133,6 +133,7 @@ export const ja: Record<string, string> = {
   "sidebar.worktree": "worktree",
   "sidebar.worktreeBadge": "分離された git worktree: {{name}}",
   "sidebar.unreadThread": "未読",
+  "sidebar.hasDraft": "下書き",
   "sidebar.status.working": "処理中",
   "sidebar.status.waiting": "待機中",
   "sidebar.time.now": "たった今",

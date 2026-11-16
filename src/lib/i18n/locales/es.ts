@@ -133,6 +133,7 @@ export const es: Record<string, string> = {
   "sidebar.worktree": "worktree",
   "sidebar.worktreeBadge": "git worktree aislado: {{name}}",
   "sidebar.unreadThread": "No leído",
+  "sidebar.hasDraft": "Borrador",
   "sidebar.status.working": "trabajando",
   "sidebar.status.waiting": "esperando",
   "sidebar.time.now": "ahora",

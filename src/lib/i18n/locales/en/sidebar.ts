@@ -61,6 +61,7 @@ export const sidebar = {
   "sidebar.worktree": "worktree",
   "sidebar.worktreeBadge": "Isolated git worktree: {{name}}",
   "sidebar.unreadThread": "Unread",
+  "sidebar.hasDraft": "Draft",
   "sidebar.status.working": "working",
   "sidebar.status.waiting": "waiting",
   "sidebar.time.now": "now",
