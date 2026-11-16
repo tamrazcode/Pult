@@ -15,9 +15,19 @@ function fileUrlToPath(raw: string): string {
   }
 }
 
+/** Markdown percent-encodes Windows backslashes; restore `C:%5C...` first. */
+function decodeDrivePath(raw: string): string {
+  if (!/^[a-zA-Z]:%5c/i.test(raw)) return raw;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 /** Absolute drive-qualified path from a raw href, or null. */
 export function localFilePath(rawHref: string | null | undefined): string | null {
-  const raw = (rawHref ?? "").trim();
+  const raw = decodeDrivePath((rawHref ?? "").trim());
   if (!raw) return null;
   if (/(^|[\\/])\.\.([\\/?#]|$)/.test(raw.replace(/%2e/gi, "."))) return null;
   let path = raw;
@@ -44,7 +54,7 @@ export function classifyMarkdownHref(
   workspaceRoot: string | null | undefined,
   platform?: "windows" | "posix",
 ): ClassifiedLink {
-  const raw = (rawHref ?? "").trim();
+  const raw = decodeDrivePath((rawHref ?? "").trim());
   if (!raw) return { kind: "unsupported", raw };
   if (raw.startsWith("#")) return { kind: "anchor", id: raw.slice(1) };
 
