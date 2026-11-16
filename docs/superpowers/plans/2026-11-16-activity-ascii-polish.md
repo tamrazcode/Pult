@@ -143,7 +143,7 @@
 - [x] Rust: `app_update_check` / `app_update_install` на `tauri-plugin-updater`, endpoint из `PULT_UPDATE_ENDPOINT` или `tauri.conf.json`; понятная ошибка `updater.unconfigured` для плейсхолдера.
 - [x] UI: кнопка в футере сайдбара проверяет обновление Pult; при наличии — бейдж и версия; установка — круговой прогресс, сайлент-установка и авто-перезапуск.
 - [x] i18n: ключи проверки/установки/ошибки во всех 7 локалях + тесты `sidebar-updates.test.tsx`.
-- [ ] Настройка релиза (вне кода): GitHub-репозиторий, `latest.json` + подписанные артефакты, `TAURI_SIGNING_PRIVATE_KEY` в CI, реальный `pubkey` и endpoint вместо `OWNER`.
+- [ ] Настройка релиза (вне кода): GitHub-репозиторий, `latest.json` + подписанные артефакты, `TAURI_SIGNING_PRIVATE_KEY` в CI, реальный `pubkey` и endpoint вместо `OWNER`. Установщик уже собирается; подпись апдейтера — единственный блокер.
 
 ## T15 — Серый ASCII-фон
 
@@ -175,7 +175,8 @@
 ## T19 — Установщик и релиз
 
 - [x] `docs/RELEASING.md`: NSIS, GitHub Releases, `latest.json`, ключи, чистые данные.
-- [ ] Собрать NSIS и проверить установку на чистой машине (после реального GitHub-репозитория).
+- [x] NSIS-установщик собран: `src-tauri/target/release/bundle/nsis/pult_0.1.0_x64-setup.exe` (7.04 MiB, без пользовательских данных).
+- [ ] Чистая установка + апдейт проверяются после GitHub-репозитория и `TAURI_SIGNING_PRIVATE_KEY` (сейчас сборка падает на подписи апдейтера).
 
 ## T20 — Уведомления и шорткаты
 
