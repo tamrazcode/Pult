@@ -4,11 +4,11 @@
 //! elicitation) are forwarded to the runtime over a channel — the runtime
 //! owns policy (sandbox, permission modes, UI surfacing, §4.4).
 
+use futures::{SinkExt, StreamExt};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
-use futures::{SinkExt, StreamExt};
-use serde_json::Value;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -283,13 +283,19 @@ impl AcpConn {
             let frames = Arc::clone(&frames);
             let dead = Arc::clone(&dead);
             tokio::spawn(async move {
-                let mut framed =
-                    FramedRead::new(child_stdout, NdjsonCodec::new());
+                let mut framed = FramedRead::new(child_stdout, NdjsonCodec::new());
                 while let Some(Ok(value)) = framed.next().await {
                     let incoming = match parse_incoming(value) {
                         Ok(incoming) => incoming,
                         Err(InvalidMessage(bad)) => {
-                            record_frame(&frames, "←", format!("unclassifiable: {}", serde_json::to_string(&bad).unwrap_or_default()));
+                            record_frame(
+                                &frames,
+                                "←",
+                                format!(
+                                    "unclassifiable: {}",
+                                    serde_json::to_string(&bad).unwrap_or_default()
+                                ),
+                            );
                             tracing::warn!(target: "pult::protocol",
                                 head = %serde_json::to_string(&bad).unwrap_or_default(),
                                 "unclassifiable message dropped");
@@ -330,8 +336,11 @@ impl AcpConn {
                 }
                 // Agent hung up: fail every pending request.
                 dead.store(true, Ordering::Relaxed);
-                let waiting: Vec<_> =
-                    pending.lock().expect("pending lock poisoned").drain().collect();
+                let waiting: Vec<_> = pending
+                    .lock()
+                    .expect("pending lock poisoned")
+                    .drain()
+                    .collect();
                 for (_, sender) in waiting {
                     let _ = sender.send(Err(RpcError::new(ERR_INTERNAL, "agent process exited")));
                 }
@@ -387,7 +396,10 @@ impl AcpConn {
             .is_err()
         {
             // Nobody will answer: do not leave the oneshot in the map.
-            self.pending.lock().expect("pending lock poisoned").remove(&id);
+            self.pending
+                .lock()
+                .expect("pending lock poisoned")
+                .remove(&id);
             return Err(DriverError::HungUp {
                 method: method.to_string(),
             });
@@ -398,7 +410,10 @@ impl AcpConn {
                 method: method.to_string(),
             }),
             Err(_elapsed) => {
-                self.pending.lock().expect("pending lock poisoned").remove(&id);
+                self.pending
+                    .lock()
+                    .expect("pending lock poisoned")
+                    .remove(&id);
                 Err(DriverError::Timeout {
                     method: method.to_string(),
                 })
@@ -414,7 +429,11 @@ impl AcpConn {
             client_info: Implementation::new("pult", env!("CARGO_PKG_VERSION")),
         };
         let value = self
-            .request("initialize", serde_json::to_value(params)?, std::time::Duration::from_secs(60))
+            .request(
+                "initialize",
+                serde_json::to_value(params)?,
+                std::time::Duration::from_secs(60),
+            )
             .await?;
         Ok(serde_json::from_value(value)?)
     }
@@ -460,8 +479,13 @@ impl AcpConn {
     }
 
     /// §5.3 resume via session/load (capability-gated by the caller).
-    pub async fn load_session(&self, session_id: &str, cwd: &str) -> Result<LoadSessionResult, DriverError> {
-        self.load_session_with_mcp(session_id, cwd, Vec::new()).await
+    pub async fn load_session(
+        &self,
+        session_id: &str,
+        cwd: &str,
+    ) -> Result<LoadSessionResult, DriverError> {
+        self.load_session_with_mcp(session_id, cwd, Vec::new())
+            .await
     }
 
     pub async fn load_session_with_mcp(
@@ -559,8 +583,14 @@ impl AcpConn {
         reply: ClientReply,
     ) -> Result<(), DriverError> {
         let outgoing = match reply {
-            Ok(result) => Outgoing::ResponseOk { id: request_id, result },
-            Err(error) => Outgoing::ResponseErr { id: request_id, error },
+            Ok(result) => Outgoing::ResponseOk {
+                id: request_id,
+                result,
+            },
+            Err(error) => Outgoing::ResponseErr {
+                id: request_id,
+                error,
+            },
         };
         let result = self
             .stdin_tx
@@ -629,31 +659,58 @@ async fn handle_client_request(
     let parsed: Option<ClientRequest> = match method.as_str() {
         "session/request_permission" => serde_json::from_value::<RequestPermissionParams>(params)
             .ok()
-            .map(|params| ClientRequest::Permission { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::Permission {
+                request_id: id.clone(),
+                params,
+            }),
         "fs/read_text_file" => serde_json::from_value::<ReadTextFileParams>(params)
             .ok()
-            .map(|params| ClientRequest::ReadFile { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::ReadFile {
+                request_id: id.clone(),
+                params,
+            }),
         "fs/write_text_file" => serde_json::from_value::<WriteTextFileParams>(params)
             .ok()
-            .map(|params| ClientRequest::WriteFile { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::WriteFile {
+                request_id: id.clone(),
+                params,
+            }),
         "elicitation/create" => serde_json::from_value::<CreateElicitationParams>(params)
             .ok()
-            .map(|params| ClientRequest::Elicitation { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::Elicitation {
+                request_id: id.clone(),
+                params,
+            }),
         "terminal/create" => serde_json::from_value::<CreateTerminalParams>(params)
             .ok()
-            .map(|params| ClientRequest::TerminalCreate { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::TerminalCreate {
+                request_id: id.clone(),
+                params,
+            }),
         "terminal/output" => serde_json::from_value::<TerminalRefParams>(params)
             .ok()
-            .map(|params| ClientRequest::TerminalOutput { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::TerminalOutput {
+                request_id: id.clone(),
+                params,
+            }),
         "terminal/wait_for_exit" => serde_json::from_value::<TerminalRefParams>(params)
             .ok()
-            .map(|params| ClientRequest::TerminalWait { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::TerminalWait {
+                request_id: id.clone(),
+                params,
+            }),
         "terminal/kill" => serde_json::from_value::<TerminalRefParams>(params)
             .ok()
-            .map(|params| ClientRequest::TerminalKill { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::TerminalKill {
+                request_id: id.clone(),
+                params,
+            }),
         "terminal/release" => serde_json::from_value::<TerminalRefParams>(params)
             .ok()
-            .map(|params| ClientRequest::TerminalRelease { request_id: id.clone(), params }),
+            .map(|params| ClientRequest::TerminalRelease {
+                request_id: id.clone(),
+                params,
+            }),
         _ => None,
     };
     match parsed {
@@ -662,10 +719,11 @@ async fn handle_client_request(
             let _ = client_tx.send(request);
         }
         None => {
-            let error = RpcError::new(ERR_METHOD_NOT_FOUND, format!("unknown client method: {method}"));
-            let _ = stdin_tx
-                .send(Outgoing::ResponseErr { id, error })
-                .await;
+            let error = RpcError::new(
+                ERR_METHOD_NOT_FOUND,
+                format!("unknown client method: {method}"),
+            );
+            let _ = stdin_tx.send(Outgoing::ResponseErr { id, error }).await;
         }
     }
 }
@@ -719,7 +777,9 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                     }]
                 } else {
                     vec![EventKind::AgentMessageDelta {
-                        delta: format!("\n\n![generated image](data:{mime_type};base64,{data})\n\n"),
+                        delta: format!(
+                            "\n\n![generated image](data:{mime_type};base64,{data})\n\n"
+                        ),
                     }]
                 }
             }
@@ -737,33 +797,34 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
             status,
             locations,
             raw_input,
+            meta,
             ..
         } => vec![EventKind::ToolCall {
             tool_call_id,
             title,
             kind: kind.map(tool_kind_str).unwrap_or("other").to_string(),
-            status: status
-                .map(tool_status_str)
-                .unwrap_or("pending")
-                .to_string(),
+            status: status.map(tool_status_str).unwrap_or("pending").to_string(),
             locations: locations
                 .unwrap_or_default()
                 .into_iter()
                 .map(|l| l.path)
                 .collect(),
             raw_input: cap_tool_payload(raw_input),
+            meta: cap_tool_payload(meta),
         }],
         SessionUpdate::ToolCallUpdate {
             tool_call_id,
             status,
             content,
             raw_output,
+            meta,
             ..
         } => vec![EventKind::ToolCallUpdate {
             tool_call_id,
             status: status.map(|s| tool_status_str(s).to_string()),
             content: cap_tool_payload(content.map(|c| serde_json::to_value(c).unwrap_or_default())),
             raw_output: cap_tool_payload(raw_output),
+            meta: cap_tool_payload(meta),
         }],
         SessionUpdate::Plan { entries } => vec![EventKind::Plan {
             entries: entries
@@ -784,8 +845,12 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                 })
                 .collect(),
         }],
-        SessionUpdate::CurrentModeUpdate { current_mode_id, .. } => {
-            vec![EventKind::ModeChange { mode_id: current_mode_id }]
+        SessionUpdate::CurrentModeUpdate {
+            current_mode_id, ..
+        } => {
+            vec![EventKind::ModeChange {
+                mode_id: current_mode_id,
+            }]
         }
         SessionUpdate::Notice {
             severity,
@@ -850,7 +915,9 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
             summary_replace: None,
             summary_append: Some(text_blocks_of(std::slice::from_ref(&content))),
         }],
-        SessionUpdate::UsageUpdate { used, size, cost, .. } => {
+        SessionUpdate::UsageUpdate {
+            used, size, cost, ..
+        } => {
             vec![EventKind::Usage {
                 detail: serde_json::json!({ "used": used, "size": size, "cost": cost }),
             }]
@@ -910,8 +977,7 @@ pub fn permission_reply(option_id: Option<String>) -> ClientReply {
             outcome: RequestPermissionOutcomeKind::Cancelled,
         },
     };
-    serde_json::to_value(outcome)
-        .map_err(|e| RpcError::new(ERR_INTERNAL, e.to_string()))
+    serde_json::to_value(outcome).map_err(|e| RpcError::new(ERR_INTERNAL, e.to_string()))
 }
 
 /// Convenience: build the elicitation reply from the UI's action + content.
@@ -933,7 +999,9 @@ pub fn invalid_params(message: impl Into<String>) -> RpcError {
 /// Shape-check helper used by tests and the runtime: a permission request
 /// payload can be re-serialized into the update data it describes.
 pub fn tool_call_summary(data: &ToolCallUpdateData) -> String {
-    data.title.clone().unwrap_or_else(|| data.tool_call_id.clone())
+    data.title
+        .clone()
+        .unwrap_or_else(|| data.tool_call_id.clone())
 }
 
 #[cfg(test)]
@@ -988,13 +1056,17 @@ mod tests {
                 wire::SessionUpdate::AgentMessageChunk {
                     content: ContentBlock::text("hello"),
                 },
-                EventKind::AgentMessageDelta { delta: "hello".into() },
+                EventKind::AgentMessageDelta {
+                    delta: "hello".into(),
+                },
             ),
             (
                 wire::SessionUpdate::AgentThoughtChunk {
                     content: ContentBlock::text("thinking"),
                 },
-                EventKind::AgentThoughtDelta { delta: "thinking".into() },
+                EventKind::AgentThoughtDelta {
+                    delta: "thinking".into(),
+                },
             ),
             (
                 wire::SessionUpdate::ToolCall {
@@ -1020,6 +1092,7 @@ mod tests {
                     status: "in_progress".into(),
                     locations: vec!["/repo/src/main.rs".into()],
                     raw_input: Some(json!({"path": "/repo/src/main.rs"})),
+                    meta: None,
                 },
             ),
             (
@@ -1027,7 +1100,9 @@ mod tests {
                     current_mode_id: "architect".into(),
                     meta: None,
                 },
-                EventKind::ModeChange { mode_id: "architect".into() },
+                EventKind::ModeChange {
+                    mode_id: "architect".into(),
+                },
             ),
             (
                 wire::SessionUpdate::Notice {
@@ -1071,6 +1146,31 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tool_call_meta_passes_through_for_native_subagents() {
+        let update = SessionUpdate::ToolCall {
+            tool_call_id: "t-meta".into(),
+            title: "Task".into(),
+            name: Some("Task".into()),
+            kind: Some(wire_fallback_kind()),
+            status: Some(wire::ToolCallStatus::InProgress),
+            content: None,
+            locations: None,
+            raw_input: Some(json!({ "prompt": "review" })),
+            raw_output: None,
+            meta: Some(json!({ "parentToolUseId": "tu-1" })),
+        };
+        match &project_update(update)[..] {
+            [EventKind::ToolCall { meta, .. }] => {
+                assert_eq!(
+                    meta.as_ref().and_then(|value| value.get("parentToolUseId")),
+                    Some(&json!("tu-1"))
+                );
+            }
+            other => panic!("wrong projection: {other:?}"),
+        }
+    }
+
     fn wire_fallback_kind() -> crate::protocol::types::ToolKind {
         crate::protocol::types::ToolKind::Other
     }
@@ -1078,7 +1178,10 @@ mod tests {
     #[test]
     fn permission_reply_shape() {
         let reply = permission_reply(Some("allow".into())).unwrap();
-        assert_eq!(reply, json!({"outcome": {"outcome": "selected", "optionId": "allow"}}));
+        assert_eq!(
+            reply,
+            json!({"outcome": {"outcome": "selected", "optionId": "allow"}})
+        );
         let reply = permission_reply(None).unwrap();
         assert_eq!(reply, json!({"outcome": {"outcome": "cancelled"}}));
     }
@@ -1109,7 +1212,12 @@ mod tests {
             updated_at: None,
             meta: None,
         });
-        assert_eq!(info, vec![EventKind::SessionInfo { title: Some("Echo turn".into()) }]);
+        assert_eq!(
+            info,
+            vec![EventKind::SessionInfo {
+                title: Some("Echo turn".into())
+            }]
+        );
 
         let config = project_update(wire::SessionUpdate::ConfigOptionUpdate {
             config_options: vec![wire::SessionConfigOption {
@@ -1203,7 +1311,9 @@ mod auth_tests {
 
     #[test]
     fn is_auth_required_matches_only_minus_32000() {
-        assert!(DriverError::Rpc(RpcError::new(ERR_AUTH_REQUIRED, "auth required")).is_auth_required());
+        assert!(
+            DriverError::Rpc(RpcError::new(ERR_AUTH_REQUIRED, "auth required")).is_auth_required()
+        );
         assert!(!DriverError::Rpc(RpcError::new(-32602, "invalid params")).is_auth_required());
         assert!(!DriverError::HungUp {
             method: "session/new".into()

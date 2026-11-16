@@ -174,6 +174,7 @@ fn cap_ui_event_payloads_enforces_total_history_budget() {
                     status: "completed".to_string(),
                     locations: Vec::new(),
                     raw_input: Some(serde_json::json!({ "data": "A".repeat(1_500_000) })),
+                    meta: None,
                 },
             )
         })

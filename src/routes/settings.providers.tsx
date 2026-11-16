@@ -687,6 +687,12 @@ function ProvidersSettings() {
                 )}
               </div>
 
+              <p className="mt-2 text-xs leading-snug text-text-tertiary">
+                Native subagent steps appear only when the provider exposes them in ACP
+                <span className="font-mono"> _meta</span>. Otherwise Pult shows ordinary tool calls
+                and never invents progress.
+              </p>
+
               <button
                 type="button"
                 onClick={() => setRuntimeOpen((open) => !open)}

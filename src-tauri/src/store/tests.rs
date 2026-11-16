@@ -67,10 +67,16 @@ fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
             },
         )
         .unwrap();
-    assert_eq!(store.get_delegated_task("task-1").unwrap().status, "running");
+    assert_eq!(
+        store.get_delegated_task("task-1").unwrap().status,
+        "running"
+    );
 
     store.reset_orphaned_run_states().unwrap();
-    assert_eq!(store.get_delegated_task("task-1").unwrap().status, "orphaned");
+    assert_eq!(
+        store.get_delegated_task("task-1").unwrap().status,
+        "orphaned"
+    );
 }
 
 fn thread(id: &str, updated_at: i64) -> ThreadRecord {
@@ -129,7 +135,7 @@ fn every_kind() -> Vec<EventKind> {
     vec![
         EventKind::UserMessage {
             text: "hello".to_string(),
-        images: Vec::new(),
+            images: Vec::new(),
         },
         EventKind::AgentMessageDelta {
             delta: "hi ".to_string(),
@@ -144,12 +150,14 @@ fn every_kind() -> Vec<EventKind> {
             status: "in_progress".to_string(),
             locations: vec!["/repo/src/main.rs".to_string()],
             raw_input: Some(json!({"path": "/repo/src/main.rs"})),
+            meta: None,
         },
         EventKind::ToolCallUpdate {
             tool_call_id: "tc-1".to_string(),
             status: Some("completed".to_string()),
             content: Some(json!({"type": "text", "text": "done"})),
             raw_output: Some(json!({"bytes": 42})),
+            meta: None,
         },
         EventKind::Plan {
             entries: vec![
@@ -187,9 +195,9 @@ fn every_kind() -> Vec<EventKind> {
         },
         EventKind::Compaction {
             status: Some("started".to_string()),
-        compaction_id: None,
-        summary_replace: None,
-        summary_append: None,
+            compaction_id: None,
+            summary_replace: None,
+            summary_append: None,
         },
         EventKind::Usage {
             detail: json!({"inputTokens": 12, "outputTokens": 34}),
@@ -251,7 +259,7 @@ fn next_seq_starts_at_zero_and_duplicates_are_rejected() {
             0,
             EventKind::UserMessage {
                 text: "first".to_string(),
-            images: Vec::new(),
+                images: Vec::new(),
             },
         ))
         .unwrap();
@@ -276,7 +284,7 @@ fn next_seq_starts_at_zero_and_duplicates_are_rejected() {
         0,
         EventKind::UserMessage {
             text: "overwritten?".to_string(),
-        images: Vec::new(),
+            images: Vec::new(),
         },
     ));
     assert!(duplicate.is_err());
@@ -322,11 +330,13 @@ fn thread_lifecycle_rename_status_pin_list_and_cascade_delete() {
             0,
             EventKind::UserMessage {
                 text: "x".to_string(),
-            images: Vec::new(),
+                images: Vec::new(),
             },
         ))
         .unwrap();
-    store.upsert_session_ref("t-b", "inst-1", "remote-1").unwrap();
+    store
+        .upsert_session_ref("t-b", "inst-1", "remote-1")
+        .unwrap();
     assert_eq!(store.next_seq("r-1").unwrap(), 1);
 
     store.delete_thread("t-b").unwrap();
@@ -380,7 +390,9 @@ fn run_lifecycle_finish_sets_terminal_fields() {
         )
     );
     assert!(
-        store.finish_run("missing", 1, "failed", None, None).is_err(),
+        store
+            .finish_run("missing", 1, "failed", None, None)
+            .is_err(),
         "finishing an unknown run errors"
     );
 }
@@ -391,12 +403,16 @@ fn session_ref_upsert_replaces_previous_value() {
     store.create_thread(&thread("t-1", 1_000)).unwrap();
     assert_eq!(store.get_session_ref("t-1", "inst-1").unwrap(), None);
 
-    store.upsert_session_ref("t-1", "inst-1", "remote-a").unwrap();
+    store
+        .upsert_session_ref("t-1", "inst-1", "remote-a")
+        .unwrap();
     assert_eq!(
         store.get_session_ref("t-1", "inst-1").unwrap().as_deref(),
         Some("remote-a")
     );
-    store.upsert_session_ref("t-1", "inst-1", "remote-b").unwrap();
+    store
+        .upsert_session_ref("t-1", "inst-1", "remote-b")
+        .unwrap();
     assert_eq!(
         store.get_session_ref("t-1", "inst-1").unwrap().as_deref(),
         Some("remote-b"),
@@ -404,7 +420,9 @@ fn session_ref_upsert_replaces_previous_value() {
     );
 
     // A distinct instance keeps its own ref.
-    store.upsert_session_ref("t-1", "inst-2", "remote-c").unwrap();
+    store
+        .upsert_session_ref("t-1", "inst-2", "remote-c")
+        .unwrap();
     assert_eq!(
         store.get_session_ref("t-1", "inst-1").unwrap().as_deref(),
         Some("remote-b")
@@ -516,12 +534,14 @@ fn data_survives_reopen() {
                 0,
                 EventKind::UserMessage {
                     text: "persist".to_string(),
-                images: Vec::new(),
+                    images: Vec::new(),
                 },
             ))
             .unwrap();
         store.set_setting("k", &json!({"v": 1})).unwrap();
-        store.upsert_session_ref("t-1", "inst-1", "remote-1").unwrap();
+        store
+            .upsert_session_ref("t-1", "inst-1", "remote-1")
+            .unwrap();
     }
 
     let reopened = Store::open(&path).unwrap();
@@ -537,7 +557,10 @@ fn data_survives_reopen() {
     );
     assert_eq!(reopened.get_setting("k").unwrap(), Some(json!({"v": 1})));
     assert_eq!(
-        reopened.get_session_ref("t-1", "inst-1").unwrap().as_deref(),
+        reopened
+            .get_session_ref("t-1", "inst-1")
+            .unwrap()
+            .as_deref(),
         Some("remote-1")
     );
     drop(reopened);
@@ -734,7 +757,10 @@ fn load_thread_events_orders_across_runs() {
     let loaded = store.load_thread_events("t-1").unwrap();
     let ids: Vec<&str> = loaded.iter().map(|e| e.id.as_str()).collect();
     assert_eq!(ids, vec!["r-1-0", "r-1-1", "r-2-0", "r-2-1", "r-2-2"]);
-    assert!(store.load_thread_events("missing-thread").unwrap().is_empty());
+    assert!(store
+        .load_thread_events("missing-thread")
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
@@ -859,7 +885,10 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
             Ok(false)
         })
         .unwrap();
-    assert!(has_pinned_col, "projects.pinned column must exist after v4 migration");
+    assert!(
+        has_pinned_col,
+        "projects.pinned column must exist after v4 migration"
+    );
 
     let queue_cols: Vec<String> = store
         .with_conn(|conn| {
@@ -885,8 +914,10 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
 
     let raw_pinned: i64 = store
         .with_conn(|conn| {
-            conn.query_row("SELECT pinned FROM projects WHERE id = 'p-1'", [], |row| row.get(0))
-                .map_err(|e| sql("read project pinned", e))
+            conn.query_row("SELECT pinned FROM projects WHERE id = 'p-1'", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| sql("read project pinned", e))
         })
         .unwrap();
     assert_eq!(raw_pinned, 0, "projects.pinned must default to 0");
@@ -959,7 +990,13 @@ fn projects_crud_ordering_partial_update_and_delete() {
 
     // Partial update: only name + color
     let updated = store
-        .update_project("p-alpha", Some("Alpha Renamed"), Some("#ef4444"), None, None)
+        .update_project(
+            "p-alpha",
+            Some("Alpha Renamed"),
+            Some("#ef4444"),
+            None,
+            None,
+        )
         .unwrap();
     assert_eq!(updated.name, "Alpha Renamed");
     assert_eq!(updated.color.as_deref(), Some("#ef4444"));
@@ -979,7 +1016,10 @@ fn projects_crud_ordering_partial_update_and_delete() {
     assert_eq!(fetched, updated2);
 
     store.delete_project("p-beta").unwrap();
-    assert!(store.get_project("p-beta").is_err(), "deleted project must error on get_project");
+    assert!(
+        store.get_project("p-beta").is_err(),
+        "deleted project must error on get_project"
+    );
     assert_eq!(store.list_projects().unwrap().len(), 2);
 }
 
@@ -1009,15 +1049,18 @@ fn delete_project_nulls_thread_project_id_without_deleting_thread() {
     assert!(store.get_project("p-del").is_err());
     let surviving = store.get_thread("t-proj").unwrap();
     assert_eq!(surviving.id, "t-proj");
-    assert_eq!(surviving.project_id, None, "deleting project must NULL out thread.project_id");
+    assert_eq!(
+        surviving.project_id, None,
+        "deleting project must NULL out thread.project_id"
+    );
     assert_eq!(surviving.workspace.as_deref(), Some("/tmp/disposable"));
 }
 
 #[tokio::test]
 async fn threads_create_defaults_workspace_and_worktree_from_project() {
-    use std::sync::Arc;
     use crate::runtime::{AgentRuntime, EventSink};
     use crate::store::records::ProjectRecord;
+    use std::sync::Arc;
 
     struct NullSink;
     impl EventSink for NullSink {
@@ -1031,8 +1074,10 @@ async fn threads_create_defaults_workspace_and_worktree_from_project() {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let root_dir = std::env::temp_dir().join(format!("pult_proj_root_{}_{}", std::process::id(), nanos));
-    let wt_repo_dir = std::env::temp_dir().join(format!("pult_proj_wt_{}_{}", std::process::id(), nanos));
+    let root_dir =
+        std::env::temp_dir().join(format!("pult_proj_root_{}_{}", std::process::id(), nanos));
+    let wt_repo_dir =
+        std::env::temp_dir().join(format!("pult_proj_wt_{}_{}", std::process::id(), nanos));
     std::fs::create_dir_all(&root_dir).unwrap();
     std::fs::create_dir_all(&wt_repo_dir).unwrap();
 
@@ -1062,8 +1107,16 @@ async fn threads_create_defaults_workspace_and_worktree_from_project() {
     let store = Arc::new(Store::open_in_memory().unwrap());
     let runtime = Arc::new(AgentRuntime::new(Arc::clone(&store), Arc::new(NullSink)));
 
-    let root_canon = root_dir.canonicalize().unwrap().to_string_lossy().into_owned();
-    let wt_canon = wt_repo_dir.canonicalize().unwrap().to_string_lossy().into_owned();
+    let root_canon = root_dir
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let wt_canon = wt_repo_dir
+        .canonicalize()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
 
     store
         .create_project(&ProjectRecord {
@@ -1118,7 +1171,10 @@ async fn threads_create_defaults_workspace_and_worktree_from_project() {
     .await
     .unwrap();
     assert_eq!(t_wt.project_id.as_deref(), Some("proj-wt"));
-    assert!(t_wt.worktree_name.is_some(), "must create worktree when project.worktree_strategy == 'worktree'");
+    assert!(
+        t_wt.worktree_name.is_some(),
+        "must create worktree when project.worktree_strategy == 'worktree'"
+    );
     assert_eq!(
         std::fs::canonicalize(t_wt.main_repo.as_deref().unwrap()).unwrap(),
         std::fs::canonicalize(&wt_canon).unwrap()
@@ -1150,9 +1206,9 @@ async fn threads_create_defaults_workspace_and_worktree_from_project() {
 
 #[test]
 fn queue_item_persists_mode_and_config_snapshot_and_recovers_orphaned_claim() {
-    use std::collections::BTreeMap;
     use crate::protocol::types::ConfigOptionValue;
     use crate::store::records::QueueItem;
+    use std::collections::BTreeMap;
 
     let path = unique_temp_path("queue_claim_recovery");
     remove_db_files(&path);
@@ -1192,7 +1248,10 @@ fn queue_item_persists_mode_and_config_snapshot_and_recovers_orphaned_claim() {
         assert_eq!(claimed.mode.as_deref(), Some("plan"));
         assert_eq!(claimed.config_options, config_options);
         assert!(store.list_queue("t-1").unwrap().is_empty());
-        assert!(store.claim_queue_head("t-1", "claim-token-2").unwrap().is_none());
+        assert!(store
+            .claim_queue_head("t-1", "claim-token-2")
+            .unwrap()
+            .is_none());
 
         store.release_queue_claim("q-1").unwrap();
         assert_eq!(store.list_queue("t-1").unwrap().len(), 1);
@@ -1220,8 +1279,8 @@ fn queue_item_persists_mode_and_config_snapshot_and_recovers_orphaned_claim() {
 
 #[test]
 fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row() {
-    use std::collections::BTreeMap;
     use crate::store::records::QueueItem;
+    use std::collections::BTreeMap;
 
     let store = Store::open_in_memory().unwrap();
     store.create_thread(&thread("t-1", 1_000)).unwrap();
@@ -1293,7 +1352,11 @@ fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row(
         },
     );
     assert!(store.commit_claimed_queue_run("q-2", &r2, &bad_ev).is_err());
-    assert_eq!(store.list_runs("t-1").unwrap().len(), 1, "r-2 must roll back");
+    assert_eq!(
+        store.list_runs("t-1").unwrap().len(),
+        1,
+        "r-2 must roll back"
+    );
     let raw_q2: i64 = store
         .with_conn(|conn| {
             conn.query_row(
@@ -1306,4 +1369,3 @@ fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row(
         .unwrap();
     assert_eq!(raw_q2, 1, "q-2 must remain on rollback");
 }
-

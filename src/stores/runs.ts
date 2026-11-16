@@ -67,6 +67,8 @@ export interface ToolChatItem {
   rawInput?: unknown;
   rawOutput?: unknown;
   content?: unknown;
+  /** ACP `_meta`: provider-native subagent hints only. */
+  meta?: unknown;
 }
 
 export interface NoticeChatItem {
@@ -258,6 +260,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
           status: payload.status || existing.status,
           locations: payload.locations.length > 0 ? payload.locations : existing.locations,
           rawInput: defined(payload.rawInput) ?? existing.rawInput,
+          meta: defined(payload.meta) ?? existing.meta,
         };
         const items = [...view.items];
         items[idx] = patched;
@@ -271,6 +274,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         status: payload.status,
         locations: payload.locations,
         rawInput: defined(payload.rawInput),
+        meta: defined(payload.meta),
       };
       return { ...view, items: [...closeStreamingText(view.items), toolItem] };
     }
@@ -286,6 +290,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         status: payload.status ?? existing.status,
         content: defined(payload.content) ?? existing.content,
         rawOutput: defined(payload.rawOutput) ?? existing.rawOutput,
+        meta: defined(payload.meta) ?? existing.meta,
       };
       const items = [...view.items];
       items[idx] = patched;

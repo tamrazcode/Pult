@@ -37,6 +37,8 @@ import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../sto
 import { useSubagentsStore, useThreadSubagents } from "../../stores/subagents";
 import { SubagentCard } from "./SubagentCard";
 import { SubagentGroupCard } from "./SubagentGroupCard";
+import { NativeSubagentCard } from "./NativeSubagentCard";
+import { collectNativeSubagents, isNativeSubagentItem } from "../../lib/nativeSubagents";
 import type { DelegatedTask } from "../../lib/types";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
@@ -126,6 +128,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     }
     return [...groups.values()];
   }, [subagents]);
+  const nativeGroups = useMemo(
+    () => collectNativeSubagents(entries.map((entry) => entry.item)),
+    [entries],
+  );
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
@@ -204,6 +210,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     pendingUser !== undefined ||
     entries.length > 0 ||
     subagents.length > 0 ||
+    nativeGroups.length > 0 ||
     (view.plan?.length ?? 0) > 0 ||
     view.pendingApproval !== undefined ||
     view.error !== undefined;
@@ -258,7 +265,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
   // Only the active run's actions replace the Working row; a previous run's
   // action group must not hide the indicator for a fresh run.
-  const hasActionItems = entries.some((entry) => entry.runId === runId && isActionItem(entry.item));
+  const hasActionItems = entries.some(
+    (entry) =>
+      entry.runId === runId && isActionItem(entry.item) && !isNativeSubagentItem(entry.item),
+  );
 
   return (
     <div className="relative flex min-h-0 flex-1">
@@ -278,11 +288,19 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           )}
           {windowedEntries.length > 0 && (
             <TimelineRows
-              entries={windowedEntries}
+              entries={windowedEntries.filter((entry) => !isNativeSubagentItem(entry.item))}
               startedAt={activeRun?.startedAt}
               activeRunId={activeRun?.id}
               streaming={view.streaming}
             />
+          )}
+
+          {nativeGroups.length > 0 && (
+            <div className="flex flex-col gap-2">
+              {nativeGroups.map((group) => (
+                <NativeSubagentCard key={group.key} group={group} />
+              ))}
+            </div>
           )}
 
           {subagents.length > 0 && (

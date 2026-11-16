@@ -303,6 +303,7 @@ export type EventPayloadUnion =
         status: string;
         locations: string[];
         rawInput?: unknown;
+        meta?: unknown;
       };
     }
   | {
@@ -312,6 +313,7 @@ export type EventPayloadUnion =
         status?: string | null;
         content?: unknown;
         rawOutput?: unknown;
+        meta?: unknown;
       };
     }
   | { kind: "plan"; payload: { entries: PlanEntry[] } }

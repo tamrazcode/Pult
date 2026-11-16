@@ -2143,6 +2143,7 @@ mod payload_cap_tests {
                 status: Some("completed".to_string()),
                 content: None,
                 raw_output: Some(serde_json::json!({ "data": "A".repeat(2_000_001) })),
+                meta: None,
             },
         )];
         cap_ui_event_payloads(&mut events);

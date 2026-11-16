@@ -57,8 +57,12 @@ pub enum EventKind {
         /// Attached images (base64 data, mimeType) — composer chips.
         images: Vec<crate::store::records::ImageInput>,
     },
-    AgentMessageDelta { delta: String },
-    AgentThoughtDelta { delta: String },
+    AgentMessageDelta {
+        delta: String,
+    },
+    AgentThoughtDelta {
+        delta: String,
+    },
     ToolCall {
         tool_call_id: String,
         title: String,
@@ -68,14 +72,21 @@ pub enum EventKind {
         status: String,
         locations: Vec<String>,
         raw_input: Option<serde_json::Value>,
+        /// ACP `_meta` passthrough: provider-native subagent hints live here.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
     },
     ToolCallUpdate {
         tool_call_id: String,
         status: Option<String>,
         content: Option<serde_json::Value>,
         raw_output: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        meta: Option<serde_json::Value>,
     },
-    Plan { entries: Vec<PlanEntry> },
+    Plan {
+        entries: Vec<PlanEntry>,
+    },
     ApprovalRequest {
         request_id: String,
         tool_call_id: Option<String>,
@@ -90,15 +101,27 @@ pub enum EventKind {
         #[serde(default)]
         auto: bool,
     },
-    ModeChange { mode_id: String },
-    Notice { level: String, message: String },
+    ModeChange {
+        mode_id: String,
+    },
+    Notice {
+        level: String,
+        message: String,
+    },
     /// Agent-requested input (elicitation/create): form schema or URL mode,
     /// raw detail — the UI renders the modal from it.
-    ElicitationRequest { message: String, detail: serde_json::Value },
+    ElicitationRequest {
+        message: String,
+        detail: serde_json::Value,
+    },
     /// Slash commands the agent can execute (composer menu data source).
-    CommandsUpdate { commands: Vec<CommandInfo> },
+    CommandsUpdate {
+        commands: Vec<CommandInfo>,
+    },
     /// Partial session metadata; `title: Some` renames the thread in the store.
-    SessionInfo { title: Option<String> },
+    SessionInfo {
+        title: Option<String>,
+    },
     /// The full session config option set (model, thought level, toggles...).
     ConfigOptions {
         #[serde(default, deserialize_with = "deserialize_config_options")]
@@ -113,7 +136,9 @@ pub enum EventKind {
         summary_replace: Option<String>,
         summary_append: Option<String>,
     },
-    Usage { detail: serde_json::Value },
+    Usage {
+        detail: serde_json::Value,
+    },
     /// A file the agent changed through the fs callbacks: unified diff for
     /// the "Changed files" projection (§5.4).
     FileChanged {
@@ -245,6 +270,7 @@ mod tests {
                 status: "in_progress".into(),
                 locations: vec!["/repo/src/main.rs".into()],
                 raw_input: None,
+                meta: None,
             },
         );
         let v = serde_json::to_value(&e).unwrap();
@@ -262,17 +288,20 @@ mod tests {
     fn event_kind_tags_are_snake_case() {
         assert_eq!(
             serde_json::to_value(EventKind::AgentMessageDelta { delta: "x".into() }).unwrap()
-            ["kind"],
+                ["kind"],
             "agent_message_delta"
         );
         assert_eq!(
             serde_json::to_value(EventKind::AgentThoughtDelta { delta: "x".into() }).unwrap()
-            ["kind"],
+                ["kind"],
             "agent_thought_delta"
         );
         assert_eq!(
-            serde_json::to_value(EventKind::RunFinished { stop_reason: "end_turn".into(), error: None })
-                .unwrap()["kind"],
+            serde_json::to_value(EventKind::RunFinished {
+                stop_reason: "end_turn".into(),
+                error: None
+            })
+            .unwrap()["kind"],
             "run_finished"
         );
     }
