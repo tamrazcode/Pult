@@ -95,7 +95,7 @@ export function RightPanel({ width }: { width: number }) {
   return (
     <aside
       style={{ width }}
-      className="glass-panel flex shrink-0 flex-col border-l border-border-subtle bg-panel"
+      className="glass-panel flex h-full shrink-0 flex-col border-l border-border-subtle bg-panel"
     >
       <div className={`flex h-10 shrink-0 items-center pl-3 ${isTauri() ? "pr-[136px]" : "pr-3"}`}>
         {tab !== "none" && (

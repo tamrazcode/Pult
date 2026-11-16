@@ -82,7 +82,7 @@ function AppearanceSettings() {
                   {t("settings.appearance.mainTheme")}
                 </span>
               )}
-              {theme === id && <Check size={13} className="text-accent" />}
+              {theme === id && <Check size={13} className="ml-auto shrink-0 text-accent" />}
             </span>
           </button>
         ))}

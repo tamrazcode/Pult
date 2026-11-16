@@ -2595,6 +2595,34 @@ fn corrupt_config_toml_populates_config_error() {
         err.as_deref().is_some_and(|s| !s.is_empty()),
         "malformed config.toml must populate config_error(); got {err:?}"
     );
+    assert!(
+        runtime.instances().is_empty(),
+        "malformed config.toml must not fall back to mock"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[test]
+fn empty_config_starts_with_zero_instances_without_mock_fallback() {
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-empty-config-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(sandbox.join(".pult")).unwrap();
+
+    let _home = HomeEnvGuard::redirect(&sandbox);
+    let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+    let sink = Arc::new(TestSink::default());
+    let runtime = AgentRuntime::new(store, sink);
+
+    assert!(runtime.config_error().is_none());
+    assert!(
+        runtime.instances().is_empty(),
+        "empty config must start with zero instances without mock fallback"
+    );
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }

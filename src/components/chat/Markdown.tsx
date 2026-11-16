@@ -322,7 +322,7 @@ function LocalImage({ src, alt }: { src?: string; alt?: string }) {
     setDataUrl(null);
     setFailed(false);
     let cancelled = false;
-    readImageDataUrl(fileUrlToPath(source), useThreadsStore.getState().activeThreadId ?? undefined)
+    readImageDataUrl(fileUrlToPath(source), useThreadsStore.getState().activeThreadId ?? "")
       .then((url) => {
         if (!cancelled) setDataUrl(url);
       })

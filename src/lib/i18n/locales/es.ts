@@ -813,7 +813,6 @@ export const es: Record<string, string> = {
   "profile.linkPreview": "Tu enlace: {{link}}",
   "profile.unnamed": "Sin nombre",
   "onboarding.heading": "Bienvenido",
-  "onboarding.skip": "Saltar introducción",
   "onboarding.getStarted": "Empezar",
   "onboarding.back": "Atrás",
   "onboarding.continue": "Continuar",
@@ -821,12 +820,10 @@ export const es: Record<string, string> = {
   "onboarding.step1.title": "Conoce Pult. Todos los agentes en un espacio.",
   "onboarding.step1.body":
     "Pult encuentra los agentes de código de este ordenador y te deja ejecutarlos en paralelo.",
-  "onboarding.step2.eyebrow": "02 — Agentes",
   "onboarding.step2.title": "Trae tus agentes.",
   "onboarding.step2.body":
     "Puedes conectar los agentes detectados ahora; cámbialo luego en Ajustes.",
   "onboarding.step2.none": "Aún no hay agentes detectados: conéctalos en Ajustes → Proveedores.",
-  "onboarding.step3.eyebrow": "03 — Flujo",
   "onboarding.step3.title": "Un hilo, todas las herramientas.",
   "onboarding.step3.body":
     "Revisa diffs, ejecuta comandos, abre el navegador y mantén cada agente en su worktree.",
@@ -839,7 +836,6 @@ export const es: Record<string, string> = {
   "onboarding.tour.terminal": "Terminal",
   "onboarding.tour.terminalBody":
     "Ejecuta comandos en el workspace del hilo y mira la salida en vivo.",
-  "onboarding.step4.eyebrow": "04 — Perfil",
   "onboarding.step4.title": "Elige tu perfil local.",
   "onboarding.step4.body": "Tu nombre, avatar y @usuario se quedan en este ordenador.",
   "settings.nav.plugins": "Complementos",

@@ -15,12 +15,11 @@
       {
         "label": "main",
         "title": "Pult",
-        "width": 1440,
-        "height": 900,
+        "width": 1267,
+        "height": 788,
         "minWidth": 1040,
         "minHeight": 680,
-        "x": 1960,
-        "y": 60,
+        "center": true,
         "focus": false,
         "decorations": false,
         "shadow": true

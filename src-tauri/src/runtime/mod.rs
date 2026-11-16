@@ -336,17 +336,14 @@ impl AgentRuntime {
             Err(err) => tracing::warn!(target: "pult::runtime", error = %err, "orphaned run-state reset failed"),
         }
         let home = crate::pult_home();
-        let (mut instances, config_error) = match crate::config::load_instances_checked(&home) {
+        let (instances, config_error) = match crate::config::load_instances_checked(&home) {
             Ok(instances) => (instances, None),
             Err(err) => {
                 tracing::error!(target: "pult::runtime", error = %err,
-                    "config.toml could not be read; using the dev mock");
+                    "config.toml could not be read; no agents are available until it is fixed");
                 (Vec::new(), Some(err))
             }
         };
-        if instances.is_empty() {
-            instances.push(crate::config::mock_spec());
-        }
         let terminals = Arc::new(TerminalRegistry::default());
         let pool_terminals = Arc::clone(&terminals);
         Self {

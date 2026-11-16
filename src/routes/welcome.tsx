@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { ArrowLeft, ArrowRight, Check, GitBranch, Globe2, SquareTerminal } from "lucide-react";
 import { RouteHeader } from "../components/layout/WindowChrome";
 import { Button } from "../components/ui/button";
 import { PultLogo } from "../components/ui/PultLogo";
+import { ProviderLogo } from "../components/chat/ProviderLogo";
 import { ConnectRow, refreshDetected } from "../components/settings/AgentConnect";
 import { ProfileCard } from "../components/profile/ProfileCard";
 import { isTauri } from "../lib/tauri";
@@ -11,35 +13,58 @@ import { settingsSet } from "../lib/ipc";
 import { useT } from "../lib/i18n";
 import { isValidHandle, sanitizeProfile, useSettingsStore } from "../stores/settings";
 import { useUiStore } from "../stores/ui";
-import type { DetectedAgent } from "../lib/types";
+import type { DetectedAgent, InstanceInfo } from "../lib/types";
 
 export const Route = createFileRoute("/welcome")({ component: WelcomePage });
 
-const NODE_POSITIONS = [
-  { x: 52, y: 16 },
-  { x: 82, y: 34 },
-  { x: 86, y: 66 },
-  { x: 62, y: 86 },
-  { x: 30, y: 82 },
-  { x: 14, y: 54 },
-  { x: 24, y: 24 },
-];
+function shortName(agent: DetectedAgent): string {
+  return agent.displayName.replace(/\s+CLI$/i, "");
+}
 
-function agentInitials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => word[0]?.toUpperCase())
-    .join("");
+function providerIdentity(
+  agent: DetectedAgent,
+): Pick<InstanceInfo, "id" | "driver" | "displayName" | "command" | "args"> {
+  return {
+    id: agent.suggestedInstanceId,
+    driver: "acp",
+    displayName: shortName(agent),
+    command: agent.command,
+    args: agent.suggestedCommand ?? [],
+  };
+}
+
+/** Smart scattered layout: 1 left, 2 opposite, 3+ on an ellipse. */
+function providerPosition(index: number, count: number): { left: string; top: string } {
+  if (count === 1) return { left: "24%", top: "50%" };
+  if (count === 2) {
+    return index === 0 ? { left: "24%", top: "50%" } : { left: "76%", top: "50%" };
+  }
+  const angle = -Math.PI / 2 + (2 * Math.PI * index) / count;
+  return {
+    left: `${50 + 30 * Math.cos(angle)}%`,
+    top: `${50 + 32 * Math.sin(angle)}%`,
+  };
+}
+
+function StepHeader({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="mx-auto max-w-xl text-center">
+      <h1 className="text-3xl font-medium tracking-tight text-text-primary">{title}</h1>
+      <p className="mx-auto mt-2 max-w-lg text-sm leading-relaxed text-text-secondary">{body}</p>
+    </div>
+  );
+}
+
+function StepActions({ children }: { children: ReactNode }) {
+  return <div className="mt-auto flex items-center justify-center gap-3 pt-6">{children}</div>;
 }
 
 export function WelcomePage() {
   const t = useT();
   const router = useRouter();
   const profile = useSettingsStore((s) => s.profile);
-  const instances = useUiStore((s) => s.instances);
   const setProfile = useSettingsStore((s) => s.setProfile);
+  const instances = useUiStore((s) => s.instances);
   const [step, setStep] = useState(0);
   const [detected, setDetected] = useState<DetectedAgent[]>([]);
   const [finishing, setFinishing] = useState(false);
@@ -91,124 +116,61 @@ export function WelcomePage() {
       });
   };
 
-  const nodes = detected.slice(0, NODE_POSITIONS.length);
-
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${finishing ? "onboarding-exit" : ""}`}>
-      <RouteHeader title={t("onboarding.heading")} />
+    <div className="flex min-h-0 flex-1 flex-col">
+      <RouteHeader title={t("onboarding.heading")} hidePanels />
       <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-y-auto px-6 py-8">
-        <div className="pointer-events-none absolute inset-0 opacity-60">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_45%,var(--accent)/10,transparent_55%)]" />
-        </div>
-        <div className="relative w-full max-w-3xl">
-          <div className="mb-6 flex items-center justify-between text-xs text-text-tertiary">
-            <span className="tnum">{String(step + 1).padStart(2, "0")} / 04</span>
-            <button
-              type="button"
-              onClick={() => void router.navigate({ to: "/chat" })}
-              className="rounded-(--radius-sm) px-2 py-1 transition hover:bg-hover hover:text-text-secondary"
-            >
-              {t("onboarding.skip")}
-            </button>
-          </div>
-
+        <div className={`w-full max-w-2xl ${finishing ? "onboarding-exit" : ""}`}>
           {step === 0 && (
-            <div className="space-y-8 text-center">
-              <div>
-                <h1 className="text-3xl font-medium tracking-tight text-text-primary">
-                  {t("onboarding.step1.title")}
-                </h1>
-                <p className="mx-auto mt-2 max-w-md text-sm text-text-secondary">
-                  {t("onboarding.step1.body")}
-                </p>
-              </div>
+            <div className="flex min-h-[500px] flex-col items-center">
+              <StepHeader title={t("onboarding.step1.title")} body={t("onboarding.step1.body")} />
 
-              <div className="relative mx-auto h-[320px] w-full max-w-lg">
-                <svg viewBox="0 0 100 100" className="absolute inset-0 h-full w-full">
-                  {nodes.map((_, index) => {
-                    const node = NODE_POSITIONS[index];
-                    return (
-                      <line
-                        key={index}
-                        x1="50"
-                        y1="50"
-                        x2={node.x}
-                        y2={node.y}
-                        stroke="var(--accent)"
-                        strokeWidth="0.35"
-                        strokeDasharray="80"
-                        className="onboarding-line"
-                        style={{ animationDelay: `${index * 140}ms` }}
-                      />
-                    );
-                  })}
-                </svg>
-                <div className="absolute top-1/2 left-1/2 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-[26px] border border-border-strong bg-surface-raised shadow-(--shadow-composer)">
+              <div className="relative mt-6 h-[320px] w-full max-w-xl">
+                <div className="absolute top-1/2 left-1/2 z-10 flex h-20 w-20 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-[26px] border border-border-strong bg-surface-raised shadow-(--shadow-composer)">
                   <PultLogo className="h-10 w-10 text-text-primary" />
                 </div>
-                {nodes.map((agent, index) => {
-                  const node = NODE_POSITIONS[index];
+                {detected.map((agent, index) => {
+                  const position = providerPosition(index, detected.length);
                   return (
                     <div
                       key={agent.id}
-                      className="onboarding-node absolute flex items-center gap-1.5 rounded-full border border-border-subtle bg-surface px-2.5 py-1.5 text-xs text-text-secondary shadow-(--shadow-composer)"
-                      style={{
-                        left: `${node.x}%`,
-                        top: `${node.y}%`,
-                        transform: "translate(-50%, -50%)",
-                        animationDelay: `${300 + index * 120}ms`,
-                      }}
+                      className="absolute -translate-x-1/2 -translate-y-1/2"
+                      style={{ left: position.left, top: position.top }}
                     >
-                      <span className="flex h-5 w-5 items-center justify-center rounded-full bg-active text-xs font-semibold text-text-secondary">
-                        {agentInitials(agent.displayName)}
-                      </span>
-                      <span className="max-w-[110px] truncate">{agent.displayName}</span>
+                      <div
+                        className="pult-float flex items-center gap-2 rounded-full border border-border-subtle bg-surface px-3 py-1.5 text-xs text-text-secondary shadow-(--shadow-composer)"
+                        style={{ animationDelay: `${index * 0.85}s` }}
+                      >
+                        <ProviderLogo instance={providerIdentity(agent)} className="h-4 w-4" />
+                        <span className="max-w-[120px] truncate">{shortName(agent)}</span>
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              <Button variant="primary" size="md" onClick={() => setStep(1)}>
-                {t("onboarding.getStarted")} <ArrowRight size={14} />
-              </Button>
+              <StepActions>
+                <Button variant="primary" size="md" onClick={() => setStep(1)}>
+                  {t("onboarding.getStarted")} <ArrowRight size={14} />
+                </Button>
+              </StepActions>
             </div>
           )}
 
           {step === 1 && (
-            <div className="space-y-5">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <p className="text-xs tracking-wider text-text-tertiary uppercase">
-                    {t("onboarding.step2.eyebrow")}
-                  </p>
-                  <h1 className="mt-1 text-2xl font-medium text-text-primary">
-                    {t("onboarding.step2.title")}
-                  </h1>
-                  <p className="mt-1 text-sm text-text-secondary">{t("onboarding.step2.body")}</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setStep(0)}>
-                    <ArrowLeft size={13} /> {t("onboarding.back")}
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={() => setStep(2)}>
-                    {t("onboarding.continue")} <ArrowRight size={13} />
-                  </Button>
-                </div>
-              </div>
+            <div className="flex min-h-[500px] flex-col items-center">
+              <StepHeader title={t("onboarding.step2.title")} body={t("onboarding.step2.body")} />
 
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div className="mt-6 grid w-full max-w-2xl grid-cols-1 gap-2 sm:grid-cols-2">
                 {detected.length === 0 && (
-                  <p className="rounded-(--radius-md) border border-border-subtle bg-surface p-4 text-sm text-text-tertiary">
+                  <p className="col-span-full rounded-(--radius-md) border border-border-subtle bg-surface p-4 text-center text-sm text-text-tertiary">
                     {t("onboarding.step2.none")}
                   </p>
                 )}
                 {detected.map((agent) => (
-                  <div
-                    key={agent.id}
-                    className="rounded-(--radius-md) border border-border-subtle bg-surface p-3"
-                  >
+                  <div key={agent.id} className="min-w-0">
                     <ConnectRow
-                      agent={agent}
+                      agent={{ ...agent, displayName: shortName(agent) }}
                       alreadyAdded={instances.some(
                         (instance) =>
                           instance.id === agent.suggestedInstanceId ||
@@ -219,31 +181,23 @@ export function WelcomePage() {
                   </div>
                 ))}
               </div>
+
+              <StepActions>
+                <Button variant="ghost" size="md" onClick={() => setStep(0)}>
+                  <ArrowLeft size={14} /> {t("onboarding.back")}
+                </Button>
+                <Button variant="primary" size="md" onClick={() => setStep(2)}>
+                  {t("onboarding.continue")} <ArrowRight size={14} />
+                </Button>
+              </StepActions>
             </div>
           )}
 
           {step === 2 && (
-            <div className="space-y-5">
-              <div className="flex items-end justify-between gap-4">
-                <div>
-                  <p className="text-xs tracking-wider text-text-tertiary uppercase">
-                    {t("onboarding.step3.eyebrow")}
-                  </p>
-                  <h1 className="mt-1 text-2xl font-medium text-text-primary">
-                    {t("onboarding.step3.title")}
-                  </h1>
-                  <p className="mt-1 text-sm text-text-secondary">{t("onboarding.step3.body")}</p>
-                </div>
-                <div className="flex shrink-0 gap-2">
-                  <Button variant="ghost" size="sm" onClick={() => setStep(1)}>
-                    <ArrowLeft size={13} /> {t("onboarding.back")}
-                  </Button>
-                  <Button variant="primary" size="sm" onClick={() => setStep(3)}>
-                    {t("onboarding.continue")} <ArrowRight size={13} />
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-3">
+            <div className="flex min-h-[500px] flex-col items-center">
+              <StepHeader title={t("onboarding.step3.title")} body={t("onboarding.step3.body")} />
+
+              <div className="mt-6 grid w-full gap-3 sm:grid-cols-3">
                 {[
                   {
                     icon: GitBranch,
@@ -263,7 +217,7 @@ export function WelcomePage() {
                 ].map((card) => (
                   <div
                     key={card.title}
-                    className="rounded-(--radius-md) border border-border-subtle bg-surface p-4"
+                    className="rounded-(--radius-md) border border-border-subtle bg-surface p-4 text-left"
                   >
                     <card.icon size={18} className="text-accent" />
                     <p className="mt-3 text-sm font-medium text-text-primary">{t(card.title)}</p>
@@ -273,22 +227,24 @@ export function WelcomePage() {
                   </div>
                 ))}
               </div>
+
+              <StepActions>
+                <Button variant="ghost" size="md" onClick={() => setStep(1)}>
+                  <ArrowLeft size={14} /> {t("onboarding.back")}
+                </Button>
+                <Button variant="primary" size="md" onClick={() => setStep(3)}>
+                  {t("onboarding.continue")} <ArrowRight size={14} />
+                </Button>
+              </StepActions>
             </div>
           )}
 
           {step === 3 && (
-            <div className="space-y-5">
-              <div className="text-center">
-                <p className="text-xs tracking-wider text-text-tertiary uppercase">
-                  {t("onboarding.step4.eyebrow")}
-                </p>
-                <h1 className="mt-1 text-2xl font-medium text-text-primary">
-                  {t("onboarding.step4.title")}
-                </h1>
-                <p className="mt-1 text-sm text-text-secondary">{t("onboarding.step4.body")}</p>
-              </div>
-              <div className="grid gap-5 sm:grid-cols-[1fr_300px]">
-                <div className="space-y-3">
+            <div className="flex min-h-[500px] flex-col items-center">
+              <StepHeader title={t("onboarding.step4.title")} body={t("onboarding.step4.body")} />
+
+              <div className="mt-6 grid w-full max-w-xl items-center gap-5 sm:grid-cols-[1fr_280px]">
+                <div className="space-y-3 text-left">
                   <input
                     value={nickname}
                     onChange={(event) => setNickname(event.target.value)}
@@ -308,7 +264,7 @@ export function WelcomePage() {
                       className="h-full min-w-0 flex-1 bg-transparent px-1 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
                     />
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {[215, 262, 330, 12, 38, 152, 188].map((value) => (
                       <button
                         key={value}
@@ -346,18 +302,17 @@ export function WelcomePage() {
                     </p>
                   )}
                 </div>
-                <div className="space-y-3">
-                  <ProfileCard profile={draft} />
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="sm" onClick={() => setStep(2)}>
-                      <ArrowLeft size={13} /> {t("onboarding.back")}
-                    </Button>
-                    <Button variant="primary" size="sm" onClick={finish}>
-                      <Check size={13} /> {t("onboarding.finish")}
-                    </Button>
-                  </div>
-                </div>
+                <ProfileCard profile={draft} />
               </div>
+
+              <StepActions>
+                <Button variant="ghost" size="md" onClick={() => setStep(2)}>
+                  <ArrowLeft size={14} /> {t("onboarding.back")}
+                </Button>
+                <Button variant="primary" size="md" onClick={finish}>
+                  <Check size={14} /> {t("onboarding.finish")}
+                </Button>
+              </StepActions>
             </div>
           )}
         </div>

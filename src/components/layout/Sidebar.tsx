@@ -574,7 +574,7 @@ export function Sidebar({ width }: { width: number }) {
   return (
     <aside
       style={{ width }}
-      className="glass-panel flex shrink-0 flex-col border-r border-border-subtle bg-panel"
+      className="glass-panel flex h-full shrink-0 flex-col border-r border-border-subtle bg-panel"
     >
       <div data-tauri-drag-region className="flex h-10 shrink-0 items-center gap-3 px-3">
         <SidebarToggleButton />

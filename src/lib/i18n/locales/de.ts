@@ -810,7 +810,6 @@ export const de: Record<string, string> = {
   "profile.linkPreview": "Dein Link: {{link}}",
   "profile.unnamed": "Unbenannt",
   "onboarding.heading": "Willkommen",
-  "onboarding.skip": "Intro überspringen",
   "onboarding.getStarted": "Loslegen",
   "onboarding.back": "Zurück",
   "onboarding.continue": "Weiter",
@@ -818,13 +817,11 @@ export const de: Record<string, string> = {
   "onboarding.step1.title": "Pult. Alle Agenten in einem Arbeitsbereich.",
   "onboarding.step1.body":
     "Pult findet Coding-Agenten auf diesem Computer und lässt sie nebeneinander laufen.",
-  "onboarding.step2.eyebrow": "02 — Agenten",
   "onboarding.step2.title": "Bringe deine Agenten mit.",
   "onboarding.step2.body":
     "Gefundene Agenten kannst du jetzt verbinden; später änderst du das in den Einstellungen.",
   "onboarding.step2.none":
     "Noch keine Agenten gefunden — verbinde sie später unter Einstellungen → Anbieter.",
-  "onboarding.step3.eyebrow": "03 — Arbeitsablauf",
   "onboarding.step3.title": "Ein Thread, alle Werkzeuge.",
   "onboarding.step3.body":
     "Diffs prüfen, Befehle ausführen, Browser öffnen und jeden Agenten in seinem eigenen Worktree halten.",
@@ -837,7 +834,6 @@ export const de: Record<string, string> = {
   "onboarding.tour.terminal": "Terminal",
   "onboarding.tour.terminalBody":
     "Befehle im Workspace des Threads ausführen und die Ausgabe live sehen.",
-  "onboarding.step4.eyebrow": "04 — Profil",
   "onboarding.step4.title": "Wähle dein lokales Profil.",
   "onboarding.step4.body": "Name, Avatar und @handle bleiben auf diesem Computer.",
   "settings.nav.plugins": "Plugins",

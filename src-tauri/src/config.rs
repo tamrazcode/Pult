@@ -309,7 +309,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_config_yields_empty_and_mock_fills_in() {
+    fn missing_config_yields_empty_without_mock_fallback() {
         let home = std::env::temp_dir().join(format!("pult-config-none-{}", std::process::id()));
         assert!(load_instances(&home).is_empty());
         assert_eq!(mock_spec().driver, "mock");

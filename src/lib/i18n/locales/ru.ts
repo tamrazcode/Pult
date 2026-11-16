@@ -827,7 +827,6 @@ export const ru: Record<string, string> = {
   "profile.linkPreview": "Ваша ссылка: {{link}}",
   "profile.unnamed": "Без имени",
   "onboarding.heading": "Добро пожаловать",
-  "onboarding.skip": "Пропустить",
   "onboarding.getStarted": "Начать",
   "onboarding.back": "Назад",
   "onboarding.continue": "Продолжить",
@@ -835,12 +834,10 @@ export const ru: Record<string, string> = {
   "onboarding.step1.title": "Знакомьтесь: Pult. Все агенты в одном рабочем пространстве.",
   "onboarding.step1.body":
     "Pult находит coding-агентов на этом компьютере и позволяет запускать их рядом.",
-  "onboarding.step2.eyebrow": "02 — Агенты",
   "onboarding.step2.title": "Подключите агентов.",
   "onboarding.step2.body":
     "Найденных агентов можно подключить сейчас; позже это меняется в настройках.",
   "onboarding.step2.none": "Агенты не найдены — подключите их позже в Настройки → Провайдеры.",
-  "onboarding.step3.eyebrow": "03 — Рабочий процесс",
   "onboarding.step3.title": "Один тред — все инструменты.",
   "onboarding.step3.body":
     "Смотрите диффы, запускайте команды, открывайте браузер и держите каждого агента в своём worktree.",
@@ -852,7 +849,6 @@ export const ru: Record<string, string> = {
     "Открывайте сайты и локальные HTML/JS рядом с чатом, не переключая приложения.",
   "onboarding.tour.terminal": "Терминал",
   "onboarding.tour.terminalBody": "Запускайте команды в workspace треда и смотрите вывод вживую.",
-  "onboarding.step4.eyebrow": "04 — Профиль",
   "onboarding.step4.title": "Выберите локальный профиль.",
   "onboarding.step4.body": "Имя, аватар и @handle остаются на этом компьютере.",
   "settings.nav.plugins": "Плагины",

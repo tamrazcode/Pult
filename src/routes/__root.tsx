@@ -299,37 +299,49 @@ function RootLayout() {
       onContextMenu={openContextMenu}
     >
       <div className="flex min-h-0 flex-1">
+        <div
+          aria-hidden={!sidebarOpen || onboarding}
+          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+            sidebarOpen && !onboarding ? "" : "pointer-events-none"
+          }`}
+          style={{ width: sidebarOpen && !onboarding ? sidebarWidth : 0 }}
+        >
+          <Sidebar width={sidebarWidth} />
+        </div>
         {sidebarOpen && !onboarding && (
-          <>
-            <Sidebar width={sidebarWidth} />
-            <ResizeHandle
-              label={t("common.sidebarWidth")}
-              value={sidebarWidth}
-              min={220}
-              max={480}
-              side="right"
-              onResize={setSidebarWidth}
-              onCommit={(w) => setSidebarWidth(w, true)}
-            />
-          </>
+          <ResizeHandle
+            label={t("common.sidebarWidth")}
+            value={sidebarWidth}
+            min={220}
+            max={480}
+            side="right"
+            onResize={setSidebarWidth}
+            onCommit={(w) => setSidebarWidth(w, true)}
+          />
         )}
         <main className="flex min-w-0 flex-1 flex-col">
           <Outlet />
         </main>
         {rightPanelOpen && !onboarding && (
-          <>
-            <ResizeHandle
-              label={t("common.rightPanelWidth")}
-              value={rightPanelWidth}
-              min={300}
-              max={720}
-              side="left"
-              onResize={setRightPanelWidth}
-              onCommit={(w) => setRightPanelWidth(w, true)}
-            />
-            <RightPanel width={rightPanelWidth} />
-          </>
+          <ResizeHandle
+            label={t("common.rightPanelWidth")}
+            value={rightPanelWidth}
+            min={300}
+            max={720}
+            side="left"
+            onResize={setRightPanelWidth}
+            onCommit={(w) => setRightPanelWidth(w, true)}
+          />
         )}
+        <div
+          aria-hidden={!rightPanelOpen || onboarding}
+          className={`shrink-0 overflow-hidden transition-[width] duration-200 ease-out ${
+            rightPanelOpen && !onboarding ? "" : "pointer-events-none"
+          }`}
+          style={{ width: rightPanelOpen && !onboarding ? rightPanelWidth : 0 }}
+        >
+          <RightPanel width={rightPanelWidth} />
+        </div>
       </div>
       {activeElicitation && (
         <ElicitationModal

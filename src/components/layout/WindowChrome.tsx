@@ -137,7 +137,7 @@ function TauriWindowControls() {
   const base =
     "flex h-10 w-11 shrink-0 items-center justify-center text-text-secondary transition-colors duration-150";
   return (
-    <div className="fixed top-0 right-0 z-50 flex h-10 items-center bg-canvas pl-1">
+    <div className="fixed top-0 right-0 z-50 flex h-10 items-center bg-chrome pl-1">
       <button
         type="button"
         aria-label={t("sidebar.minimizeWindow")}
@@ -171,10 +171,12 @@ export function RouteHeader({
   title,
   subtitle,
   actions,
+  hidePanels = false,
 }: {
   title: string;
   subtitle?: string;
   actions?: ReactNode;
+  hidePanels?: boolean;
 }): ReactElement {
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
@@ -197,7 +199,7 @@ export function RouteHeader({
       )}
       <div data-tauri-drag-region className="min-w-2 flex-1" />
       {actions}
-      <PanelToggleButtons />
+      {!hidePanels && <PanelToggleButtons />}
       <WindowControls />
     </header>
   );

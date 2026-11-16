@@ -230,7 +230,12 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             </button>
           )}
           {windowedEntries.length > 0 && (
-            <TimelineRows entries={windowedEntries} startedAt={activeRun?.startedAt} />
+            <TimelineRows
+              entries={windowedEntries}
+              startedAt={activeRun?.startedAt}
+              activeRunId={activeRun?.id}
+              streaming={view.streaming}
+            />
           )}
 
           {pendingUser && (
@@ -399,33 +404,45 @@ function summarizeActionGroup(items: ChatItem[]): string {
 }
 
 /** Consecutive tools/thoughts/traces collapse into one T3-style summary row. */
-function TimelineRows({ entries, startedAt }: { entries: TimelineEntry[]; startedAt?: number }) {
+function TimelineRows({
+  entries,
+  startedAt,
+  activeRunId,
+  streaming,
+}: {
+  entries: TimelineEntry[];
+  startedAt?: number;
+  activeRunId?: string;
+  streaming?: boolean;
+}) {
   const rows: ReactNode[] = [];
+  const consumed = new Set<string>();
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
-    if (isZeroSecondThought(entry.item)) continue;
+    if (consumed.has(entry.key) || isZeroSecondThought(entry.item)) continue;
     if (isActionItem(entry.item)) {
-      const group: TimelineEntry[] = [];
-      let next = index;
-      while (next < entries.length) {
-        const candidate = entries[next];
-        if (isZeroSecondThought(candidate.item)) {
-          next += 1;
-          continue;
-        }
-        if (!isActionItem(candidate.item)) break;
-        group.push(candidate);
-        next += 1;
-      }
-      // A single action now lives inside the same smart activity row as a run;
-      // the row itself auto-expands while the agent works.
-      rows.push(
-        <div key={entry.key} data-history-key={entry.key}>
-          <ActionGroupRow entries={group} startedAt={startedAt} />
-        </div>,
+      // One smart row per run: tools, thoughts and traces stay together even
+      // when assistant text appears between them. The row remains visible for
+      // the whole run and switches between Working and the current action.
+      const group = entries.filter(
+        (candidate) =>
+          candidate.runId === entry.runId &&
+          isActionItem(candidate.item) &&
+          !isZeroSecondThought(candidate.item),
       );
-      index = next - 1;
-      continue;
+      if (group.length > 0) {
+        group.forEach((candidate) => consumed.add(candidate.key));
+        rows.push(
+          <div key={entry.key} data-history-key={entry.key}>
+            <ActionGroupRow
+              entries={group}
+              startedAt={startedAt}
+              streaming={streaming === true && entry.runId === activeRunId}
+            />
+          </div>,
+        );
+        continue;
+      }
     }
     rows.push(
       <div
@@ -458,7 +475,15 @@ const ACTION_LABEL_KEYS: Record<string, string> = {
   think: "chat.thinking",
 };
 
-function ActionGroupRow({ entries, startedAt }: { entries: TimelineEntry[]; startedAt?: number }) {
+function ActionGroupRow({
+  entries,
+  startedAt,
+  streaming,
+}: {
+  entries: TimelineEntry[];
+  startedAt?: number;
+  streaming?: boolean;
+}) {
   const t = useT();
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
@@ -470,23 +495,21 @@ function ActionGroupRow({ entries, startedAt }: { entries: TimelineEntry[]; star
         (item.type === "thought" && item.streaming),
     );
   const active = activeItem !== undefined;
-  // Collapsed by default; a manual open stays until the work finishes, and a
+  const spinning = active || (streaming === true && startedAt !== undefined);
+  // Collapsed by default; a manual open stays until the run finishes, and a
   // finished run folds away again.
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (!active) setOpen(false);
-  }, [active]);
+    if (!spinning) setOpen(false);
+  }, [spinning]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!active) return;
-    if (
-      activeItem?.type === "thought" ||
-      (activeItem?.type === "tool" && startedAt !== undefined)
-    ) {
+    if (!spinning) return;
+    if (activeItem?.type === "thought" || startedAt !== undefined) {
       const timer = window.setInterval(() => setNow(Date.now()), 1000);
       return () => window.clearInterval(timer);
     }
-  }, [active, activeItem, startedAt]);
+  }, [spinning, activeItem, startedAt]);
 
   let label: string;
   if (activeItem?.type === "thought") {
@@ -502,6 +525,8 @@ function ActionGroupRow({ entries, startedAt }: { entries: TimelineEntry[]; star
             duration: formatDuration(startedAt, now),
           })
         : action;
+  } else if (streaming === true && startedAt !== undefined) {
+    label = t("chat.workingFor", { duration: formatDuration(startedAt, now) });
   } else if (items.length === 1 && last.type === "thought") {
     label = t("chat.thoughtFor", { duration: formatDuration(last.startedAt, last.endedAt) });
   } else if (items.length === 1 && last.type === "trace") {
@@ -524,15 +549,15 @@ function ActionGroupRow({ entries, startedAt }: { entries: TimelineEntry[]; star
         aria-expanded={open}
         className="flex w-full items-center gap-2 py-0.5 text-left"
       >
-        {active ? <ThinkingAscii /> : <Icon size={13} className="shrink-0 text-text-secondary" />}
+        {spinning ? <ThinkingAscii /> : <Icon size={13} className="shrink-0 text-text-secondary" />}
         <span
           className={`min-w-0 flex-1 truncate text-sm ${
-            active ? "activity-shimmer" : "text-text-secondary"
+            spinning ? "activity-shimmer" : "text-text-secondary"
           }`}
         >
           {label}
         </span>
-        {active && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
+        {spinning && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
         <ChevronRight
           size={12}
           className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}

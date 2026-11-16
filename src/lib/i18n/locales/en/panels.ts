@@ -157,7 +157,6 @@ export const panels = {
   "panels.widget.commitPush": "Commit & push",
   "panels.widget.changes": "Changes",
   "onboarding.heading": "Welcome",
-  "onboarding.skip": "Skip intro",
   "onboarding.getStarted": "Get started",
   "onboarding.back": "Back",
   "onboarding.continue": "Continue",
@@ -165,12 +164,10 @@ export const panels = {
   "onboarding.step1.title": "Meet Pult. Every agent in one workspace.",
   "onboarding.step1.body":
     "Pult finds the coding agents on this computer and lets you run them side by side.",
-  "onboarding.step2.eyebrow": "02 — Agents",
   "onboarding.step2.title": "Bring your agents.",
   "onboarding.step2.body":
     "Detected agents can be connected now; you can change this later in Settings.",
   "onboarding.step2.none": "No agents detected yet — connect them later in Settings → Providers.",
-  "onboarding.step3.eyebrow": "03 — Workflow",
   "onboarding.step3.title": "One thread, all the tools.",
   "onboarding.step3.body":
     "Review diffs, run commands, open the browser and keep every agent in its own worktree.",
@@ -183,7 +180,6 @@ export const panels = {
   "onboarding.tour.terminal": "Terminal",
   "onboarding.tour.terminalBody":
     "Run commands in the thread's workspace and watch the output live.",
-  "onboarding.step4.eyebrow": "04 — Profile",
   "onboarding.step4.title": "Pick your local profile.",
   "onboarding.step4.body": "Your name, avatar and @handle stay on this computer.",
 } as const;
