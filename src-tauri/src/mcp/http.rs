@@ -203,17 +203,17 @@ impl McpTransport for HttpTransport {
                     continue;
                 }
                 // Parse bytes, not chunks: a multibyte UTF-8 character may be
-                // split across two network reads.
+                // split across two network reads. Any SSE line-ending style is
+                // accepted, including mixed pairs.
                 events.extend_from_slice(&chunk);
-                if events.contains(&b'\r') {
-                    events.retain(|byte| *byte != b'\r');
-                }
                 if events.len() > 2 * super::security::MAX_MESSAGE_BYTES {
                     return Err("MCP event stream exceeded the size limit".to_string());
                 }
-                while let Some(index) = events.windows(2).position(|pair| pair == b"\n\n") {
-                    let block = String::from_utf8_lossy(&events[..index]).to_string();
-                    events.drain(..index + 2);
+                while let Some((index, boundary_len)) = super::transport::sse_boundary(&events) {
+                    let block = String::from_utf8_lossy(&events[..index])
+                        .replace("\r\n", "\n")
+                        .replace('\r', "\n");
+                    events.drain(..index + boundary_len);
                     for event in super::transport::parse_sse_events(&block) {
                         let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
                             continue;

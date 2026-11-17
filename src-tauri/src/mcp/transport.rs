@@ -206,21 +206,34 @@ impl SseDecoder {
     }
 }
 
-/// Finds the earliest blank-line delimiter in any SSE line-ending style.
-fn sse_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
-    let mut best: Option<(usize, usize)> = None;
-    for (pattern, len) in [
-        (b"\r\n\r\n".as_slice(), 4usize),
-        (b"\n\n".as_slice(), 2),
-        (b"\r\r".as_slice(), 2),
-    ] {
-        if let Some(index) = buffer.windows(len).position(|window| window == pattern) {
-            if best.is_none_or(|(current, _)| index < current) {
-                best = Some((index, len));
-            }
-        }
+/// Finds the earliest blank-line delimiter in any SSE line-ending style,
+/// including mixed pairs (`\n\r`) and CRLF.
+pub(crate) fn sse_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    let mut index = 0;
+    while index < buffer.len() {
+        let first_len = if buffer[index..].starts_with(b"\r\n") {
+            2
+        } else if matches!(buffer[index], b'\n' | b'\r') {
+            1
+        } else {
+            index += 1;
+            continue;
+        };
+        let next = index + first_len;
+        let second_len = if buffer[next..].starts_with(b"\r\n") {
+            2
+        } else if buffer
+            .get(next)
+            .is_some_and(|byte| matches!(byte, b'\n' | b'\r'))
+        {
+            1
+        } else {
+            index = next;
+            continue;
+        };
+        return Some((index, first_len + second_len));
     }
-    best
+    None
 }
 
 fn parse_sse_block(block: &str) -> Option<SseEvent> {
@@ -287,6 +300,9 @@ mod tests {
         let bare_cr = decoder.push(b"data: {\"b\":2}\r\r");
         assert_eq!(bare_cr.len(), 1);
         assert_eq!(bare_cr[0].data, "{\"b\":2}");
+        let mixed = decoder.push(b"data: {\"c\":3}\n\r");
+        assert_eq!(mixed.len(), 1);
+        assert_eq!(mixed[0].data, "{\"c\":3}");
     }
 
     #[test]
