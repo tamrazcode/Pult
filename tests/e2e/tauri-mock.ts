@@ -7,6 +7,7 @@ export interface TauriFixtures {
   processTree?: unknown[];
   projects?: unknown[];
   threads?: unknown[];
+  modelPrefs?: unknown[];
   /** Payload of threads_get (thread + runs + transcript). */
   threadDetail?: unknown;
 }
@@ -136,7 +137,7 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
             return Promise.resolve(null);
           }
           case "providers_model_prefs_list":
-            return Promise.resolve([]);
+            return Promise.resolve(data.modelPrefs ?? []);
           case "git_status":
           case "git_diff_summary":
             return Promise.reject({
