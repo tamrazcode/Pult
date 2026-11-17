@@ -395,3 +395,100 @@ async fn probe_failure_records_an_error_without_panicking() {
     assert_eq!(stored.last_status.as_deref(), Some("error"));
     assert!(stored.last_error.is_some());
 }
+
+#[tokio::test]
+async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
+    use crate::mcp::gateway::{GatewayTokens, McpGateway};
+    use crate::mcp::StoreConnector;
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpStream;
+
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../fixtures/mcp-mock.mjs")
+        .canonicalize()
+        .expect("fixture exists");
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let created = config::create(
+        &store,
+        input(json!({
+            "name": "Mock stdio",
+            "denyTools": ["delete_*"],
+            "timeoutMs": 20000,
+            "transport": {
+                "kind": "stdio",
+                "command": "node",
+                "args": [fixture.to_string_lossy()],
+                "secretEnv": [{ "key": "API_TOKEN", "value": "sk-gateway-token" }]
+            }
+        })),
+    )
+    .unwrap();
+    let gateway = McpGateway::start(
+        Arc::new(StoreConnector::new(Arc::clone(&store))),
+        Arc::new(GatewayTokens::new()),
+    )
+    .await
+    .unwrap();
+    let endpoint = gateway.endpoint_for(Some("owner"), &created.id);
+
+    async fn post(url: &str, token: &str, body: serde_json::Value) -> String {
+        let parsed = reqwest::Url::parse(url).unwrap();
+        let mut stream = TcpStream::connect((parsed.host_str().unwrap(), parsed.port().unwrap()))
+            .await
+            .unwrap();
+        let body = body.to_string();
+        let head = format!(
+            "POST {} HTTP/1.1\r\nHost: {}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            parsed.path(),
+            parsed.host_str().unwrap(),
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).await.unwrap();
+        stream.write_all(body.as_bytes()).await.unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await.unwrap();
+        response
+    }
+
+    let init = post(
+        &endpoint.url,
+        &endpoint.token,
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
+    )
+    .await;
+    assert!(init.contains("pult-mock-mcp"), "{init}");
+
+    let tools = post(
+        &endpoint.url,
+        &endpoint.token,
+        json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }),
+    )
+    .await;
+    assert!(tools.contains("\"name\":\"echo\""), "{tools}");
+    assert!(!tools.contains("delete_everything"), "{tools}");
+
+    let secret = post(
+        &endpoint.url,
+        &endpoint.token,
+        json!({
+            "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "whoami", "arguments": {} }
+        }),
+    )
+    .await;
+    assert!(secret.contains("sk-gateway-token"), "{secret}");
+    assert!(secret.contains("pult/untrusted"), "{secret}");
+
+    let blocked = post(
+        &endpoint.url,
+        &endpoint.token,
+        json!({
+            "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+            "params": { "name": "delete_everything", "arguments": {} }
+        }),
+    )
+    .await;
+    assert!(blocked.contains("-32602"), "{blocked}");
+    gateway.close_server(&created.id).await;
+}
