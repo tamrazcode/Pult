@@ -183,30 +183,37 @@ function McpSettings() {
             </div>
           )}
           {servers.map((server) => (
-            <button
+            <div
               key={server.id}
-              onClick={() => {
-                setSelectedId(server.id);
-                setProbe(null);
-              }}
-              className={`flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2 text-left transition ${
+              className={`flex w-full items-center gap-2 border-b border-border-subtle px-3 py-2 transition ${
                 server.id === selectedId ? "bg-active" : "hover:bg-hover"
               }`}
             >
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusClass(server.status)}`} />
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm text-text-primary">{server.name}</span>
-                <span className="block truncate text-xs text-text-tertiary">
-                  {server.transport.kind.toUpperCase()} · {server.scope}
-                  {server.toolsCount > 0 ? ` · ${server.toolsCount} tools` : ""}
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedId(server.id);
+                  setProbe(null);
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+              >
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusClass(server.status)}`}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm text-text-primary">{server.name}</span>
+                  <span className="block truncate text-xs text-text-tertiary">
+                    {server.transport.kind.toUpperCase()} · {server.scope}
+                    {server.toolsCount > 0 ? ` · ${server.toolsCount} tools` : ""}
+                  </span>
                 </span>
-              </span>
+              </button>
               <Toggle
                 on={server.enabled}
                 onClick={() => void toggle(server)}
                 label={t("settings.mcp.enabled")}
               />
-            </button>
+            </div>
           ))}
         </aside>
 

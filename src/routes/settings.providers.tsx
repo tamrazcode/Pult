@@ -159,9 +159,9 @@ export function statusLine(
   }
   if (
     info.loadSession ||
-    info.modes.length > 0 ||
+    (info.modes?.length ?? 0) > 0 ||
     info.promptImage ||
-    info.configOptions.length > 0
+    (info.configOptions?.length ?? 0) > 0
   ) {
     const caps = capsLabel(info.loadSession, info.promptImage);
     return {
