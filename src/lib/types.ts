@@ -542,3 +542,117 @@ export interface UsageReport {
   byThread: ThreadUsageSummary[];
   byInstance: InstanceUsageSummary[];
 }
+
+// ---- user MCP servers ------------------------------------------------------
+
+export interface McpSecretRef {
+  key: string;
+  hasValue: boolean;
+  masked?: string | null;
+}
+
+export type McpTransportView =
+  | {
+      kind: "stdio";
+      command: string;
+      args: string[];
+      cwd?: string | null;
+      env: Record<string, string>;
+      secretEnvKeys: McpSecretRef[];
+    }
+  | {
+      kind: "http" | "sse";
+      url: string;
+      headers: Record<string, string>;
+      secretHeaderKeys: McpSecretRef[];
+    };
+
+export interface McpServer {
+  id: string;
+  name: string;
+  enabled: boolean;
+  transport: McpTransportView;
+  scope: "global" | "project" | "thread";
+  projectId?: string | null;
+  threadId?: string | null;
+  providerIds: string[];
+  allowTools: string[];
+  denyTools: string[];
+  timeoutMs: number;
+  allowLocalhost: boolean;
+  status: string;
+  lastError?: string | null;
+  lastLatencyMs?: number | null;
+  lastCheckedAt?: number | null;
+  toolsCount: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface McpSecretInput {
+  key: string;
+  /** Omitted or empty keeps the stored value (edit mode). */
+  value?: string | null;
+}
+
+export type McpTransportInput =
+  | {
+      kind: "stdio";
+      command: string;
+      args?: string[];
+      cwd?: string | null;
+      env?: Record<string, string>;
+      secretEnv?: McpSecretInput[];
+    }
+  | {
+      kind: "http" | "sse";
+      url: string;
+      headers?: Record<string, string>;
+      secretHeaders?: McpSecretInput[];
+    };
+
+export interface McpServerInput {
+  name: string;
+  enabled?: boolean;
+  transport: McpTransportInput;
+  scope?: "global" | "project" | "thread";
+  projectId?: string | null;
+  threadId?: string | null;
+  providerIds?: string[];
+  allowTools?: string[];
+  denyTools?: string[];
+  timeoutMs?: number;
+  allowLocalhost?: boolean;
+}
+
+export interface McpProbeTool {
+  name: string;
+  description: string;
+  inputSchema: unknown;
+}
+
+export interface McpProbeResult {
+  ok: boolean;
+  serverInfo?: unknown;
+  protocolVersion?: string | null;
+  tools: McpProbeTool[];
+  latencyMs: number;
+  error?: string | null;
+}
+
+export interface McpServerStats {
+  callsTotal: number;
+  errorsTotal: number;
+  lastLatencyMs?: number | null;
+}
+
+export interface McpBinding {
+  serverId: string;
+  mode: "include" | "exclude" | string;
+}
+
+export interface McpImportOutcome {
+  name: string;
+  status: "imported" | "skipped" | string;
+  error?: string | null;
+}

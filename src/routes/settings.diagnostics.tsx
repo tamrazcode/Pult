@@ -1,11 +1,17 @@
 import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
-import { diagnosticsFrames, providersInstancesList } from "../lib/ipc";
+import {
+  diagnosticsFrames,
+  mcpListServers,
+  mcpServerLogs,
+  mcpServerStats,
+  providersInstancesList,
+} from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { useUiStore } from "../stores/ui";
 import { localizeIpcError, useT } from "../lib/i18n";
-import type { InstanceInfo } from "../lib/types";
+import type { InstanceInfo, McpServer, McpServerStats } from "../lib/types";
 
 export const Route = createFileRoute("/settings/diagnostics")({ component: DiagnosticsSettings });
 
@@ -110,6 +116,80 @@ function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
   );
 }
 
+function McpDiagnostics() {
+  const t = useT();
+  const [servers, setServers] = useState<McpServer[]>([]);
+  const [logs, setLogs] = useState<Record<string, string[]>>({});
+  const [stats, setStats] = useState<Record<string, McpServerStats>>({});
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    mcpListServers()
+      .then(setServers)
+      .catch(() => setServers([]));
+  }, []);
+
+  const grab = async (id: string) => {
+    try {
+      const [lines, counters] = await Promise.all([mcpServerLogs(id), mcpServerStats(id)]);
+      setLogs((current) => ({ ...current, [id]: lines }));
+      setStats((current) => ({ ...current, [id]: counters }));
+    } catch {
+      setLogs((current) => ({ ...current, [id]: [] }));
+    }
+  };
+
+  if (servers.length === 0) return null;
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-medium text-text-primary">
+        {t("settings.diagnostics.mcpTitle")}
+      </h3>
+      <p className="mt-1 text-xs text-text-tertiary">{t("settings.diagnostics.mcpSubtitle")}</p>
+      <div className="mt-2 space-y-2">
+        {servers.map((server) => {
+          const counters = stats[server.id];
+          return (
+            <div
+              key={server.id}
+              className="rounded-(--radius-md) border border-border-subtle bg-surface p-3"
+            >
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1 truncate text-sm text-text-primary">
+                  {server.name}
+                </span>
+                <span className="text-xs text-text-tertiary">
+                  {server.status}
+                  {counters
+                    ? ` · ${t("settings.diagnostics.mcpCalls", {
+                        calls: counters.callsTotal,
+                        errors: counters.errorsTotal,
+                      })}`
+                    : ""}
+                </span>
+                <button
+                  onClick={() => void grab(server.id)}
+                  className="flex h-7 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
+                >
+                  <RefreshCw size={11} /> {t("settings.diagnostics.mcpLogs")}
+                </button>
+              </div>
+              {server.lastError && (
+                <p className="mt-1 font-mono text-xs text-danger">{server.lastError}</p>
+              )}
+              {logs[server.id] && (
+                <pre className="mt-2 max-h-32 overflow-auto rounded-(--radius-sm) bg-canvas p-2 font-mono text-[12px] whitespace-pre-wrap text-text-tertiary">
+                  {logs[server.id].length > 0 ? logs[server.id].join("\n") : "—"}
+                </pre>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function DiagnosticsSettings() {
   const t = useT();
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -141,6 +221,7 @@ function DiagnosticsSettings() {
           <InstanceDiagnostics key={info.id} info={info} />
         ))}
       </div>
+      <McpDiagnostics />
     </div>
   );
 }

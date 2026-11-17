@@ -308,6 +308,8 @@ pub fn run() {
             ipc::mcp_server_logs,
             ipc::mcp_server_stats,
             ipc::mcp_check_all,
+            ipc::mcp_import_json,
+            ipc::mcp_export_json,
             ipc::mcp_list_bindings,
             ipc::mcp_set_binding,
             ipc::mcp_active_for_thread,

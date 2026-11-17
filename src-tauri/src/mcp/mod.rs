@@ -4,6 +4,7 @@
 pub mod config;
 pub mod gateway;
 pub mod http;
+pub mod import_export;
 pub mod manager;
 pub mod probe;
 pub mod resolve;

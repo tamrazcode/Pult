@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { GitBranch, Pencil, Pin, PinOff, ChevronLeft } from "lucide-react";
+import { GitBranch, Pencil, Pin, PinOff, ChevronLeft, Plug } from "lucide-react";
 import { useRouter } from "@tanstack/react-router";
 import { isTauri } from "../../lib/tauri";
+import { mcpActiveForThread } from "../../lib/ipc";
 import { useProjectsStore } from "../../stores/projects";
 import { useThreadsStore } from "../../stores/threads";
 import { useUiStore } from "../../stores/ui";
@@ -33,6 +34,29 @@ export function ChatHeader({ title, threadId }: { title?: string; threadId?: str
   );
   const sidebarOpen = useUiStore((s) => s.sidebarOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
+  const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
+  const rememberedInstanceId = useUiStore((s) =>
+    threadId ? s.instanceByThread[threadId] : undefined,
+  );
+  const instanceId = rememberedInstanceId ?? selectedInstanceId;
+  const [mcpCount, setMcpCount] = useState(0);
+  useEffect(() => {
+    if (!isTauri() || !threadId || !instanceId) {
+      setMcpCount(0);
+      return;
+    }
+    let cancelled = false;
+    mcpActiveForThread(threadId, instanceId)
+      .then((servers) => {
+        if (!cancelled) setMcpCount(servers.length);
+      })
+      .catch(() => {
+        if (!cancelled) setMcpCount(0);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [threadId, instanceId]);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(fallbackTitle);
 
@@ -132,6 +156,16 @@ export function ChatHeader({ title, threadId }: { title?: string; threadId?: str
             </span>
           )}
           <h1 className="min-w-0 truncate text-sm font-medium text-text-primary">{heading}</h1>
+          {mcpCount > 0 && (
+            <button
+              onClick={() => void router.navigate({ to: "/settings/mcp" })}
+              title={t("settings.mcp.active", { count: mcpCount })}
+              className="flex shrink-0 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 py-0.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <Plug size={11} />
+              {mcpCount} MCP
+            </button>
+          )}
           {threadId && !isSubagent && (
             <button
               aria-label={t("sidebar.renameThread")}

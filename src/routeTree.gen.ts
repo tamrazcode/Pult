@@ -22,6 +22,7 @@ import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagn
 import { Route as SettingsDiffsRouteImport } from './routes/settings.diffs'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsKeybindingsRouteImport } from './routes/settings.keybindings'
+import { Route as SettingsMcpRouteImport } from './routes/settings.mcp'
 import { Route as SettingsPluginsRouteImport } from './routes/settings.plugins'
 import { Route as SettingsProfileRouteImport } from './routes/settings.profile'
 import { Route as SettingsProjectsRouteImport } from './routes/settings.projects'
@@ -93,6 +94,11 @@ const SettingsKeybindingsRoute = SettingsKeybindingsRouteImport.update({
   path: '/keybindings',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsMcpRoute = SettingsMcpRouteImport.update({
+  id: '/mcp',
+  path: '/mcp',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsPluginsRoute = SettingsPluginsRouteImport.update({
   id: '/plugins',
   path: '/plugins',
@@ -133,6 +139,7 @@ export interface FileRoutesByFullPath {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -153,6 +160,7 @@ export interface FileRoutesByTo {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -174,6 +182,7 @@ export interface FileRoutesById {
   '/settings/diffs': typeof SettingsDiffsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/keybindings': typeof SettingsKeybindingsRoute
+  '/settings/mcp': typeof SettingsMcpRoute
   '/settings/plugins': typeof SettingsPluginsRoute
   '/settings/profile': typeof SettingsProfileRoute
   '/settings/projects': typeof SettingsProjectsRoute
@@ -196,6 +205,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
@@ -216,6 +226,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
@@ -236,6 +247,7 @@ export interface FileRouteTypes {
     | '/settings/diffs'
     | '/settings/general'
     | '/settings/keybindings'
+    | '/settings/mcp'
     | '/settings/plugins'
     | '/settings/profile'
     | '/settings/projects'
@@ -346,6 +358,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsKeybindingsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/mcp': {
+      id: '/settings/mcp'
+      path: '/mcp'
+      fullPath: '/settings/mcp'
+      preLoaderRoute: typeof SettingsMcpRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/plugins': {
       id: '/settings/plugins'
       path: '/plugins'
@@ -392,6 +411,7 @@ interface SettingsRouteChildren {
   SettingsDiffsRoute: typeof SettingsDiffsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsKeybindingsRoute: typeof SettingsKeybindingsRoute
+  SettingsMcpRoute: typeof SettingsMcpRoute
   SettingsPluginsRoute: typeof SettingsPluginsRoute
   SettingsProfileRoute: typeof SettingsProfileRoute
   SettingsProjectsRoute: typeof SettingsProjectsRoute
@@ -406,6 +426,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsDiffsRoute: SettingsDiffsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsKeybindingsRoute: SettingsKeybindingsRoute,
+  SettingsMcpRoute: SettingsMcpRoute,
   SettingsPluginsRoute: SettingsPluginsRoute,
   SettingsProfileRoute: SettingsProfileRoute,
   SettingsProjectsRoute: SettingsProjectsRoute,

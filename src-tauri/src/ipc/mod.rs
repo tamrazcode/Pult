@@ -2193,6 +2193,27 @@ pub async fn mcp_check_all(runtime: tauri::State<'_, Arc<AgentRuntime>>) -> Resu
 }
 
 #[tauri::command]
+pub async fn mcp_import_json(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    json: String,
+) -> Result<Vec<crate::mcp::import_export::ImportOutcome>, PultError> {
+    let runtime = runtime.inner().clone();
+    let outcomes = crate::mcp::import_export::import_json(runtime.store(), &json).await?;
+    if outcomes.iter().any(|outcome| outcome.status == "imported") {
+        runtime.pool.invalidate_all();
+    }
+    Ok(outcomes)
+}
+
+#[tauri::command]
+pub fn mcp_export_json(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    ids: Vec<String>,
+) -> Result<String, PultError> {
+    crate::mcp::import_export::export_json(runtime.store(), &ids)
+}
+
+#[tauri::command]
 pub fn mcp_list_bindings(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     scope_type: String,

@@ -18,6 +18,12 @@ import type {
   InstanceInfo,
   InstanceSpec,
   IpcError,
+  McpBinding,
+  McpImportOutcome,
+  McpProbeResult,
+  McpServer,
+  McpServerInput,
+  McpServerStats,
   PrOutcome,
   Project,
   PtyExitPayload,
@@ -766,4 +772,71 @@ export function onElicitationRequest(
   handler: (payload: ElicitationRequestPayload) => void,
 ): Promise<UnlistenFn> {
   return listenOrNoop<ElicitationRequestPayload>("elicitation:request", handler);
+}
+
+// ---- user MCP servers ------------------------------------------------------
+
+export function mcpListServers(): Promise<McpServer[]> {
+  return invokeRequired<McpServer[]>("mcp_list_servers");
+}
+
+export function mcpGetServer(id: string): Promise<McpServer> {
+  return invokeRequired<McpServer>("mcp_get_server", { id });
+}
+
+export function mcpCreateServer(input: McpServerInput): Promise<McpServer> {
+  return invokeRequired<McpServer>("mcp_create_server", { input });
+}
+
+export function mcpUpdateServer(id: string, input: McpServerInput): Promise<McpServer> {
+  return invokeRequired<McpServer>("mcp_update_server", { id, input });
+}
+
+export function mcpDeleteServer(id: string): Promise<void> {
+  return invokeRequired<void>("mcp_delete_server", { id });
+}
+
+export function mcpSetServerEnabled(id: string, enabled: boolean): Promise<McpServer> {
+  return invokeRequired<McpServer>("mcp_set_server_enabled", { id, enabled });
+}
+
+export function mcpTestConnection(id: string): Promise<McpProbeResult> {
+  return invokeRequired<McpProbeResult>("mcp_test_connection", { id });
+}
+
+export function mcpServerLogs(id: string): Promise<string[]> {
+  return invokeRequired<string[]>("mcp_server_logs", { id });
+}
+
+export function mcpServerStats(id: string): Promise<McpServerStats> {
+  return invokeRequired<McpServerStats>("mcp_server_stats", { id });
+}
+
+export function mcpCheckAll(): Promise<void> {
+  return invokeRequired<void>("mcp_check_all");
+}
+
+export function mcpListBindings(scopeType: string, scopeId: string): Promise<McpBinding[]> {
+  return invokeRequired<McpBinding[]>("mcp_list_bindings", { scopeType, scopeId });
+}
+
+export function mcpSetBinding(
+  scopeType: string,
+  scopeId: string,
+  serverId: string,
+  mode?: "include" | "exclude" | null,
+): Promise<void> {
+  return invokeRequired<void>("mcp_set_binding", { scopeType, scopeId, serverId, mode });
+}
+
+export function mcpActiveForThread(threadId: string, instanceId: string): Promise<McpServer[]> {
+  return invokeRequired<McpServer[]>("mcp_active_for_thread", { threadId, instanceId });
+}
+
+export function mcpImportJson(json: string): Promise<McpImportOutcome[]> {
+  return invokeRequired<McpImportOutcome[]>("mcp_import_json", { json });
+}
+
+export function mcpExportJson(ids: string[] = []): Promise<string> {
+  return invokeRequired<string>("mcp_export_json", { ids });
 }
