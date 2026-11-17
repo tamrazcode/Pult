@@ -269,6 +269,7 @@ export function Sidebar({ width }: { width: number }) {
   const unreadIds = useThreadsStore((s) => s.unreadIds);
   const collapsedProjects = useUiStore((s) => s.collapsedProjects);
   const drafts = useDraftsStore((s) => s.byThread);
+  const attachmentDrafts = useDraftsStore((s) => s.attachments);
   const activeThreadId = useThreadsStore((s) => s.activeThreadId);
   const router = useRouter();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
@@ -744,7 +745,11 @@ export function Sidebar({ width }: { width: number }) {
                       thread={thread}
                       active={pathname === `/thread/${thread.id}` || activeThreadId === thread.id}
                       unread={unreadSet.has(thread.id)}
-                      draft={Boolean(drafts[thread.id]?.trim())}
+                      draft={Boolean(
+                        drafts[thread.id]?.trim() ||
+                        attachmentDrafts[thread.id]?.images.length ||
+                        attachmentDrafts[thread.id]?.files.length,
+                      )}
                       onNavigate={() => openThread(thread)}
                       onStar={() =>
                         void useThreadsStore.getState().setThreadPinned(thread.id, !thread.pinned)

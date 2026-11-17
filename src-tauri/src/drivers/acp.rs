@@ -548,7 +548,11 @@ impl AcpConn {
             .request(
                 "session/prompt",
                 serde_json::to_value(params)?,
-                std::time::Duration::from_secs(600),
+                // A prompt legitimately streams for as long as the agent works;
+                // a 10-minute cap marked long turns as crashed mid-run. The turn
+                // still ends on end_turn, Stop, or the process dying, so this is
+                // only a guard against a wedged CLI.
+                std::time::Duration::from_secs(24 * 60 * 60),
             )
             .await?;
         Ok(serde_json::from_value(value)?)

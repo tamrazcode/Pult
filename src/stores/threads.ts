@@ -12,6 +12,7 @@ import {
   threadsSetStatus,
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
+import { useDraftsStore } from "./drafts";
 import { useUiStore } from "../stores/ui";
 import type { Project, Thread } from "../lib/types";
 
@@ -164,11 +165,14 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         t.id === threadId ? { ...t, title, updatedAt: Date.now() } : t,
       ),
     })),
-  removeThread: (threadId) =>
+  removeThread: (threadId) => {
+    useDraftsStore.getState().clearDraft(threadId);
+    useDraftsStore.getState().clearAttachments(threadId);
     set((s) => ({
       threads: s.threads.filter((t) => t.id !== threadId),
       unreadIds: s.unreadIds.filter((id) => id !== threadId),
-    })),
+    }));
+  },
 
   loadThreads: async () => {
     await ensureThreadUpdateSubscription();

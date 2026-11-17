@@ -27,10 +27,34 @@ function persist(byThread: Record<string, string>) {
   }, 250);
 }
 
+export interface ImageChip {
+  /** Base64 payload (no data URL prefix). */
+  data: string;
+  mimeType: string;
+  /** Full data URL for the thumbnail. */
+  preview: string;
+}
+
+export interface FileChip {
+  name: string;
+  text: string;
+  truncated: boolean;
+}
+
+export interface DraftAttachments {
+  images: ImageChip[];
+  files: FileChip[];
+}
+
+const EMPTY: DraftAttachments = { images: [], files: [] };
+
 interface DraftsState {
   byThread: Record<string, string>;
+  attachments: Record<string, DraftAttachments>;
   setDraft: (threadId: string, text: string) => void;
   clearDraft: (threadId: string) => void;
+  setAttachments: (threadId: string, patch: Partial<DraftAttachments>) => void;
+  clearAttachments: (threadId: string) => void;
 }
 
 export const useDraftsStore = create<DraftsState>((set) => {
@@ -46,7 +70,25 @@ export const useDraftsStore = create<DraftsState>((set) => {
 
   return {
     byThread: readStored(),
+    // Attachments stay in memory on purpose: base64 images overflow the
+    // localStorage quota. `shortcut: lost on restart, move to IndexedDB if
+    // drafts must survive a relaunch`.
+    attachments: {},
     setDraft: write,
     clearDraft: (threadId) => write(threadId, ""),
+    setAttachments: (threadId, patch) =>
+      set((state) => {
+        const current = state.attachments[threadId] ?? EMPTY;
+        return {
+          attachments: { ...state.attachments, [threadId]: { ...current, ...patch } },
+        };
+      }),
+    clearAttachments: (threadId) =>
+      set((state) => {
+        if (!state.attachments[threadId]) return state;
+        const next = { ...state.attachments };
+        delete next[threadId];
+        return { attachments: next };
+      }),
   };
 });

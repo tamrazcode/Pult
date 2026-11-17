@@ -32,6 +32,7 @@ import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
 import { useDraftsStore } from "../../stores/drafts";
+import type { FileChip, ImageChip } from "../../stores/drafts";
 import { useUiStore } from "../../stores/ui";
 import type {
   CommandInfo,
@@ -93,21 +94,9 @@ export function extractMentionQuery(
   return { start: caret - match[2].length - 1, query: match[2] };
 }
 
-interface ImageChip {
-  /** Base64 payload (no data URL prefix). */
-  data: string;
-  mimeType: string;
-  /** Full data URL for the thumbnail. */
-  preview: string;
-}
-
-interface FileChip {
-  name: string;
-  text: string;
-  truncated: boolean;
-}
-
 const MAX_ATTACHMENTS = 4;
+const EMPTY_IMAGES: ImageChip[] = [];
+const EMPTY_FILES: FileChip[] = [];
 const MAX_ATTACHMENT_TEXT = 200_000;
 const MAX_ATTACHMENT_BYTES = 5_000_000;
 
@@ -174,8 +163,28 @@ export function Composer({ threadId }: { threadId?: string }) {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [chips, setChips] = useState<ImageChip[]>([]);
-  const [fileChips, setFileChips] = useState<FileChip[]>([]);
+  // Chips live in the drafts store, not in component state: switching to
+  // another chat or Settings and back must not drop unsent attachments.
+  const chips = useDraftsStore((s) => s.attachments[draftKey]?.images ?? EMPTY_IMAGES);
+  const fileChips = useDraftsStore((s) => s.attachments[draftKey]?.files ?? EMPTY_FILES);
+  const setChips = useCallback(
+    (next: ImageChip[] | ((prev: ImageChip[]) => ImageChip[])) => {
+      const store = useDraftsStore.getState();
+      const prev = store.attachments[draftKey]?.images ?? EMPTY_IMAGES;
+      store.setAttachments(draftKey, {
+        images: typeof next === "function" ? next(prev) : next,
+      });
+    },
+    [draftKey],
+  );
+  const setFileChips = useCallback(
+    (next: FileChip[] | ((prev: FileChip[]) => FileChip[])) => {
+      const store = useDraftsStore.getState();
+      const prev = store.attachments[draftKey]?.files ?? EMPTY_FILES;
+      store.setAttachments(draftKey, { files: typeof next === "function" ? next(prev) : next });
+    },
+    [draftKey],
+  );
   const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
   const queueDraftRef = useRef("");
   const [dragState, setDragState] = useState<{
@@ -330,12 +339,11 @@ export function Composer({ threadId }: { threadId?: string }) {
 
   const resetDraft = useCallback(() => {
     setValue("");
-    setChips([]);
-    setFileChips([]);
+    useDraftsStore.getState().clearAttachments(draftKey);
     setMention(null);
     setMentionFiles([]);
     requestAnimationFrame(autosize);
-  }, [autosize, setValue]);
+  }, [autosize, draftKey, setValue]);
 
   const pickSlash = useCallback(
     (command: CommandInfo) => {

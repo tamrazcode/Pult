@@ -2095,7 +2095,9 @@ pub fn orchestrator_cancel_all(
 }
 
 #[tauri::command]
-pub fn orchestrator_retry_task(
+// Must be async: dispatch() calls tokio::spawn, and a sync command runs on the
+// IPC thread outside Tauri's async runtime (panic -> process abort).
+pub async fn orchestrator_retry_task(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     task_id: String,
 ) -> Result<serde_json::Value, PultError> {
@@ -2106,7 +2108,8 @@ pub fn orchestrator_retry_task(
 }
 
 #[tauri::command]
-pub fn orchestrator_steer_task(
+// Same reason as retry: a follow-up turn goes through dispatch().
+pub async fn orchestrator_steer_task(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     task_id: String,
     message: String,

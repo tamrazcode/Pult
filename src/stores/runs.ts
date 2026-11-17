@@ -69,18 +69,22 @@ export interface ToolChatItem {
   content?: unknown;
   /** ACP `_meta`: provider-native subagent hints only. */
   meta?: unknown;
+  /** Event timestamp (ms) used to anchor delegated/native subagent cards. */
+  ts?: number;
 }
 
 export interface NoticeChatItem {
   type: "notice";
   level: string;
   message: string;
+  ts?: number;
 }
 
 /** Policy trace row: an auto-resolved permission (§5.5, never silent). */
 export interface TraceChatItem {
   type: "trace";
   optionId: string;
+  ts?: number;
 }
 
 /** One file the agent touched via the fs callbacks. */
@@ -98,6 +102,7 @@ export interface CompactionChatItem {
   compactionId: string;
   status?: string;
   summary: string;
+  ts?: number;
 }
 
 export type ChatItem =
@@ -261,6 +266,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
           locations: payload.locations.length > 0 ? payload.locations : existing.locations,
           rawInput: defined(payload.rawInput) ?? existing.rawInput,
           meta: defined(payload.meta) ?? existing.meta,
+          ts: existing.ts ?? event.ts,
         };
         const items = [...view.items];
         items[idx] = patched;
@@ -275,6 +281,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         locations: payload.locations,
         rawInput: defined(payload.rawInput),
         meta: defined(payload.meta),
+        ts: event.ts,
       };
       return { ...view, items: [...closeStreamingText(view.items), toolItem] };
     }
@@ -317,7 +324,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         // No card was showing: the policy resolved this locally — trace row.
         const optionId = event.payload.optionId;
         if (event.payload.auto && optionId) {
-          return { ...view, items: [...view.items, { type: "trace", optionId }] };
+          return { ...view, items: [...view.items, { type: "trace", optionId, ts: event.ts }] };
         }
         return view;
       }
@@ -344,7 +351,12 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         ...view,
         items: [
           ...view.items,
-          { type: "notice", level: event.payload.level, message: event.payload.message },
+          {
+            type: "notice",
+            level: event.payload.level,
+            message: event.payload.message,
+            ts: event.ts,
+          },
         ],
       };
 
@@ -369,6 +381,7 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
         compactionId,
         status,
         summary: nextSummary,
+        ts: existing?.ts ?? event.ts,
       };
       const items = [...view.items];
       if (idx >= 0) items[idx] = item;

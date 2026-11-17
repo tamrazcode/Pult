@@ -242,9 +242,9 @@ async fn orchestrator_delegates_and_waits_for_a_child_task() {
         .await;
         status = runtime.store.get_delegated_task(&task_id).unwrap().status;
     }
-    assert!(
-        matches!(status.as_str(), "completed" | "failed"),
-        "unexpected task status {status}"
+    assert_eq!(
+        status, "completed",
+        "a normal end_turn must complete the task"
     );
 
     let child = runtime.store().get_thread(&child_thread_id).unwrap();

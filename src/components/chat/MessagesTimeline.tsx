@@ -38,7 +38,11 @@ import { useSubagentsStore, useThreadSubagents } from "../../stores/subagents";
 import { SubagentCard } from "./SubagentCard";
 import { SubagentGroupCard } from "./SubagentGroupCard";
 import { NativeSubagentCard } from "./NativeSubagentCard";
-import { collectNativeSubagents, isNativeSubagentItem } from "../../lib/nativeSubagents";
+import {
+  collectNativeSubagents,
+  isNativeSubagentItem,
+  nativeSubagentInfo,
+} from "../../lib/nativeSubagents";
 import type { DelegatedTask } from "../../lib/types";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
@@ -126,12 +130,23 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       if (group) group.push(task);
       else groups.set(key, [task]);
     }
-    return [...groups.values()];
+    return [...groups.entries()]
+      .map(([parentRunId, tasks]) => ({
+        parentRunId,
+        tasks: [...tasks].sort((a, b) => a.startedAt - b.startedAt),
+        anchorTs: Math.min(...tasks.map((task) => task.startedAt)),
+      }))
+      .sort((a, b) => a.anchorTs - b.anchorTs);
   }, [subagents]);
   const nativeGroups = useMemo(
     () => collectNativeSubagents(entries.map((entry) => entry.item)),
     [entries],
   );
+  const nativeGroupByKey = useMemo(
+    () => new Map(nativeGroups.map((group) => [group.key, group])),
+    [nativeGroups],
+  );
+  const runIndexById = useMemo(() => new Map((runs ?? []).map((run) => [run.id, run.idx])), [runs]);
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
@@ -194,10 +209,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             )}
             {pendingUser && <ThinkingRow />}
             {subagentGroups.map((group) =>
-              group.length > 1 ? (
-                <SubagentGroupCard key={group[0].parentRunId} tasks={group} />
+              group.tasks.length > 1 ? (
+                <SubagentGroupCard key={group.parentRunId} tasks={group.tasks} />
               ) : (
-                <SubagentCard key={group[0].taskId} task={group[0]} />
+                <SubagentCard key={group.tasks[0].taskId} task={group.tasks[0]} />
               ),
             )}
           </div>
@@ -267,7 +282,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   // action group must not hide the indicator for a fresh run.
   const hasActionItems = entries.some(
     (entry) =>
-      entry.runId === runId && isActionItem(entry.item) && !isNativeSubagentItem(entry.item),
+      entry.runId === runId &&
+      isActionItem(entry.item) &&
+      !isNativeSubagentItem(entry.item) &&
+      !isZeroSecondThought(entry.item),
   );
 
   return (
@@ -288,31 +306,16 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           )}
           {windowedEntries.length > 0 && (
             <TimelineRows
-              entries={windowedEntries.filter((entry) => !isNativeSubagentItem(entry.item))}
+              entries={windowedEntries}
+              allEntries={entries}
+              hiddenCount={hiddenCount}
+              subagentGroups={subagentGroups}
+              nativeGroupByKey={nativeGroupByKey}
+              runIndexById={runIndexById}
               startedAt={activeRun?.startedAt}
               activeRunId={activeRun?.id}
               streaming={view.streaming}
             />
-          )}
-
-          {nativeGroups.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {nativeGroups.map((group) => (
-                <NativeSubagentCard key={group.key} group={group} />
-              ))}
-            </div>
-          )}
-
-          {subagents.length > 0 && (
-            <div className="flex flex-col gap-2">
-              {subagentGroups.map((group) =>
-                group.length > 1 ? (
-                  <SubagentGroupCard key={group[0].parentRunId} tasks={group} />
-                ) : (
-                  <SubagentCard key={group[0].taskId} task={group[0]} />
-                ),
-              )}
-            </div>
           )}
 
           {pendingUser && (
@@ -482,56 +485,160 @@ function summarizeActionGroup(items: ChatItem[]): string {
   return `${parts.slice(0, -1).join(", ")} ${translate("chat.list.and")} ${parts[parts.length - 1]}`;
 }
 
-/** Consecutive tools/thoughts/traces collapse into one T3-style summary row. */
+type SubagentAnchor = {
+  parentRunId: string;
+  tasks: DelegatedTask[];
+  anchorTs: number;
+};
+
+type NativeGroup = ReturnType<typeof collectNativeSubagents>[number];
+
+function entryTimestamp(entry: TimelineEntry): number | undefined {
+  return entry.item.type === "thought" ? entry.item.startedAt : entry.item.ts;
+}
+
+/** Messages keep their order; each run's action row renders after its last message. */
 function TimelineRows({
   entries,
+  allEntries,
+  hiddenCount,
+  subagentGroups,
+  nativeGroupByKey,
+  runIndexById,
   startedAt,
   activeRunId,
   streaming,
 }: {
   entries: TimelineEntry[];
+  allEntries: TimelineEntry[];
+  hiddenCount: number;
+  subagentGroups: SubagentAnchor[];
+  nativeGroupByKey: Map<string, NativeGroup>;
+  runIndexById: Map<string, number>;
   startedAt?: number;
   activeRunId?: string;
   streaming?: boolean;
 }) {
   const rows: ReactNode[] = [];
-  const consumed = new Set<string>();
-  for (let index = 0; index < entries.length; index += 1) {
-    const entry = entries[index];
-    if (consumed.has(entry.key) || isZeroSecondThought(entry.item)) continue;
-    if (isActionItem(entry.item)) {
-      // One smart row per run: tools, thoughts and traces stay together even
-      // when assistant text appears between them. The row remains visible for
-      // the whole run and switches between Working and the current action.
-      const group = entries.filter(
-        (candidate) =>
-          candidate.runId === entry.runId &&
-          isActionItem(candidate.item) &&
-          !isZeroSecondThought(candidate.item),
-      );
-      if (group.length > 0) {
-        group.forEach((candidate) => consumed.add(candidate.key));
-        rows.push(
-          <div key={entry.key} data-history-key={entry.key}>
-            <ActionGroupRow
-              entries={group}
-              startedAt={startedAt}
-              streaming={streaming === true && entry.runId === activeRunId}
-            />
-          </div>,
-        );
+  const renderedNative = new Set<string>();
+
+  const segments: Array<{ runId: string; entries: TimelineEntry[] }> = [];
+  for (const entry of entries) {
+    const last = segments[segments.length - 1];
+    if (last && last.runId === entry.runId) last.entries.push(entry);
+    else segments.push({ runId: entry.runId, entries: [entry] });
+  }
+
+  const visibleRuns = new Set(segments.map((segment) => segment.runId));
+  const allRuns = new Set(allEntries.map((entry) => entry.runId));
+  const firstVisibleIdx = segments.length
+    ? (runIndexById.get(segments[0].runId) ?? -Infinity)
+    : Infinity;
+  const groupsForRun = new Map<string, SubagentAnchor[]>();
+  const floating: Array<{ beforeIndex: number; group: SubagentAnchor }> = [];
+  for (const group of subagentGroups) {
+    if (visibleRuns.has(group.parentRunId)) {
+      const list = groupsForRun.get(group.parentRunId) ?? [];
+      list.push(group);
+      groupsForRun.set(group.parentRunId, list);
+      continue;
+    }
+    // Its run is above the visible window: reveal it with "Earlier messages".
+    if (allRuns.has(group.parentRunId)) continue;
+    const runIdx = runIndexById.get(group.parentRunId);
+    if (runIdx === undefined) {
+      floating.push({ beforeIndex: segments.length, group });
+      continue;
+    }
+    if (hiddenCount > 0 && runIdx < firstVisibleIdx) continue;
+    const beforeIndex = segments.findIndex(
+      (segment) => (runIndexById.get(segment.runId) ?? Infinity) > runIdx,
+    );
+    floating.push({ beforeIndex: beforeIndex === -1 ? segments.length : beforeIndex, group });
+  }
+
+  const pushGroup = (group: SubagentAnchor) => {
+    rows.push(
+      group.tasks.length > 1 ? (
+        <SubagentGroupCard key={`subagent-${group.parentRunId}`} tasks={group.tasks} />
+      ) : (
+        <SubagentCard key={group.tasks[0].taskId} task={group.tasks[0]} />
+      ),
+    );
+  };
+
+  segments.forEach((segment, segmentIndex) => {
+    for (const item of floating) {
+      if (item.beforeIndex === segmentIndex) pushGroup(item.group);
+    }
+    const actions: TimelineEntry[] = [];
+    const anchors = groupsForRun.get(segment.runId) ?? [];
+    let anchorIndex = 0;
+    const flushAnchorsBefore = (ts: number | undefined) => {
+      while (
+        anchorIndex < anchors.length &&
+        (ts === undefined || anchors[anchorIndex].anchorTs < ts)
+      ) {
+        pushGroup(anchors[anchorIndex]);
+        anchorIndex += 1;
+      }
+    };
+
+    for (const entry of segment.entries) {
+      if (isZeroSecondThought(entry.item)) continue;
+      if (isNativeSubagentItem(entry.item)) {
+        const key =
+          entry.item.type === "tool" ? nativeSubagentInfo(entry.item)?.parentToolUseId : undefined;
+        if (key && !renderedNative.has(key)) {
+          renderedNative.add(key);
+          const group = nativeGroupByKey.get(key);
+          if (group) {
+            flushAnchorsBefore(entryTimestamp(entry));
+            rows.push(
+              <div key={`native-${key}`} data-history-key={entry.key}>
+                <NativeSubagentCard group={group} />
+              </div>,
+            );
+          }
+        }
         continue;
       }
+      if (isActionItem(entry.item)) {
+        actions.push(entry);
+        continue;
+      }
+      flushAnchorsBefore(entryTimestamp(entry));
+      rows.push(
+        <div
+          key={entry.key}
+          data-history-key={entry.key}
+          data-history-user={entry.item.type === "user" ? entry.key : undefined}
+        >
+          <ChatItemRow item={entry.item} />
+        </div>,
+      );
     }
-    rows.push(
-      <div
-        key={entry.key}
-        data-history-key={entry.key}
-        data-history-user={entry.item.type === "user" ? entry.key : undefined}
-      >
-        <ChatItemRow item={entry.item} />
-      </div>,
-    );
+    while (anchorIndex < anchors.length) {
+      pushGroup(anchors[anchorIndex]);
+      anchorIndex += 1;
+    }
+    if (actions.length > 0) {
+      // One smart row per run, after all of that run's messages: tools,
+      // thoughts and traces stay together and never split the reply.
+      rows.push(
+        <div key={`action-group-${segment.runId}`} data-history-key={actions[0].key}>
+          <ActionGroupRow
+            entries={actions}
+            startedAt={startedAt}
+            streaming={streaming === true && segment.runId === activeRunId}
+          />
+        </div>,
+      );
+    }
+  });
+
+  for (const item of floating) {
+    if (item.beforeIndex >= segments.length) pushGroup(item.group);
   }
   return <>{rows}</>;
 }
@@ -661,14 +768,37 @@ function ActionGroupRow({
 
 function ThoughtDetail({ item }: { item: ThoughtChatItem }) {
   const t = useT();
+  const [expanded, setExpanded] = useState(false);
+  const hasText = item.text.trim().length > 0;
+  const label = t("chat.thoughtFor", {
+    duration: formatDuration(item.startedAt, item.endedAt),
+  });
   return (
     <div className="py-0.5">
-      <div className="flex items-center gap-1.5 text-xs text-text-tertiary">
-        <Brain size={11} className="shrink-0" />
-        {t("chat.thoughtFor", { duration: formatDuration(item.startedAt, item.endedAt) })}
-      </div>
-      {item.text.trim() && (
-        <p className="mt-0.5 text-sm whitespace-pre-wrap text-text-tertiary italic">{item.text}</p>
+      {hasText ? (
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          className="flex w-full items-center gap-1.5 text-left text-xs text-text-tertiary"
+        >
+          <ChevronRight
+            size={11}
+            className={`shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`}
+          />
+          <Brain size={11} className="shrink-0" />
+          {label}
+        </button>
+      ) : (
+        <div className="flex items-center gap-1.5 text-xs text-text-tertiary">
+          <Brain size={11} className="shrink-0" />
+          {label}
+        </div>
+      )}
+      {hasText && expanded && (
+        <p className="mt-0.5 pl-4 text-sm whitespace-pre-wrap text-text-tertiary italic">
+          {item.text}
+        </p>
       )}
     </div>
   );
@@ -699,16 +829,50 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
   const query = item.kind === "search" ? toolQuery(item) : null;
   const hasRaw =
     item.rawInput !== undefined || item.rawOutput !== undefined || item.content !== undefined;
+  const hasDetails = Boolean(
+    (command && command !== title) ||
+    (query && query !== title) ||
+    excerpt ||
+    output ||
+    image ||
+    hasRaw,
+  );
+  const [expanded, setExpanded] = useState(false);
 
   return (
     <div className="py-0.5">
       <div className="flex items-center gap-1.5 text-sm text-text-secondary">
-        <Icon size={12} className="shrink-0 text-text-tertiary" />
-        <span className="min-w-0 truncate">{title}</span>
-        {range && (
-          <span className="shrink-0 text-xs text-text-tertiary">
-            {range.start}–{range.end}
-          </span>
+        {hasDetails ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+            className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          >
+            <ChevronRight
+              size={11}
+              className={`shrink-0 text-text-tertiary transition-transform ${
+                expanded ? "rotate-90" : ""
+              }`}
+            />
+            <Icon size={12} className="shrink-0 text-text-tertiary" />
+            <span className="min-w-0 truncate">{title}</span>
+            {range && (
+              <span className="shrink-0 text-xs text-text-tertiary">
+                {range.start}–{range.end}
+              </span>
+            )}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-1.5">
+            <Icon size={12} className="shrink-0 text-text-tertiary" />
+            <span className="min-w-0 truncate">{title}</span>
+            {range && (
+              <span className="shrink-0 text-xs text-text-tertiary">
+                {range.start}–{range.end}
+              </span>
+            )}
+          </div>
         )}
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(item.status)}`} />
         {canDiff && (
@@ -721,60 +885,64 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
           </button>
         )}
       </div>
-      {command && command !== title && (
-        <pre className="mt-1 overflow-x-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs text-text-secondary">
-          $ {command}
-        </pre>
-      )}
-      {query && query !== title && (
-        <div className="mt-1 font-mono text-xs text-text-tertiary">{query}</div>
-      )}
-      {excerpt ? (
-        <div className="mt-1 max-h-64 overflow-auto rounded-(--radius-sm) bg-code-bg py-1 font-mono text-xs">
-          {excerpt.lines.map((line) => (
-            <div key={line.n} className="flex px-2">
-              <span className="w-10 shrink-0 pr-2 text-right text-text-tertiary/70 select-none">
-                {line.n}
-              </span>
-              <span className="whitespace-pre text-text-secondary">{line.text}</span>
+      {hasDetails && expanded && (
+        <div>
+          {command && command !== title && (
+            <pre className="mt-1 overflow-x-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs text-text-secondary">
+              $ {command}
+            </pre>
+          )}
+          {query && query !== title && (
+            <div className="mt-1 font-mono text-xs text-text-tertiary">{query}</div>
+          )}
+          {excerpt ? (
+            <div className="mt-1 max-h-64 overflow-auto rounded-(--radius-sm) bg-code-bg py-1 font-mono text-xs">
+              {excerpt.lines.map((line) => (
+                <div key={line.n} className="flex px-2">
+                  <span className="w-10 shrink-0 pr-2 text-right text-text-tertiary/70 select-none">
+                    {line.n}
+                  </span>
+                  <span className="whitespace-pre text-text-secondary">{line.text}</span>
+                </div>
+              ))}
+              {excerpt.truncated > 0 && (
+                <div className="px-2 pl-12 text-text-tertiary">
+                  {plural("chat.action.moreLines", excerpt.truncated)}
+                </div>
+              )}
             </div>
-          ))}
-          {excerpt.truncated > 0 && (
-            <div className="px-2 pl-12 text-text-tertiary">
-              {plural("chat.action.moreLines", excerpt.truncated)}
+          ) : output ? (
+            <pre className="mt-1 max-h-48 overflow-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs whitespace-pre-wrap text-text-secondary">
+              {output}
+            </pre>
+          ) : null}
+          {image && (
+            <div className="mt-1">
+              <ToolImage candidate={image} />
             </div>
           )}
-        </div>
-      ) : output ? (
-        <pre className="mt-1 max-h-48 overflow-auto rounded-(--radius-sm) bg-code-bg px-2 py-1 font-mono text-xs whitespace-pre-wrap text-text-secondary">
-          {output}
-        </pre>
-      ) : null}
-      {image && (
-        <div className="mt-1">
-          <ToolImage candidate={image} />
-        </div>
-      )}
-      {hasRaw && (
-        <button
-          type="button"
-          onClick={() => setRaw((value) => !value)}
-          aria-expanded={raw}
-          className="mt-1 text-xs text-text-tertiary transition hover:text-text-secondary"
-        >
-          {t("chat.tool.raw")}
-        </button>
-      )}
-      {raw && (
-        <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
-          {clipDetail(
-            JSON.stringify(
-              { input: item.rawInput, output: item.rawOutput ?? item.content },
-              null,
-              2,
-            ),
+          {hasRaw && (
+            <button
+              type="button"
+              onClick={() => setRaw((value) => !value)}
+              aria-expanded={raw}
+              className="mt-1 text-xs text-text-tertiary transition hover:text-text-secondary"
+            >
+              {t("chat.tool.raw")}
+            </button>
           )}
-        </pre>
+          {raw && (
+            <pre className="mt-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap text-text-tertiary">
+              {clipDetail(
+                JSON.stringify(
+                  { input: item.rawInput, output: item.rawOutput ?? item.content },
+                  null,
+                  2,
+                ),
+              )}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );

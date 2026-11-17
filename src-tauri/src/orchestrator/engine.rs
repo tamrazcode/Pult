@@ -860,11 +860,7 @@ impl OrchestratorEngine {
         if task_finished(&task.status) {
             return;
         }
-        let task_status = match status {
-            "completed" => "completed",
-            "cancelled" => "cancelled",
-            _ => "failed",
-        };
+        let task_status = task_status_for_run(status);
         let summary = if task_status == "completed" {
             self.run_summary(thread_id, run_id)
         } else {
@@ -1103,6 +1099,16 @@ fn task_json(task: &DelegatedTaskRecord) -> Value {
     })
 }
 
+/// Runtime runs settle as `finished`; delegated tasks call the same state
+/// `completed`. `completed` is still accepted for older rows/tests.
+fn task_status_for_run(status: &str) -> &'static str {
+    match status {
+        "finished" | "completed" => "completed",
+        "cancelled" => "cancelled",
+        _ => "failed",
+    }
+}
+
 fn task_finished(status: &str) -> bool {
     matches!(
         status,
@@ -1217,6 +1223,14 @@ mod tests {
         retain_enabled_models(&mut models, &["b".to_string()]);
         assert_eq!(models.len(), 2);
         assert!(models.iter().all(|model| model["id"] != "b"));
+    }
+
+    #[test]
+    fn a_finished_run_completes_the_task() {
+        assert_eq!(task_status_for_run("finished"), "completed");
+        assert_eq!(task_status_for_run("completed"), "completed");
+        assert_eq!(task_status_for_run("cancelled"), "cancelled");
+        assert_eq!(task_status_for_run("failed"), "failed");
     }
 
     #[test]
