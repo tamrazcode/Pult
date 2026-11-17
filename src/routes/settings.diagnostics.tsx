@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import {
   diagnosticsFrames,
   diagnosticsKillProcess,
@@ -192,15 +192,18 @@ function McpDiagnostics() {
   );
 }
 
-function ProcessesDiagnostics() {
+export function ProcessesDiagnostics() {
   const t = useT();
   const [tree, setTree] = useState<ProcessNode[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!isTauri()) return;
     let cancelled = false;
     const load = async () => {
+      // Hidden windows do not need a 3 s process snapshot.
+      if (document.visibilityState !== "visible") return;
       try {
         const next = await diagnosticsProcessTree();
         if (!cancelled) {
@@ -213,9 +216,12 @@ function ProcessesDiagnostics() {
     };
     void load();
     const timer = window.setInterval(() => void load(), 3000);
+    const onVisible = () => void load();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
@@ -230,40 +236,63 @@ function ProcessesDiagnostics() {
     }
   };
 
-  const row = (node: ProcessNode, depth: number): ReactNode => (
-    <div key={node.pid}>
-      <div
-        className="flex items-center gap-2 border-b border-border-subtle/60 py-1 text-xs"
-        style={{ paddingLeft: depth * 14 }}
-      >
-        <span className="w-16 shrink-0 rounded bg-active px-1 text-center font-mono text-xs text-text-tertiary">
-          {node.role}
-        </span>
-        <span className="min-w-0 flex-1 truncate text-text-primary">
-          {node.label ?? node.name}
-          {node.threadId ? <span className="ml-2 text-text-tertiary">{node.threadId}</span> : null}
-        </span>
-        <span className="shrink-0 font-mono text-text-tertiary">pid {node.pid}</span>
-        <span className="w-14 shrink-0 text-right font-mono text-text-tertiary">
-          {node.cpuPercent != null ? `${node.cpuPercent.toFixed(1)}%` : "—"}
-        </span>
-        <span className="w-16 shrink-0 text-right font-mono text-text-tertiary">
-          {node.memoryBytes != null ? `${Math.round(node.memoryBytes / (1024 * 1024))} MB` : "—"}
-        </span>
-        {node.killable ? (
-          <button
-            onClick={() => void kill(node)}
-            className="shrink-0 rounded border border-border-subtle px-1.5 py-0.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
-          >
-            {t("settings.diagnostics.processesKill")}
-          </button>
-        ) : (
-          <span className="w-[42px] shrink-0" />
-        )}
+  const row = (node: ProcessNode, depth: number): ReactNode => {
+    const isCollapsed = collapsed.has(node.pid);
+    const toggle = () =>
+      setCollapsed((current) => {
+        const next = new Set(current);
+        if (next.has(node.pid)) next.delete(node.pid);
+        else next.add(node.pid);
+        return next;
+      });
+    return (
+      <div key={node.pid} role="treeitem" aria-expanded={!isCollapsed}>
+        <div
+          className="flex items-center gap-2 border-b border-border-subtle/60 py-1 text-xs"
+          style={{ paddingLeft: depth * 14 }}
+        >
+          {node.children.length > 0 ? (
+            <button
+              onClick={toggle}
+              aria-label={isCollapsed ? "Expand" : "Collapse"}
+              className="flex h-4 w-4 shrink-0 items-center justify-center text-text-tertiary"
+            >
+              {isCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
+            </button>
+          ) : (
+            <span className="w-4 shrink-0" />
+          )}
+          <span className="w-16 shrink-0 rounded bg-active px-1 text-center font-mono text-xs text-text-tertiary">
+            {node.role}
+          </span>
+          <span className="min-w-0 flex-1 truncate text-text-primary">
+            {node.label ?? node.name}
+            {node.threadId ? (
+              <span className="ml-2 text-text-tertiary">{node.threadId}</span>
+            ) : null}
+          </span>
+          <span className="shrink-0 font-mono text-text-tertiary">pid {node.pid}</span>
+          <span className="w-14 shrink-0 text-right font-mono text-text-tertiary">
+            {node.cpuPercent != null ? `${node.cpuPercent.toFixed(1)}%` : "—"}
+          </span>
+          <span className="w-16 shrink-0 text-right font-mono text-text-tertiary">
+            {node.memoryBytes != null ? `${Math.round(node.memoryBytes / (1024 * 1024))} MB` : "—"}
+          </span>
+          {node.killable ? (
+            <button
+              onClick={() => void kill(node)}
+              className="shrink-0 rounded border border-border-subtle px-1.5 py-0.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
+            >
+              {t("settings.diagnostics.processesKill")}
+            </button>
+          ) : (
+            <span className="w-[42px] shrink-0" />
+          )}
+        </div>
+        {!isCollapsed && node.children.map((child) => row(child, depth + 1))}
       </div>
-      {node.children.map((child) => row(child, depth + 1))}
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="mt-6">
@@ -274,7 +303,10 @@ function ProcessesDiagnostics() {
         {t("settings.diagnostics.processesSubtitle")}
       </p>
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
-      <div className="mt-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1">
+      <div
+        role="tree"
+        className="mt-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1"
+      >
         {tree.length === 0 ? (
           <p className="py-2 text-xs text-text-tertiary">
             {t("settings.diagnostics.processesEmpty")}
