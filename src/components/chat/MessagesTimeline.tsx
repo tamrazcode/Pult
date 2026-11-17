@@ -34,7 +34,7 @@ import {
   useT,
 } from "../../lib/i18n";
 import { activeRunForThread, threadTimelineItems, useRunsStore } from "../../stores/runs";
-import { useSubagentsStore, useThreadSubagents } from "../../stores/subagents";
+import { useSubagentsStore, isTaskActive, useThreadSubagents } from "../../stores/subagents";
 import { SubagentCard } from "./SubagentCard";
 import { SubagentGroupCard } from "./SubagentGroupCard";
 import { NativeSubagentCard } from "./NativeSubagentCard";
@@ -137,11 +137,20 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       else groups.set(key, [task]);
     }
     return [...groups.entries()]
-      .map(([parentRunId, tasks]) => ({
-        parentRunId,
-        tasks: [...tasks].sort((a, b) => a.startedAt - b.startedAt),
-        anchorTs: Math.min(...tasks.map((task) => task.startedAt)),
-      }))
+      .map(([parentRunId, tasks]) => {
+        const sorted = [...tasks].sort((a, b) => a.startedAt - b.startedAt);
+        const active = sorted.some((task) => isTaskActive(task.status));
+        return {
+          parentRunId,
+          tasks: sorted,
+          active,
+          // A running child lives at the bottom of the current run, so later
+          // answers cannot hide it. Finished children settle where they were.
+          anchorTs: active
+            ? Number.POSITIVE_INFINITY
+            : Math.max(...sorted.map((task) => task.finishedAt ?? task.startedAt)),
+        };
+      })
       .sort((a, b) => a.anchorTs - b.anchorTs);
   }, [subagents]);
   const nativeGroups = useMemo(
