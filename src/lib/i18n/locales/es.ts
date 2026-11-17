@@ -212,6 +212,8 @@ export const es: Record<string, string> = {
   "chat.branchFromMessage": "Ramificar desde el mensaje",
   "chat.branchTitle": "Rama: {{text}}",
   "chat.openImage": "Abrir imagen",
+  "chat.showFullMessage": "Mostrar mensaje completo",
+  "chat.showLess": "Mostrar menos",
   "chat.attached": "Adjunto",
   "chat.imagePreview": "Vista previa de imagen",
   "chat.imagePreviewClose": "Cerrar vista previa de imagen",

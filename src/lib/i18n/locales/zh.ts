@@ -208,6 +208,8 @@ export const zh: Record<string, string> = {
   "chat.branchFromMessage": "从此消息创建分支",
   "chat.branchTitle": "分支: {{text}}",
   "chat.openImage": "打开图片",
+  "chat.showFullMessage": "显示完整消息",
+  "chat.showLess": "收起",
   "chat.attached": "已附加",
   "chat.imagePreview": "图片预览",
   "chat.imagePreviewClose": "关闭图片预览",

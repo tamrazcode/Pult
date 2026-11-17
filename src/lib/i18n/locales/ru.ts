@@ -223,6 +223,8 @@ export const ru: Record<string, string> = {
   "chat.branchFromMessage": "Ответвить от сообщения",
   "chat.branchTitle": "Ветка: {{text}}",
   "chat.openImage": "Открыть изображение",
+  "chat.showFullMessage": "Показать полностью",
+  "chat.showLess": "Свернуть",
   "chat.attached": "Прикреплено",
   "chat.imagePreview": "Просмотр изображения",
   "chat.imagePreviewClose": "Закрыть просмотр изображения",

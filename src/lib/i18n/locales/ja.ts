@@ -212,6 +212,8 @@ export const ja: Record<string, string> = {
   "chat.branchFromMessage": "このメッセージから分岐",
   "chat.branchTitle": "分岐: {{text}}",
   "chat.openImage": "画像を開く",
+  "chat.showFullMessage": "メッセージ全体を表示",
+  "chat.showLess": "折りたたむ",
   "chat.attached": "添付済み",
   "chat.imagePreview": "画像プレビュー",
   "chat.imagePreviewClose": "画像プレビューを閉じる",

@@ -212,6 +212,8 @@ export const de: Record<string, string> = {
   "chat.branchFromMessage": "Ab Nachricht verzweigen",
   "chat.branchTitle": "Zweig: {{text}}",
   "chat.openImage": "Bild öffnen",
+  "chat.showFullMessage": "Ganze Nachricht anzeigen",
+  "chat.showLess": "Weniger anzeigen",
   "chat.attached": "Angehängt",
   "chat.imagePreview": "Bildvorschau",
   "chat.imagePreviewClose": "Bildvorschau schließen",

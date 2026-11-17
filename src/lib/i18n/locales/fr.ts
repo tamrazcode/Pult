@@ -212,6 +212,8 @@ export const fr: Record<string, string> = {
   "chat.branchFromMessage": "Bifurquer depuis le message",
   "chat.branchTitle": "Branche : {{text}}",
   "chat.openImage": "Ouvrir l’image",
+  "chat.showFullMessage": "Afficher le message complet",
+  "chat.showLess": "Afficher moins",
   "chat.attached": "Pièce jointe",
   "chat.imagePreview": "Aperçu de l’image",
   "chat.imagePreviewClose": "Fermer l’aperçu de l’image",

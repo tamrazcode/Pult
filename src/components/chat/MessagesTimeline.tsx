@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ArrowRightLeft,
@@ -112,6 +112,12 @@ const NOTICE_LEVEL_CLASSES: Record<string, string> = {
 /** Tail-window size for long transcripts (§6.5 60 fps budget). */
 const TRANSCRIPT_WINDOW = 300;
 
+/** ~12 lines, but never more than half the chat viewport (min 8 lines). */
+export function computeUserClampHeight(viewportHeight: number): number {
+  const halfViewport = viewportHeight > 0 ? Math.floor(viewportHeight * 0.5) : 264;
+  return Math.min(264, Math.max(176, halfViewport));
+}
+
 export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const t = useT();
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
@@ -161,6 +167,19 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const followStreaming = useSettingsStore((s) => s.followStreaming);
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
+  // Long user bubbles cap at half the visible transcript height.
+  const [viewportHeight, setViewportHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const update = () => setViewportHeight(el.clientHeight);
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasView, threadId]);
+  const clampMaxPx = computeUserClampHeight(viewportHeight);
 
   // Reset the window when switching threads, not when a new run starts: the
   // merged transcript of the same thread must keep its expanded window.
@@ -205,7 +224,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
             {pendingUser && (
-              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
+              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} clampMaxPx={clampMaxPx} />
             )}
             {pendingUser && <ThinkingRow />}
             {subagentGroups.map((group) =>
@@ -292,6 +311,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     <div className="relative flex min-h-0 flex-1">
       <div
         ref={scrollRef}
+        data-chat-scroll
         onScroll={trackActiveTick}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       >
@@ -312,6 +332,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               subagentGroups={subagentGroups}
               nativeGroupByKey={nativeGroupByKey}
               runIndexById={runIndexById}
+              clampMaxPx={clampMaxPx}
               startedAt={activeRun?.startedAt}
               activeRunId={activeRun?.id}
               streaming={view.streaming}
@@ -320,7 +341,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
           {pendingUser && (
             <div>
-              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} />
+              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} clampMaxPx={clampMaxPx} />
             </div>
           )}
 
@@ -384,10 +405,17 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 }
 
 const ChatItemRow = memo(
-  function ChatItemRow({ item }: { item: ChatItem }) {
+  function ChatItemRow({ item, clampMaxPx }: { item: ChatItem; clampMaxPx: number }) {
     switch (item.type) {
       case "user":
-        return <UserRow text={item.text} images={item.images} ts={item.ts} />;
+        return (
+          <UserRow
+            text={item.text}
+            images={item.images}
+            ts={item.ts}
+            clampMaxPx={clampMaxPx}
+          />
+        );
       case "assistant":
         return <TextRow text={item.text} streaming={item.streaming} ts={item.ts} />;
       case "trace":
@@ -398,7 +426,7 @@ const ChatItemRow = memo(
         return <NoticeRow level={item.level} message={item.message} />;
     }
   },
-  (prev, next) => prev.item === next.item,
+  (prev, next) => prev.item === next.item && prev.clampMaxPx === next.clampMaxPx,
 );
 
 type TimelineEntry = ReturnType<typeof threadTimelineItems>[number];
@@ -505,6 +533,7 @@ function TimelineRows({
   subagentGroups,
   nativeGroupByKey,
   runIndexById,
+  clampMaxPx,
   startedAt,
   activeRunId,
   streaming,
@@ -515,6 +544,7 @@ function TimelineRows({
   subagentGroups: SubagentAnchor[];
   nativeGroupByKey: Map<string, NativeGroup>;
   runIndexById: Map<string, number>;
+  clampMaxPx: number;
   startedAt?: number;
   activeRunId?: string;
   streaming?: boolean;
@@ -614,7 +644,7 @@ function TimelineRows({
           data-history-key={entry.key}
           data-history-user={entry.item.type === "user" ? entry.key : undefined}
         >
-          <ChatItemRow item={entry.item} />
+          <ChatItemRow item={entry.item} clampMaxPx={clampMaxPx} />
         </div>,
       );
     }
@@ -1084,12 +1114,46 @@ function UserRow({
   text,
   images,
   ts,
+  clampMaxPx,
 }: {
   text: string;
   images: { data: string; mimeType: string }[];
   ts?: number;
+  clampMaxPx: number;
 }) {
   const t = useT();
+  const bodyId = useId();
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const textBodyRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = textBodyRef.current;
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollHeight > clampMaxPx + 8);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [clampMaxPx, text]);
+
+  const toggle = () => {
+    const bubble = bubbleRef.current;
+    const scroller = bubble?.closest<HTMLElement>("[data-chat-scroll]") ?? null;
+    const topBefore = bubble && scroller ? bubble.getBoundingClientRect().top : 0;
+    setExpanded((value) => !value);
+    if (!bubble || !scroller) return;
+    // Collapsing must not jump the reader: keep the bubble's top where it was.
+    requestAnimationFrame(() => {
+      const delta = bubble.getBoundingClientRect().top - topBefore;
+      if (Math.abs(delta) > 1) scroller.scrollTop += delta;
+    });
+  };
+
+  const clamped = overflowing && !expanded;
+
   return (
     <div className="group flex justify-end">
       <div className="flex max-w-[75%] flex-col items-end gap-2">
@@ -1117,8 +1181,39 @@ function UserRow({
           </div>
         )}
         {text && (
-          <div className="rounded-(--radius-md) border border-border-subtle bg-surface px-4 py-2.5 text-base whitespace-pre-wrap text-text-primary">
-            {text}
+          <div
+            ref={bubbleRef}
+            className="relative w-full rounded-(--radius-md) border border-border-subtle bg-surface px-4 py-2.5 text-base text-text-primary"
+          >
+            <div
+              id={bodyId}
+              ref={textBodyRef}
+              style={clamped ? { maxHeight: `${clampMaxPx}px` } : undefined}
+              className={`select-text break-words whitespace-pre-wrap motion-reduce:transition-none ${
+                clamped ? "user-message-fade-mask overflow-hidden pb-7" : ""
+              }`}
+            >
+              {text}
+            </div>
+            {overflowing && (
+              <div
+                className={
+                  expanded
+                    ? "mt-2 flex justify-end"
+                    : "pointer-events-none absolute inset-x-0 bottom-1 z-10 flex justify-end px-2"
+                }
+              >
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  aria-controls={bodyId}
+                  onClick={toggle}
+                  className="pointer-events-auto rounded-(--radius-sm) border border-border-strong bg-surface-raised/95 px-2.5 py-1 text-xs font-medium text-text-primary shadow-sm transition hover:bg-hover focus-visible:shadow-(--focus-ring) focus-visible:outline-none motion-reduce:transition-none"
+                >
+                  {expanded ? t("chat.showLess") : t("chat.showFullMessage")}
+                </button>
+              </div>
+            )}
           </div>
         )}
         <MessageActions text={text} ts={ts} align="right" />

@@ -225,3 +225,9 @@
 [data-theme="light"] img[data-provider-logo="pi"] {
   filter: invert(1);
 }
+
+/* Long user messages fade to transparent instead of a hard cut. */
+.user-message-fade-mask {
+  mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 56px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 calc(100% - 56px), transparent 100%);
+}

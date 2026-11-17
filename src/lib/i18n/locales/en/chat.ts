@@ -69,6 +69,8 @@ export const chat = {
   "chat.branchFromMessage": "Branch from message",
   "chat.branchTitle": "Branch: {{text}}",
   "chat.openImage": "Open image",
+  "chat.showFullMessage": "Show full message",
+  "chat.showLess": "Show less",
   "chat.imageUnavailable": "Image unavailable: {{name}}",
   "chat.attached": "Attached",
   "chat.imagePreview": "Image preview",
