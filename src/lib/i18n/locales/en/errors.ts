@@ -42,8 +42,6 @@ export const errors = {
   "errors.queue.item_not_found": "That queued message is gone.",
   "errors.queue.order_mismatch": "The queue changed; reorder it again.",
   "errors.run.finished": "That run already finished.",
-  "errors.run.protected":
-    "A command is still running. Wait for it to finish or press Stop to cancel.",
   "errors.terminal.input_closed": "The terminal is no longer accepting input.",
   "errors.browser.state_failed": "The browser is in an inconsistent state. Reopen the panel.",
   "errors.browser.window_missing": "The main window is not available.",

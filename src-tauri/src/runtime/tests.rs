@@ -379,7 +379,7 @@ async fn steering_the_parent_keeps_children_running() {
 }
 
 #[tokio::test]
-async fn steer_is_refused_while_a_long_execute_runs() {
+async fn steer_defers_a_long_execute_but_does_not_cancel_it() {
     let _env = env_lock();
     let (runtime, sink) = mock_runtime();
     runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_LONG_EXECUTE_MS", "5000")])]);
@@ -414,28 +414,27 @@ async fn steer_is_refused_while_a_long_execute_runs() {
 
     std::env::set_var("PULT_STEER_PROTECT_MS", "100");
     tokio::time::sleep(Duration::from_millis(250)).await;
-    let err = runtime
+    runtime
         .steer(&thread.id, &queue_id)
-        .expect_err("a long execute must not be cancelled by a queue steer");
+        .expect("a long execute must not be cancelled by a queue steer");
     std::env::remove_var("PULT_STEER_PROTECT_MS");
-    assert_eq!(err.code(), "run.protected");
 
     let queue = runtime.store().list_queue(&thread.id).unwrap();
     assert_eq!(
         queue.iter().map(|item| item.text.as_str()).collect::<Vec<_>>(),
-        vec!["first queued", "steer me"],
-        "a refused steer must not reorder the queue"
+        vec!["steer me", "first queued"],
+        "the steered message must be first in line, without cancelling the run"
     );
     assert!(
         runtime.active_run_for(&thread.id).is_some(),
-        "the build run must survive the refused steer"
+        "the build run must survive the steered message"
     );
 
-    wait_for(Duration::from_secs(20), || {
+    wait_for(Duration::from_secs(25), || {
         runtime
             .store()
             .list_runs(&thread.id)
-            .map(|runs| runs.len() >= 2 && runs.iter().all(|run| run.status != "running"))
+            .map(|runs| runs.len() >= 3 && runs.iter().all(|run| run.status != "running"))
             .unwrap_or(false)
     })
     .await;
@@ -444,6 +443,19 @@ async fn steer_is_refused_while_a_long_execute_runs() {
         runs.iter()
             .any(|run| run.id == build_run.id && run.status == "finished"),
         "the build run must finish normally"
+    );
+    let next_run = runs.iter().find(|run| run.idx == 1).expect("run after build");
+    assert!(
+        runtime
+            .store()
+            .load_events(&next_run.id)
+            .unwrap()
+            .iter()
+            .any(|event| matches!(
+                &event.kind,
+                crate::events::EventKind::UserMessage { text, .. } if text.trim() == "steer me"
+            )),
+        "the steered message must run right after the command"
     );
 }
 

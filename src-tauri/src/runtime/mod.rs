@@ -1465,10 +1465,12 @@ impl AgentRuntime {
         let active = self.active_run_for(thread_id);
         if let Some(run_id) = &active {
             if self.protected_tool_running(run_id) {
-                return Err(crate::PultError::with_code(
-                    "run.protected",
-                    "A long command is still running. Wait for it to finish or press Stop.",
-                ));
+                // A build/test is running: "send now" must not kill it. Deliver
+                // the message right after the command instead of erroring —
+                // sending always works, only the immediate interruption waits.
+                self.store.move_queue_item_to_head(thread_id, queue_id)?;
+                self.emit_queue_updated(thread_id);
+                return Ok(());
             }
         }
         self.store.move_queue_item_to_head(thread_id, queue_id)?;

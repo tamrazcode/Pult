@@ -25,6 +25,11 @@ function decodeDrivePath(raw: string): string {
   }
 }
 
+/** LLMs often write `/C:/Users/...`; treat it as the drive path it is. */
+function stripLeadingDriveSlash(path: string): string {
+  return path.replace(/^\/+([a-zA-Z]:[\\/])/, "$1");
+}
+
 /** Absolute drive-qualified path from a raw href, or null. */
 export function localFilePath(rawHref: string | null | undefined): string | null {
   const raw = decodeDrivePath((rawHref ?? "").trim());
@@ -43,6 +48,7 @@ export function localFilePath(rawHref: string | null | undefined): string | null
   } else {
     path = path.split("#")[0].split("?")[0];
   }
+  path = stripLeadingDriveSlash(path);
   if (path.split(/[\\/]/).some((part) => part === "..")) return null;
   path = path.replace(/\\/g, "/").replace(/^([a-zA-Z]):\/+/, "$1:/");
   return /^[a-zA-Z]:\//.test(path) ? path.replace(/\//g, "\\") : null;
@@ -89,6 +95,7 @@ export function classifyMarkdownHref(
   path = path.split("#")[0].split("?")[0].replace(/\\/g, "/");
   // `file:///C:/%5CUsers` decodes to `C://Users`; collapse the drive slash.
   path = path.replace(/^([a-zA-Z]):\/+/, "$1:/");
+  path = stripLeadingDriveSlash(path);
   if (!path) return { kind: "unsupported", raw };
   if (path.split("/").some((part) => part === "..")) {
     return { kind: "unsupported", raw };

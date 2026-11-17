@@ -59,6 +59,8 @@ export interface ImageChip {
   preview: string;
   name: string;
   size: number;
+  /** Human-readable reference inserted at the caret, e.g. `image.png 40 KB`. */
+  token: string;
 }
 
 export interface FileChip {
@@ -66,6 +68,8 @@ export interface FileChip {
   text: string;
   truncated: boolean;
   size: number;
+  /** Human-readable reference inserted at the caret, e.g. `notes.md 2 KB`. */
+  token: string;
 }
 
 export interface DraftAttachments {

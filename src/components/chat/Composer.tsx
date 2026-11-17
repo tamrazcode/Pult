@@ -3,13 +3,8 @@ import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
 import {
   ArrowUp,
-  Check,
-  CornerUpRight,
   FileText,
-  GripVertical,
-  ListPlus,
   Paperclip,
-  Pencil,
   X,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -17,10 +12,7 @@ import { ModePill, ProviderModelPicker, configValueValid } from "./ComposerContr
 import {
   runsCancel,
   runsDispatch,
-  runsQueueRemove,
-  runsQueueReorder,
   runsQueueSteer,
-  runsQueueUpdate,
   runsRespondPermission,
   workspaceFiles,
 } from "../../lib/ipc";
@@ -48,7 +40,6 @@ import type {
 } from "../../lib/types";
 
 const MAX_HEIGHT = 10 * 28; // 10 rows at the 28px effective line step
-const QUEUE_ROW_HEIGHT = 32;
 
 /** What a picked slash command inserts: the leading "/" is part of the command. */
 export function formatSlashInsertion(command: CommandInfo): string {
@@ -109,7 +100,14 @@ const MAX_ATTACHMENT_BYTES = 5_000_000;
 function chipFromDataUrl(name: string, size: number, dataUrl: string): ImageChip | null {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return null;
-  return { mimeType: match[1], data: match[2], preview: dataUrl, name, size };
+  return {
+    mimeType: match[1],
+    data: match[2],
+    preview: dataUrl,
+    name,
+    size,
+    token: attachmentToken(name, size),
+  };
 }
 
 function fileToChip(file: File): Promise<ImageChip | null> {
@@ -147,7 +145,35 @@ async function fileToTextChip(file: File): Promise<FileChip | null> {
     text: raw.slice(0, MAX_ATTACHMENT_TEXT),
     truncated: raw.length > MAX_ATTACHMENT_TEXT,
     size: file.size,
+    token: attachmentToken(file.name, file.size),
   };
+}
+
+function attachmentToken(name: string, size: number): string {
+  return `${name} ${formatAttachmentSize(size)}`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Renders the caret-line text; attachment tokens become inline links. */
+function highlightInlineTokens(
+  text: string,
+  tokens: Map<string, { name: string; size: string }>,
+) {
+  if (tokens.size === 0) return text;
+  const pattern = new RegExp(`(${[...tokens.keys()].map(escapeRegExp).join("|")})`, "g");
+  return text.split(pattern).map((part, index) => {
+    const token = tokens.get(part);
+    if (!token) return part;
+    return (
+      <span key={`${part}-${index}`} data-inline-chip className="rounded-[4px] text-accent">
+        {token.name}
+        <span className="text-text-tertiary"> {token.size}</span>
+      </span>
+    );
+  });
 }
 
 function formatAttachmentSize(bytes: number): string {
@@ -202,14 +228,18 @@ export function Composer({ threadId }: { threadId?: string }) {
     },
     [draftKey],
   );
-  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
-  const queueDraftRef = useRef("");
-  const [dragState, setDragState] = useState<{
-    id: string;
-    startY: number;
-    offset: number;
-    index: number;
-  } | null>(null);
+  const mirrorRef = useRef<HTMLDivElement>(null);
+  const inlineTokens = useMemo(() => {
+    const tokens = new Map<string, { name: string; size: string }>();
+    for (const chip of [...chips, ...fileChips]) {
+      const cut = chip.token.lastIndexOf(" ");
+      tokens.set(chip.token, {
+        name: chip.token.slice(0, cut),
+        size: chip.token.slice(cut + 1),
+      });
+    }
+    return tokens;
+  }, [chips, fileChips]);
   const [slashIndex, setSlashIndex] = useState(0);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
@@ -223,7 +253,6 @@ export function Composer({ threadId }: { threadId?: string }) {
   const composerPrefill = useUiStore((s) => s.composerPrefill);
   const activeElicitation = useRunsStore((s) => s.activeElicitation);
   const commands = useRunsStore((s) => (threadId ? s.commandsByThread[threadId] : undefined));
-  const queue = useRunsStore((s) => (threadId ? s.queueByThread[threadId] : undefined));
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const activeRun = activeRunForThread(runs);
   const sendKey = useSettingsStore((s) => s.sendKey);
@@ -344,6 +373,35 @@ export function Composer({ threadId }: { threadId?: string }) {
     return () => window.removeEventListener("resize", onResize);
   }, [autosize]);
 
+  const insertTokens = useCallback(
+    (tokens: string[]) => {
+      if (tokens.length === 0) return;
+      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
+      const el = textareaRef.current;
+      const start = el?.selectionStart ?? current.length;
+      const end = el?.selectionEnd ?? current.length;
+      const before = current.slice(0, start);
+      const prefix = before.length > 0 && !/\s/.test(before[before.length - 1]!) ? " " : "";
+      const insertion = `${prefix}${tokens.join(" ")} `;
+      setValue(current.slice(0, start) + insertion + current.slice(end));
+      requestAnimationFrame(() => {
+        const caret = start + insertion.length;
+        textareaRef.current?.setSelectionRange(caret, caret);
+        textareaRef.current?.focus();
+        autosize();
+      });
+    },
+    [autosize, draftKey, setValue],
+  );
+
+  const removeAttachmentToken = useCallback(
+    (token: string) => {
+      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
+      setValue(current.replace(token, "").replace(/[ \t]{2,}/g, " ").trimEnd());
+    },
+    [draftKey, setValue],
+  );
+
   const attachFiles = useCallback(
     async (picked: FileList | File[] | null) => {
       if (!picked) return;
@@ -376,8 +434,9 @@ export function Composer({ threadId }: { threadId?: string }) {
       }
       if (importedImages.length > 0) setChips((prev) => [...prev, ...importedImages]);
       if (importedDocs.length > 0) setFileChips((prev) => [...prev, ...importedDocs]);
+      insertTokens([...importedImages, ...importedDocs].map((chip) => chip.token));
     },
-    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, t],
+    [chips.length, fileChips.length, imageCapable, insertTokens, setChips, setFileChips, t],
   );
 
   const dispatchRun = useCallback(
@@ -403,14 +462,14 @@ export function Composer({ threadId }: { threadId?: string }) {
         config,
       );
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
-      else if (outcome.queued) useRunsStore.getState().clearPendingUser(targetThreadId);
+      // A queued message keeps its optimistic bubble until its run starts.
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
       if (config) {
         for (const [id, value] of Object.entries(config)) {
           useRunsStore.getState().setDesiredConfig(targetThreadId, id, value);
         }
       }
-      // A queued outcome is confirmed by the "queue:update" event.
+      return outcome;
     },
     [selectedInstanceId, t],
   );
@@ -559,7 +618,22 @@ export function Composer({ threadId }: { threadId?: string }) {
           );
           useRunsStore.getState().setPendingUser(threadId, pendingText, images);
           try {
-            await dispatchRun(threadId, promptText, images, modeForSend(desired, threadId), config);
+            const outcome = await dispatchRun(
+              threadId,
+              promptText,
+              images,
+              modeForSend(desired, threadId),
+              config,
+            );
+            // Sending always works. If a run is active, the message goes to
+            // the front of the backend queue and is steered immediately. A
+            // long build/test holds it until the command finishes; a normal
+            // turn is replaced right away. No user-visible queue.
+            if (outcome.queued && outcome.queueId) {
+              await runsQueueSteer(threadId, outcome.queueId).catch((err) =>
+                console.error("auto-steer failed", err),
+              );
+            }
           } catch (err) {
             useRunsStore.getState().clearPendingUser(threadId);
             throw err;
@@ -589,58 +663,6 @@ export function Composer({ threadId }: { threadId?: string }) {
     t,
   ]);
 
-  const saveQueueEdit = useCallback(() => {
-    if (!threadId || !editingQueueId) return;
-    const text = value.trim();
-    if (!text) return;
-    setBusy(true);
-    void runsQueueUpdate(threadId, editingQueueId, text)
-      .then(() => {
-        setEditingQueueId(null);
-        setValue(queueDraftRef.current);
-        queueDraftRef.current = "";
-        requestAnimationFrame(autosize);
-      })
-      .catch((err) => setError(localizeIpcError(err)))
-      .finally(() => setBusy(false));
-  }, [threadId, editingQueueId, value, autosize, setValue]);
-
-  const startQueueEdit = useCallback(
-    (item: { id: string; text: string }) => {
-      queueDraftRef.current = value;
-      setEditingQueueId(item.id);
-      setValue(item.text);
-      requestAnimationFrame(() => {
-        textareaRef.current?.focus();
-        autosize();
-      });
-    },
-    [value, autosize, setValue],
-  );
-
-  const cancelQueueEdit = useCallback(() => {
-    setEditingQueueId(null);
-    setValue(queueDraftRef.current);
-    queueDraftRef.current = "";
-    requestAnimationFrame(autosize);
-  }, [autosize, setValue]);
-
-  const moveQueueItem = useCallback(
-    (from: number, to: number) => {
-      if (!threadId || !queue || from === to) return;
-      const ids = queue.map((item) => item.id);
-      if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return;
-      ids.splice(to, 0, ...ids.splice(from, 1));
-      void runsQueueReorder(threadId, ids).catch((err) => setError(localizeIpcError(err)));
-    },
-    [threadId, queue],
-  );
-
-  const handlePrimary = useCallback(() => {
-    if (editingQueueId) saveQueueEdit();
-    else handleSend();
-  }, [editingQueueId, saveQueueEdit, handleSend]);
-
   const cancelling = useRunsStore((s) =>
     activeRun ? s.cancellingByRun[activeRun.id] === true : false,
   );
@@ -657,11 +679,6 @@ export function Composer({ threadId }: { threadId?: string }) {
   useEffect(() => {
     const onKey = (e: WindowEventMap["keydown"]) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
-      if (editingQueueId) {
-        e.preventDefault();
-        cancelQueueEdit();
-        return;
-      }
       const target = e.target;
       const inOverlay =
         (target instanceof HTMLElement &&
@@ -688,8 +705,6 @@ export function Composer({ threadId }: { threadId?: string }) {
     slashOpen,
     mentionOpen,
     handleStop,
-    editingQueueId,
-    cancelQueueEdit,
   ]);
 
   // Keyboard answers while a decision is pending (§6.1): A allow once,
@@ -829,7 +844,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         (sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey);
       if (shouldSend) {
         e.preventDefault();
-        handlePrimary();
+        handleSend();
         return;
       }
       if (!mentionOpen && !slashOpen && !awaitingDecision) {
@@ -901,104 +916,6 @@ export function Composer({ threadId }: { threadId?: string }) {
                 </Button>
               );
             })}
-        </div>
-      )}
-      {queue && queue.length > 0 && threadId && (
-        <div className="relative z-0 mx-auto -mb-3 w-full max-w-3xl px-3">
-          <div
-            className="flex flex-col overflow-hidden rounded-t-[18px] border border-b-0 border-border-strong pt-1 pb-4 backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
-            style={{
-              backgroundColor: `color-mix(in srgb, var(--composer-tint) ${glassOpacity}%, transparent)`,
-              boxShadow: "var(--shadow-composer)",
-            }}
-          >
-            {queue.map((item, index) => {
-              const dragging = dragState?.id === item.id;
-              return (
-                <div
-                  key={item.id}
-                  onPointerDown={(event) => {
-                    if (editingQueueId !== null) return;
-                    const target = event.target as HTMLElement;
-                    if (target.closest("button, input, select, textarea, a")) return;
-                    event.preventDefault();
-                    event.currentTarget.setPointerCapture?.(event.pointerId);
-                    setDragState({ id: item.id, startY: event.clientY, offset: 0, index });
-                  }}
-                  onPointerMove={(event) => {
-                    if (!dragging) return;
-                    setDragState((current) =>
-                      current && current.id === item.id
-                        ? { ...current, offset: event.clientY - current.startY }
-                        : current,
-                    );
-                  }}
-                  onPointerUp={() => {
-                    if (!dragging || !dragState) return;
-                    const to = Math.max(
-                      0,
-                      Math.min(
-                        queue.length - 1,
-                        index + Math.round(dragState.offset / QUEUE_ROW_HEIGHT),
-                      ),
-                    );
-                    moveQueueItem(index, to);
-                    setDragState(null);
-                  }}
-                  onPointerCancel={() => setDragState(null)}
-                  className={`relative flex touch-none items-center gap-2 px-2 py-1.5 select-none transition-transform duration-150 ease-out ${
-                    dragging
-                      ? "z-10 rounded-(--radius-sm) bg-surface-raised/90 shadow-(--shadow-composer)"
-                      : ""
-                  } ${editingQueueId === item.id ? "bg-warning/5" : ""}`}
-                  style={dragging ? { transform: `translateY(${dragState.offset}px)` } : undefined}
-                >
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.reorderAria")}
-                    title={t("composer.queue.dragTitle")}
-                    className="flex h-5 w-4 cursor-grab touch-none items-center justify-center text-text-tertiary active:cursor-grabbing"
-                  >
-                    <GripVertical size={13} />
-                  </button>
-                  <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.steerAria")}
-                    title={t("composer.queue.steerTitle")}
-                    onClick={() =>
-                      runsQueueSteer(threadId, item.id).catch((err) =>
-                        setError(localizeIpcError(err)),
-                      )
-                    }
-                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.editAria")}
-                    onClick={() => startQueueEdit(item)}
-                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <Pencil size={11} /> {t("composer.queue.edit")}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={t("composer.queue.removeAria")}
-                    onClick={() =>
-                      runsQueueRemove(threadId, item.id).catch((err) =>
-                        console.error("runs_queue_remove failed", err),
-                      )
-                    }
-                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
         </div>
       )}
       <div className="relative z-10 mx-auto w-full max-w-3xl">
@@ -1087,7 +1004,10 @@ export function Composer({ threadId }: { threadId?: string }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => setChips((prev) => prev.filter((_, index) => index !== i))}
+                    onClick={() => {
+                      removeAttachmentToken(chip.token);
+                      setChips((prev) => prev.filter((_, index) => index !== i));
+                    }}
                     aria-label={t("composer.removeImage")}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
@@ -1117,7 +1037,10 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <button
                     type="button"
                     aria-label={t("composer.removeAttachment", { name: file.name })}
-                    onClick={() => setFileChips((prev) => prev.filter((_, index) => index !== i))}
+                    onClick={() => {
+                      removeAttachmentToken(file.token);
+                      setFileChips((prev) => prev.filter((_, index) => index !== i));
+                    }}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
                     <X size={10} />
@@ -1126,39 +1049,42 @@ export function Composer({ threadId }: { threadId?: string }) {
               ))}
             </div>
           )}
-          {editingQueueId && (
-            <div className="flex items-center gap-2 px-4 pt-2 text-xs text-warning">
-              <Pencil size={11} className="shrink-0" />
-              <span className="min-w-0 flex-1 truncate">{t("composer.queue.editing")}</span>
-              <button
-                type="button"
-                aria-label={t("composer.queue.cancel")}
-                onClick={cancelQueueEdit}
-                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+          <div className="relative">
+            {inlineTokens.size > 0 && (
+              <div
+                ref={mirrorRef}
+                aria-hidden
+                className="pointer-events-none absolute inset-0 overflow-hidden px-4 pt-3 pb-1.5 text-sm break-words whitespace-pre-wrap text-text-primary"
               >
-                <X size={11} />
-              </button>
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={(e) => {
-              const next = e.target.value;
-              setValue(next);
-              setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
-              autosize();
-            }}
-            onKeyDown={onKeyDown}
-            onPaste={(e) => void handlePaste(e)}
-            readOnly={awaitingDecision}
-            rows={1}
-            spellCheck={false}
-            placeholder={
-              awaitingDecision ? t("composer.decisionPlaceholder") : t("composer.placeholder")
-            }
-            className="block max-h-[280px] min-h-[52px] w-full resize-none bg-transparent px-4 pt-3 pb-1.5 text-sm text-text-primary placeholder:text-text-tertiary focus:outline-none"
-          />
+                {highlightInlineTokens(value, inlineTokens)}
+                {"\u200b"}
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={(e) => {
+                const next = e.target.value;
+                setValue(next);
+                setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
+                autosize();
+              }}
+              onKeyDown={onKeyDown}
+              onPaste={(e) => void handlePaste(e)}
+              onScroll={(e) => {
+                if (mirrorRef.current) mirrorRef.current.scrollTop = e.currentTarget.scrollTop;
+              }}
+              readOnly={awaitingDecision}
+              rows={1}
+              spellCheck={false}
+              placeholder={
+                awaitingDecision ? t("composer.decisionPlaceholder") : t("composer.placeholder")
+              }
+              className={`relative z-10 block max-h-[280px] min-h-[52px] w-full resize-none break-words bg-transparent px-4 pt-3 pb-1.5 text-sm placeholder:text-text-tertiary focus:outline-none ${
+                inlineTokens.size > 0 ? "text-transparent caret-text-primary" : "text-text-primary"
+              }`}
+            />
+          </div>
           <div className="flex items-center gap-1.5 px-3 pt-1.5 pb-2.5">
             <label
               title={t("composer.attach")}
@@ -1179,28 +1105,17 @@ export function Composer({ threadId }: { threadId?: string }) {
             <ModePill threadId={threadId} />
             <div className="flex-1" />
             <ProviderModelPicker threadId={threadId} />
-            {editingQueueId ? (
-              <button
-                type="button"
-                onClick={handlePrimary}
-                aria-label={t("composer.queue.save")}
-                title={t("composer.queue.save")}
-                disabled={!value.trim() || busy}
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
-              >
-                <Check size={15} />
-              </button>
-            ) : runActive ? (
+            {runActive ? (
               value.trim() || chips.length > 0 || fileChips.length > 0 ? (
                 <button
                   type="button"
                   onClick={handleSend}
-                  aria-label={t("composer.queue")}
-                  title={t("composer.queue")}
+                  aria-label={t("composer.send")}
+                  title={t("composer.send")}
                   disabled={awaitingDecision || busy}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
-                  <ListPlus size={15} className="translate-x-[1px]" />
+                  <ArrowUp size={14} />
                 </button>
               ) : (
                 <button
