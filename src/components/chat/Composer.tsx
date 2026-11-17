@@ -680,7 +680,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         setFileChips((prev) => [...prev, ...importedDocs]);
       }
     },
-    [chips.length, fileChips.length, imageCapable, t],
+    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, t],
   );
 
   const handlePaste = useCallback(
