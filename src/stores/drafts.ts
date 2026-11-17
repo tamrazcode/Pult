@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 const STORAGE_KEY = "pult:drafts:v1";
+const HEIGHTS_KEY = "pult:draft-heights:v1";
 const MAX_DRAFT = 100_000;
 
 function readStored(): Record<string, string> {
@@ -13,7 +14,18 @@ function readStored(): Record<string, string> {
   }
 }
 
+function readHeights(): Record<string, number> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(HEIGHTS_KEY) ?? "{}");
+    return parsed && typeof parsed === "object" ? (parsed as Record<string, number>) : {};
+  } catch {
+    return {};
+  }
+}
+
 let saveTimer: number | undefined;
+let heightTimer: number | undefined;
 
 function persist(byThread: Record<string, string>) {
   if (typeof window === "undefined") return;
@@ -23,6 +35,18 @@ function persist(byThread: Record<string, string>) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(byThread));
     } catch {
       // Quota/private mode: keep the in-memory draft, drop persistence.
+    }
+  }, 250);
+}
+
+function persistHeights(byThread: Record<string, number>) {
+  if (typeof window === "undefined") return;
+  if (heightTimer !== undefined) window.clearTimeout(heightTimer);
+  heightTimer = window.setTimeout(() => {
+    try {
+      localStorage.setItem(HEIGHTS_KEY, JSON.stringify(byThread));
+    } catch {
+      // Quota/private mode: heights are only a comfort setting.
     }
   }, 250);
 }
@@ -51,10 +75,12 @@ const EMPTY: DraftAttachments = { images: [], files: [] };
 interface DraftsState {
   byThread: Record<string, string>;
   attachments: Record<string, DraftAttachments>;
+  heightByThread: Record<string, number>;
   setDraft: (threadId: string, text: string) => void;
   clearDraft: (threadId: string) => void;
   setAttachments: (threadId: string, patch: Partial<DraftAttachments>) => void;
   clearAttachments: (threadId: string) => void;
+  setDraftHeight: (threadId: string, height: number) => void;
 }
 
 export const useDraftsStore = create<DraftsState>((set) => {
@@ -74,8 +100,24 @@ export const useDraftsStore = create<DraftsState>((set) => {
     // localStorage quota. `shortcut: lost on restart, move to IndexedDB if
     // drafts must survive a relaunch`.
     attachments: {},
+    heightByThread: readHeights(),
     setDraft: write,
-    clearDraft: (threadId) => write(threadId, ""),
+    clearDraft: (threadId) => {
+      write(threadId, "");
+      const heights = { ...useDraftsStore.getState().heightByThread };
+      if (!(threadId in heights)) return;
+      delete heights[threadId];
+      persistHeights(heights);
+      useDraftsStore.setState({ heightByThread: heights });
+    },
+    setDraftHeight: (threadId, height) =>
+      set((state) => {
+        const value = Math.min(280, Math.max(52, Math.round(height)));
+        if (state.heightByThread[threadId] === value) return state;
+        const next = { ...state.heightByThread, [threadId]: value };
+        persistHeights(next);
+        return { heightByThread: next };
+      }),
     setAttachments: (threadId, patch) =>
       set((state) => {
         const current = state.attachments[threadId] ?? EMPTY;

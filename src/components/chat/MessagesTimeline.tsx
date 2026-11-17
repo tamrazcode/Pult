@@ -219,6 +219,24 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     return () => observer.disconnect();
   }, [threadId, hasView, entries.length, followStreaming]);
 
+  // The composer changes the transcript height. Keep a pinned reader pinned;
+  // a reader who scrolled up only gets the "Scroll to end" pill refreshed.
+  useEffect(() => {
+    const container = scrollRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      if (isAtBottomRef.current) {
+        container.scrollTop = container.scrollHeight - container.clientHeight;
+      } else {
+        const atBottom =
+          container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+        setShowScrollToEnd(!atBottom);
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [hasView, threadId]);
+
   if (!threadId) return <EmptyState />;
 
   if (!view) {
@@ -383,9 +401,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             <FinishDivider stopReason={view.stopReason} />
           )}
 
-          {/* Space for the overlaid composer; must sit ABOVE the sentinel so
-              scrollIntoView(end) still lands at the true bottom. */}
-          <div className="h-32 shrink-0" aria-hidden />
           <div ref={bottomRef} />
         </div>
       </div>
@@ -399,7 +414,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
             const container = scrollRef.current;
             if (container) container.scrollTop = container.scrollHeight;
           }}
-          className="absolute bottom-28 left-1/2 z-30 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-surface-raised/95 px-3 text-xs text-text-secondary shadow-(--shadow-composer) transition hover:bg-surface-raised hover:text-text-primary"
+          className="absolute bottom-4 left-1/2 z-30 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-border-strong bg-surface-raised/95 px-3 text-xs text-text-secondary shadow-(--shadow-composer) transition hover:bg-surface-raised hover:text-text-primary"
         >
           <ChevronDown size={13} /> {t("chat.scrollToEnd")}
         </button>

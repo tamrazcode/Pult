@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
 import {
@@ -305,8 +305,32 @@ export function Composer({ threadId }: { threadId?: string }) {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, MAX_HEIGHT)}px`;
-  }, []);
+    const measured = el.scrollHeight;
+    const fallback =
+      value.length > 0 ? (useDraftsStore.getState().heightByThread[draftKey] ?? 52) : 52;
+    const nextHeight = Math.min(Math.max(measured > 0 ? measured : fallback, 52), MAX_HEIGHT);
+    el.style.height = `${nextHeight}px`;
+    useDraftsStore.getState().setDraftHeight(draftKey, nextHeight);
+  }, [draftKey, value.length]);
+
+  // Restore the draft's height before the first paint; a large draft must not
+  // come back as a one-line textarea until the next keystroke.
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const stored = useDraftsStore.getState().heightByThread[draftKey];
+    if (stored && value.length > 0) {
+      el.style.height = `${Math.min(Math.max(stored, 52), MAX_HEIGHT)}px`;
+    }
+    autosize();
+  }, [autosize, draftKey, value]);
+
+  useEffect(() => {
+    const onResize = () => autosize();
+    window.addEventListener("resize", onResize);
+    void document.fonts?.ready?.then(() => autosize()).catch(() => undefined);
+    return () => window.removeEventListener("resize", onResize);
+  }, [autosize]);
 
   const dispatchRun = useCallback(
     async (
