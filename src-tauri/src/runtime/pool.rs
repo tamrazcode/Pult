@@ -12,7 +12,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::UnboundedReceiver;
 
-use crate::drivers::acp::{AcpConn, ClientRequest};
+use crate::drivers::acp::ClientRequest;
+use crate::drivers::AgentConn;
 use crate::events::EventKind;
 use crate::runtime::terminals::TerminalRegistry;
 use crate::runtime::DesiredConfigMap;
@@ -28,7 +29,7 @@ pub struct SpawnSig {
 }
 
 pub struct IdleConn {
-    pub conn: std::sync::Arc<AcpConn>,
+    pub conn: std::sync::Arc<AgentConn>,
     pub events_rx: UnboundedReceiver<EventKind>,
     pub client_requests_rx: UnboundedReceiver<ClientRequest>,
     pub session_id: String,
@@ -344,8 +345,12 @@ mod tests {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             env_remove: Vec::new(),
+            initialize_timeout: std::time::Duration::from_secs(60),
+            cancel_meta: None,
+            driver: "acp".to_string(),
+            cwd: None,
         };
-        let (conn, streams) = AcpConn::spawn(&config).expect("spawn mock agent");
+        let (conn, streams) = AgentConn::spawn(&config).expect("spawn mock agent");
         IdleConn {
             conn: Arc::new(conn),
             events_rx: streams.events_rx,
@@ -365,7 +370,7 @@ mod tests {
         }
     }
 
-    async fn wait_dead(conn: &AcpConn) {
+    async fn wait_dead(conn: &AgentConn) {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         while !conn.is_dead() {
             assert!(

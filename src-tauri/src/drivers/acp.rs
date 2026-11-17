@@ -45,6 +45,14 @@ pub struct SpawnConfig {
     /// Variables inherited from Pult's own process that must not leak into the
     /// agent (a nested Claude session breaks sign-in and session ids).
     pub env_remove: Vec<String>,
+    /// Handshake budget; Grok's cold ACP start takes 9–14s.
+    pub initialize_timeout: std::time::Duration,
+    /// Provider-specific `session/cancel` `_meta` (Grok: ctrl_c trigger).
+    pub cancel_meta: Option<serde_json::Value>,
+    /// Driver id from the instance spec (`acp`, `pi_rpc`, `mock`).
+    pub driver: String,
+    /// Working directory for the agent process (the thread's workspace).
+    pub cwd: Option<std::path::PathBuf>,
 }
 
 /// A client-side request from the agent, handed to the runtime for policy.
@@ -140,6 +148,8 @@ pub struct AcpConn {
     dead: Arc<AtomicBool>,
     /// pult itself called kill(): distinguishes our shutdown from a crash.
     killed: Arc<AtomicBool>,
+    initialize_timeout: std::time::Duration,
+    cancel_meta: Option<serde_json::Value>,
 }
 
 /// Ring cap for the diagnostics frame log.
@@ -367,6 +377,8 @@ impl AcpConn {
                 frames,
                 dead,
                 killed: Arc::new(AtomicBool::new(false)),
+                initialize_timeout: config.initialize_timeout,
+                cancel_meta: config.cancel_meta.clone(),
             },
             AcpStreams {
                 events_rx,
@@ -443,7 +455,7 @@ impl AcpConn {
             .request(
                 "initialize",
                 serde_json::to_value(params)?,
-                std::time::Duration::from_secs(60),
+                self.initialize_timeout,
             )
             .await?;
         Ok(serde_json::from_value(value)?)
@@ -549,6 +561,7 @@ impl AcpConn {
                 method: "session/cancel".to_string(),
                 params: serde_json::to_value(CancelParams {
                     session_id: session_id.to_string(),
+                    meta: self.cancel_meta.clone(),
                 })?,
             })
             .await

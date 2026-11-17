@@ -14,8 +14,9 @@ use serde::Serialize;
 use tokio::sync::mpsc;
 
 use crate::drivers::acp::{
-    elicitation_reply, fs_error, permission_reply, AcpConn, ClientReply, ClientRequest, SpawnConfig,
+    elicitation_reply, fs_error, permission_reply, ClientReply, ClientRequest, SpawnConfig,
 };
+use crate::drivers::AgentConn;
 use crate::events::{
     now_millis, AgentCapsPayload, Event, EventKind, PermissionOption as AppPermissionOption,
     RunEventsPayload, RunTiming,
@@ -249,7 +250,7 @@ pub struct ProcessEventPayload {
 }
 
 struct RunState {
-    conn: Arc<AcpConn>,
+    conn: Arc<AgentConn>,
     session_id: String,
     /// Terminal ownership token for this live connection.
     owner_token: String,
@@ -261,7 +262,7 @@ struct RunState {
 /// still runs on first use, but the slow CLI startup + initialize are paid
 /// while the user is reading the empty state instead of on the first send.
 struct WarmConn {
-    conn: Arc<AcpConn>,
+    conn: Arc<AgentConn>,
     events_rx: mpsc::UnboundedReceiver<EventKind>,
     client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>,
     init: crate::protocol::types::InitializeResult,
@@ -392,7 +393,23 @@ fn merged_env(
             env.insert(variable.to_string(), home.to_string());
         }
     }
+    if is_muse(spec) {
+        env.entry("MUSE_NO_AUTO_UPDATE".to_string())
+            .or_insert_with(|| "1".to_string());
+    }
     Ok(env)
+}
+
+fn provider_haystack(spec: &crate::config::InstanceSpec) -> String {
+    format!("{} {}", spec.id, spec.command).to_ascii_lowercase()
+}
+
+fn is_grok(spec: &crate::config::InstanceSpec) -> bool {
+    provider_haystack(spec).contains("grok")
+}
+
+fn is_muse(spec: &crate::config::InstanceSpec) -> bool {
+    provider_haystack(spec).contains("muse")
 }
 
 /// Env variable a provider reads for its config directory.
@@ -448,7 +465,7 @@ fn prepare_shadow_home(spec: &crate::config::InstanceSpec) {
 /// A Claude agent started from inside another Claude session refuses to run;
 /// these variables come from Pult's environment, not from the user's config.
 fn nested_session_env(spec: &crate::config::InstanceSpec) -> Vec<String> {
-    let haystack = format!("{} {}", spec.id, spec.command).to_ascii_lowercase();
+    let haystack = provider_haystack(spec);
     if haystack.contains("claude") {
         [
             "CLAUDECODE",
@@ -458,6 +475,9 @@ fn nested_session_env(spec: &crate::config::InstanceSpec) -> Vec<String> {
         .into_iter()
         .map(str::to_string)
         .collect()
+    } else if haystack.contains("muse") {
+        // A Muse key in Pult's own shell must not override the instance secret.
+        vec!["META_API_KEY".to_string()]
     } else {
         Vec::new()
     }
@@ -628,7 +648,7 @@ impl AgentRuntime {
         instance_id: &str,
         workspace: Option<&str>,
     ) -> Result<(), crate::PultError> {
-        let spawn_config = self.spawn_config_for(instance_id)?;
+        let mut spawn_config = self.spawn_config_for(instance_id)?;
         let root =
             match workspace.map(str::trim).filter(|value| !value.is_empty()) {
                 Some(path) => {
@@ -645,6 +665,7 @@ impl AgentRuntime {
                 }
                 None => self.workspace_root()?,
             };
+        spawn_config.cwd = Some(root.clone());
         let spawn_sig = crate::runtime::pool::SpawnSig {
             command: spawn_config.command.clone(),
             args: spawn_config.args.clone(),
@@ -675,7 +696,7 @@ impl AgentRuntime {
             runtime: Arc::clone(self),
             instance_id: instance_id.to_string(),
         };
-        let (conn, streams) = AcpConn::spawn(&spawn_config)
+        let (conn, streams) = AgentConn::spawn(&spawn_config)
             .map_err(|e| crate::PultError::internal(format!("warmup spawn: {e}")))?;
         let pid = conn.pid();
         let conn = Arc::new(conn);
@@ -986,12 +1007,23 @@ impl AgentRuntime {
                 config.env.extend(env);
                 Ok(config)
             }
-            "acp" => Ok(SpawnConfig {
-                command: spec.command.clone(),
-                args: spec.args.clone(),
-                env,
-                env_remove: nested_session_env(&spec),
-            }),
+            "acp" | "pi_rpc" => {
+                let grok = spec.driver == "acp" && is_grok(&spec);
+                Ok(SpawnConfig {
+                    command: spec.command.clone(),
+                    args: spec.args.clone(),
+                    env,
+                    env_remove: nested_session_env(&spec),
+                    initialize_timeout: if grok {
+                        std::time::Duration::from_secs(20)
+                    } else {
+                        std::time::Duration::from_secs(60)
+                    },
+                    cancel_meta: grok.then(|| serde_json::json!({ "cancelTrigger": "ctrl_c" })),
+                    driver: spec.driver.clone(),
+                    cwd: None,
+                })
+            }
             other => Err(crate::PultError::internal(format!(
                 "unknown driver {other:?} for instance {instance_id}"
             ))),
@@ -1016,17 +1048,21 @@ impl AgentRuntime {
                     "instance id must not be empty",
                 ));
             }
-            if spec.driver != "acp" && spec.driver != "mock" {
+            if spec.driver != "acp" && spec.driver != "mock" && spec.driver != "pi_rpc" {
                 return Err(crate::PultError::internal(format!(
-                    "unknown driver {:?} (acp | mock)",
+                    "unknown driver {:?} (acp | pi_rpc | mock)",
                     spec.driver
                 )));
             }
-            if spec.driver == "acp" && spec.command.trim().is_empty() {
+            if (spec.driver == "acp" || spec.driver == "pi_rpc") && spec.command.trim().is_empty() {
                 return Err(crate::PultError::internal(format!(
                     "instance {:?} needs a command",
                     spec.id
                 )));
+            }
+            if spec.driver == "pi_rpc" {
+                crate::drivers::pi_rpc::validate_launch_args(&spec.args)
+                    .map_err(crate::PultError::internal)?;
             }
             // Secret values move to the vault before config.toml is written;
             // only names stay in the file.
@@ -1619,10 +1655,11 @@ impl AgentRuntime {
                 "thread is being deleted",
             ));
         }
-        let spawn_config = self.spawn_config_for(instance_id)?;
+        let mut spawn_config = self.spawn_config_for(instance_id)?;
         // Resolve the folder before creating the run so a missing workspace is
         // an immediate typed error, not a failed run record.
         let root = self.workspace_root_for(thread)?;
+        spawn_config.cwd = Some(root.clone());
 
         let desired = match config_override {
             Some(config) => config,
@@ -2274,6 +2311,10 @@ fn mock_spawn_config() -> Option<SpawnConfig> {
         args: vec![script.to_string_lossy().into_owned()],
         env,
         env_remove: Vec::new(),
+        initialize_timeout: std::time::Duration::from_secs(60),
+        cancel_meta: None,
+        driver: "mock".to_string(),
+        cwd: None,
     })
 }
 
@@ -2436,7 +2477,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             .load(std::sync::atomic::Ordering::Relaxed),
     );
 
-    let conn: Arc<AcpConn>;
+    let conn: Arc<AgentConn>;
     let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
     let mut client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>;
     let session_id: String;
@@ -2504,7 +2545,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             // The receivers come back separately: the run loop owns them exclusively,
             // while the connection itself is shared through an Arc.
             let spawn_started = std::time::Instant::now();
-            let (conn_raw, streams) = match AcpConn::spawn(&spawn_config) {
+            let (conn_raw, streams) = match AgentConn::spawn(&spawn_config) {
                 Ok(parts) => parts,
                 Err(err) => {
                     let msg = err.to_string();
@@ -2513,7 +2554,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     return Ok(());
                 }
             };
-            let crate::drivers::acp::AcpStreams {
+            let crate::drivers::AgentStreams {
                 events_rx: spawned_events,
                 client_requests_rx: spawned_requests,
             } = streams;
@@ -3234,7 +3275,7 @@ impl AgentRuntime {
     /// provider to Needs sign-in and gets the typed `auth_required` code.
     async fn open_session(
         &self,
-        conn: &AcpConn,
+        conn: &AgentConn,
         cwd: &str,
         instance_id: &str,
         methods: &[crate::protocol::types::AuthMethod],
@@ -3281,8 +3322,9 @@ impl AgentRuntime {
                 "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
-        let spawn_config = self.spawn_config_for(instance_id)?;
-        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
+        let mut spawn_config = self.spawn_config_for(instance_id)?;
+        spawn_config.cwd = Some(std::env::temp_dir());
+        let (conn, _streams) = crate::drivers::AgentConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
         if let Some(pid) = conn.pid() {
@@ -3411,8 +3453,9 @@ impl AgentRuntime {
             }
         }
 
-        let spawn_config = self.spawn_config_for(instance_id)?;
-        let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
+        let mut spawn_config = self.spawn_config_for(instance_id)?;
+        spawn_config.cwd = Some(std::env::temp_dir());
+        let (conn, _streams) = crate::drivers::AgentConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
         if let Some(pid) = conn.pid() {
@@ -3526,7 +3569,7 @@ pub(crate) struct ResolvedSession {
 
 #[allow(clippy::too_many_arguments)]
 async fn resolve_session(
-    conn: &AcpConn,
+    conn: &AgentConn,
     runtime: &AgentRuntime,
     thread_id: &str,
     instance_id: &str,
@@ -3565,8 +3608,21 @@ async fn resolve_session(
     let mcp_generation = runtime
         .mcp_generation
         .load(std::sync::atomic::Ordering::Relaxed);
-    let (mcp_servers, mcp_token) =
-        runtime.mcp_servers_for(thread_id, instance_id, owner_token, http_mcp);
+    let (mcp_servers, mcp_token) = {
+        // Pi's native RPC has no MCP transport yet; injecting orchestrator
+        // instructions would promise tools the driver cannot call.
+        let driver = runtime
+            .instances()
+            .into_iter()
+            .find(|instance| instance.id == instance_id)
+            .map(|instance| instance.driver)
+            .unwrap_or_default();
+        if driver == "pi_rpc" {
+            (Vec::new(), None)
+        } else {
+            runtime.mcp_servers_for(thread_id, instance_id, owner_token, http_mcp)
+        }
+    };
     // A SQLite failure is not "no previous session": surface it instead of
     // silently starting fresh.
     let session_ref = runtime.store.get_session_ref(thread_id, instance_id)?;
@@ -3769,7 +3825,7 @@ fn sync_applied_config(applied: &mut DesiredConfigMap, options: &[SessionConfigO
 #[allow(clippy::too_many_arguments)]
 async fn handle_permission_request(
     runtime: &AgentRuntime,
-    conn: &AcpConn,
+    conn: &AgentConn,
     run_id: &str,
     thread_id: &str,
     instance_id: &str,

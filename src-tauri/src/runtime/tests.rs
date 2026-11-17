@@ -3517,6 +3517,48 @@ fn provider_home_paths_map_to_the_provider_env_var() {
 }
 
 #[test]
+fn grok_and_muse_spawn_overrides() {
+    let (runtime, _sink) = mock_runtime();
+    let mut grok = crate::config::mock_spec();
+    grok.id = "grok".to_string();
+    grok.driver = "acp".to_string();
+    grok.command = "grok".to_string();
+    grok.args = vec!["agent".to_string(), "stdio".to_string()];
+    let mut muse = crate::config::mock_spec();
+    muse.id = "muse".to_string();
+    muse.driver = "acp".to_string();
+    muse.command = "muse".to_string();
+    muse.args = vec!["acp".to_string()];
+    muse.env
+        .insert("META_API_KEY".to_string(), "vault-key".to_string());
+    runtime.set_instances_in_memory(vec![grok, muse]);
+
+    let grok_config = runtime.spawn_config_for("grok").unwrap();
+    assert_eq!(
+        grok_config.initialize_timeout,
+        std::time::Duration::from_secs(20)
+    );
+    assert_eq!(
+        grok_config.cancel_meta,
+        Some(serde_json::json!({ "cancelTrigger": "ctrl_c" }))
+    );
+
+    let muse_config = runtime.spawn_config_for("muse").unwrap();
+    assert_eq!(
+        muse_config
+            .env
+            .get("MUSE_NO_AUTO_UPDATE")
+            .map(String::as_str),
+        Some("1")
+    );
+    assert_eq!(
+        muse_config.env.get("META_API_KEY").map(String::as_str),
+        Some("vault-key")
+    );
+    assert_eq!(muse_config.env_remove, vec!["META_API_KEY".to_string()]);
+}
+
+#[test]
 fn shadow_home_is_created_and_shares_auth_json() {
     let base = std::env::temp_dir().join(format!(
         "pult-shadow-{}-{}",

@@ -334,6 +334,8 @@ pub struct PromptParams {
 #[serde(rename_all = "camelCase")]
 pub struct CancelParams {
     pub session_id: String,
+    #[serde(rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
 }
 
 /// `session/set_mode` request params.

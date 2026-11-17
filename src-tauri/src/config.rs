@@ -227,6 +227,20 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
             ]),
             "ACP-native coding agent.",
         ),
+        (
+            "muse",
+            "muse",
+            "Muse Code",
+            Some(vec!["muse".to_string(), "acp".to_string()]),
+            "Muse Code speaks ACP (`muse acp`, >= 1.4.16).",
+        ),
+        (
+            "pi",
+            "pi",
+            "Pi",
+            Some(vec!["pi".to_string()]),
+            "Pi uses its native RPC mode; Pult controls `--mode rpc`.",
+        ),
     ];
     let mut found = Vec::new();
     for (binary, id, display, suggested, notes) in candidates {
@@ -429,6 +443,8 @@ mod tests {
                     | "dsh"
                     | "antigravity"
                     | "grok"
+                    | "muse"
+                    | "pi"
             ));
             assert!(
                 agent.suggested_command.is_some(),

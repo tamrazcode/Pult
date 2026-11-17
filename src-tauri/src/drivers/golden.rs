@@ -34,12 +34,63 @@ fn spawn_config(extra: &[(&str, &str)]) -> SpawnConfig {
         args: vec![fixture_path().to_string_lossy().into_owned()],
         env,
         env_remove: Vec::new(),
+        initialize_timeout: Duration::from_secs(60),
+        cancel_meta: None,
+        driver: "acp".to_string(),
+        cwd: None,
     }
 }
 
 fn spawn_mock(extra: &[(&str, &str)]) -> (Arc<AcpConn>, AcpStreams) {
     let (conn, streams) = AcpConn::spawn(&spawn_config(extra)).expect("spawn mock agent");
     (Arc::new(conn), streams)
+}
+
+#[tokio::test]
+async fn grok_initialize_times_out_at_configured_limit() {
+    if !mock_available() {
+        return;
+    }
+    let mut config = spawn_config(&[("MOCK_INIT_DELAY_MS", "500")]);
+    config.initialize_timeout = Duration::from_millis(100);
+    let (conn, _streams) = AcpConn::spawn(&config).expect("spawn mock agent");
+    let err = conn
+        .initialize()
+        .await
+        .expect_err("initialize must time out");
+    assert!(
+        matches!(err, DriverError::Timeout { ref method } if method == "initialize"),
+        "expected an initialize timeout, got {err:?}"
+    );
+    conn.kill();
+}
+
+#[tokio::test]
+async fn cancel_carries_provider_meta() {
+    if !mock_available() {
+        return;
+    }
+    let log = sandbox_dir("cancel-meta").join("cancel.log");
+    let log_path = log.to_string_lossy().into_owned();
+    let mut config = spawn_config(&[("MOCK_CANCEL_LOG", log_path.as_str())]);
+    config.cancel_meta = Some(serde_json::json!({ "cancelTrigger": "ctrl_c" }));
+    let (conn, _streams) = AcpConn::spawn(&config).expect("spawn mock agent");
+    conn.cancel("session-1").await.expect("cancel");
+
+    let mut raw = String::new();
+    for _ in 0..100 {
+        if let Ok(text) = std::fs::read_to_string(&log) {
+            if !text.trim().is_empty() {
+                raw = text;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let line = raw.lines().next().expect("cancel log line");
+    let value: serde_json::Value = serde_json::from_str(line).expect("cancel json");
+    assert_eq!(value["_meta"]["cancelTrigger"], "ctrl_c");
+    conn.kill();
 }
 
 fn sandbox_dir(tag: &str) -> PathBuf {

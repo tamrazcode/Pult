@@ -17,6 +17,8 @@ export interface ProviderCatalogEntry {
   installPackage?: string;
   /** Optional env var for API-key auth instead of a subscription login. */
   apiKeyEnv?: string;
+  /** Backend driver id; defaults to `acp`. */
+  driver?: string;
 }
 
 export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
@@ -88,15 +90,17 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     command: "muse",
     args: ["acp"],
     experimental: true,
+    apiKeyEnv: "META_API_KEY",
   },
   {
     id: "pi",
     displayName: "Pi",
-    description: "Pi uses its own RPC protocol; the ACP adapter is not implemented yet.",
+    description: "Pi native RPC (chat + tools). Experimental.",
     brand: "pi",
     detectedId: "pi",
     command: "pi",
-    args: ["--mode", "rpc"],
-    adapterRequired: true,
+    args: [],
+    experimental: true,
+    driver: "pi_rpc",
   },
 ];

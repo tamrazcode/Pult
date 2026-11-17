@@ -180,7 +180,7 @@ export function AddProviderDialog({
       next.push({
         id: id.trim(),
         displayName: label.trim(),
-        driver: "acp",
+        driver: entry.driver ?? "acp",
         command: command.trim(),
         args: args
           .split(/[\n,]/)

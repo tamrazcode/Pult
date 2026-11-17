@@ -27,15 +27,21 @@ export async function addDetectedAgent(agent: DetectedAgent): Promise<void> {
       command: i.command,
       args: i.args,
       env: i.env,
+      secretEnvKeys: (i.secretEnv ?? []).map((secret) => secret.key),
+      homePath: i.homePath ?? null,
+      shadowHomePath: i.shadowHomePath ?? null,
       enabled: i.enabled,
     }));
   next.push({
     id: agent.suggestedInstanceId,
     displayName: agent.displayName,
-    driver: "acp",
+    driver: agent.id === "pi" ? "pi_rpc" : "acp",
     command: command[0],
     args: command.slice(1),
     env: {},
+    secretEnvKeys: [],
+    homePath: null,
+    shadowHomePath: null,
     enabled: true,
   });
   await providersInstancesSave(next);
