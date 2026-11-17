@@ -2210,7 +2210,7 @@ pub async fn mcp_import_json(
     let runtime = runtime.inner().clone();
     let outcomes = crate::mcp::import_export::import_json(runtime.store(), &json).await?;
     if outcomes.iter().any(|outcome| outcome.status == "imported") {
-        runtime.pool.invalidate_all();
+        runtime.bump_mcp_generation();
     }
     Ok(outcomes)
 }

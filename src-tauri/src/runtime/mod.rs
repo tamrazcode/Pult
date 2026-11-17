@@ -418,11 +418,17 @@ impl AgentRuntime {
     /// edit. Warm sessions are invalidated because their `session/new` already
     /// carried the old server list.
     pub async fn custom_mcp_changed(&self, server_id: &str) {
-        self.mcp_generation
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.bump_mcp_generation();
         if let Some(gateway) = self.gateway.get() {
             gateway.close_server(server_id).await;
         }
+    }
+
+    /// Generation-only invalidation for bulk changes (JSON import) that touch
+    /// several servers at once.
+    pub fn bump_mcp_generation(&self) {
+        self.mcp_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.pool.invalidate_all();
     }
 

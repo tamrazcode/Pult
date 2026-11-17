@@ -929,4 +929,5 @@ export const es: Record<string, string> = {
   "settings.diagnostics.processesEmpty": "No child processes right now.",
   "settings.diagnostics.processesKill": "Kill",
   "settings.diagnostics.processesConfirm": "Kill process {{pid}} and its children?",
+  "settings.mcp.testsSaved": "Tests the saved configuration; save edits first.",
 };

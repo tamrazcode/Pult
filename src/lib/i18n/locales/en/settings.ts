@@ -282,6 +282,7 @@ export const settings = {
   "settings.mcp.tools": "Tools",
   "settings.mcp.latency": "Latency",
   "settings.mcp.confirmDelete": "Delete MCP server “{{name}}”?",
+  "settings.mcp.testsSaved": "Tests the saved configuration; save edits first.",
   "settings.mcp.active": "{{count}} MCP",
   "settings.diagnostics.mcpTitle": "MCP servers",
   "settings.diagnostics.mcpSubtitle":

@@ -552,6 +552,7 @@ export function McpServerModal({
                   </span>
                 )}
               </div>
+              <p className="mt-1 text-xs text-text-tertiary">{t("settings.mcp.testsSaved")}</p>
             </div>
           )}
         </div>

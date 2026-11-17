@@ -942,4 +942,5 @@ export const ru: Record<string, string> = {
   "settings.diagnostics.processesEmpty": "Дочерних процессов сейчас нет.",
   "settings.diagnostics.processesKill": "Завершить",
   "settings.diagnostics.processesConfirm": "Завершить процесс {{pid}} и его дочерние процессы?",
+  "settings.mcp.testsSaved": "Проверяется сохранённая конфигурация; сначала сохраните изменения.",
 };
