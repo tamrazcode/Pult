@@ -444,12 +444,33 @@ async fn steering_a_running_child_queues_without_cancelling_its_turn() {
 async fn hidden_wake_persists_no_user_bubble() {
     let _env = env_lock();
     let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_ECHO_PROMPT", "1")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-visible-echo"))
+        .unwrap();
+    let visible_thread = runtime.store().get_thread("th-visible-echo").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let visible = runtime
+        .dispatch(&visible_thread, "visible prompt", &[], "mock")
+        .unwrap();
+    wait_for(Duration::from_secs(10), || {
+        runtime.active_run_for(&visible_thread.id).is_none()
+    })
+    .await;
+    let visible_events = runtime.store().load_events(&visible.id).unwrap();
+    assert!(
+        visible_events
+            .iter()
+            .any(|event| matches!(event.kind, crate::events::EventKind::UserMessage { .. })),
+        "the fixture must echo the prompt for a normal run"
+    );
+
     runtime
         .store()
         .create_thread(&thread_record("th-hidden-wake"))
         .unwrap();
     let thread = runtime.store().get_thread("th-hidden-wake").unwrap();
-    let _pump = spawn_permission_pump(&runtime, &sink);
     let run = runtime
         .dispatch_hidden(&thread, "Subagent finished: ok", &[], "mock")
         .unwrap();

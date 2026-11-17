@@ -296,6 +296,9 @@ struct Inner {
     deleting_threads: std::collections::HashSet<String>,
     /// Runs whose Stop was pressed (grace timer or force kill in flight).
     cancelling_runs: std::collections::HashSet<String>,
+    /// Hidden wake/continuation runs: the agent may echo the prompt as a
+    /// user_message_chunk; that echo must never become a visible bubble.
+    hidden_runs: std::collections::HashSet<String>,
     /// instance_id в†’ capabilities observed at the last handshake.
     capabilities: HashMap<String, CachedCaps>,
     /// thread_id в†’ permission mode override (settings default otherwise).
@@ -597,6 +600,7 @@ impl AgentRuntime {
                 threads_working: HashMap::new(),
                 deleting_threads: std::collections::HashSet::new(),
                 cancelling_runs: std::collections::HashSet::new(),
+                hidden_runs: std::collections::HashSet::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
                 terminals,
@@ -1770,6 +1774,9 @@ impl AgentRuntime {
             inner
                 .threads_working
                 .insert(thread.id.clone(), run.id.clone());
+            if hidden {
+                inner.hidden_runs.insert(run.id.clone());
+            }
         }
         if let Some(queue_id) = claim_queue_id {
             if let Err(err) = self
@@ -2458,6 +2465,18 @@ fn apply_session_event(
     prompt_started: std::time::Instant,
     kind: EventKind,
 ) -> Result<(), String> {
+    // Hidden wake prompts are not transcript rows. Agents commonly echo the
+    // prompt back as user_message_chunk; drop that echo at the source.
+    if matches!(&kind, EventKind::UserMessage { .. })
+        && runtime
+            .inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .hidden_runs
+            .contains(run_id)
+    {
+        return Ok(());
+    }
     if timing.first_delta_ms.is_none()
         && matches!(
             &kind,
@@ -3245,6 +3264,7 @@ impl AgentRuntime {
             guard.answer_queues.remove(run_id);
             guard.threads_working.remove(thread_id);
             guard.cancelling_runs.remove(run_id);
+            guard.hidden_runs.remove(run_id);
             guard.deleting_threads.contains(thread_id)
         };
         // The run is over either way; a refused delete leaves a usable thread,
