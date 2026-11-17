@@ -2313,6 +2313,7 @@ mod update_tests {
             command: command.into(),
             args: Vec::new(),
             env: Default::default(),
+            secret_env_keys: Vec::new(),
             enabled: true,
         }
     }

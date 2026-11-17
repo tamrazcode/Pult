@@ -84,6 +84,8 @@ pub struct InstanceInfo {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Secret env names with `hasValue` + mask; raw values never cross IPC.
+    pub secret_env: Vec<SecretEnvMeta>,
     pub status: String,
     /// From the last initialize this instance answered: images in prompts.
     pub prompt_image: bool,
@@ -97,6 +99,15 @@ pub struct InstanceInfo {
     pub auth_methods: Vec<crate::protocol::types::AuthMethod>,
     /// A hint explaining why the agent still needs sign-in.
     pub auth_hint: Option<String>,
+}
+
+/// Masked secret env entry shown in Settings.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretEnvMeta {
+    pub key: String,
+    pub has_value: bool,
+    pub masked: Option<String>,
 }
 
 /// Capabilities observed during a run's handshake, cached per instance so the
@@ -330,9 +341,43 @@ pub(crate) fn clean_verbatim(path: PathBuf) -> PathBuf {
     PathBuf::from(s.replace(r"\\?\", ""))
 }
 
+pub(crate) fn provider_secret_key(instance_id: &str, key: &str) -> String {
+    format!("provider:{instance_id}:{key}")
+}
+
+/// Merges plain and vault-backed env. Missing secrets fail before spawning so
+/// the UI can point at the exact variable instead of an opaque auth error.
+fn merged_env(
+    store: &crate::store::Store,
+    spec: &crate::config::InstanceSpec,
+) -> Result<HashMap<String, String>, crate::PultError> {
+    let mut env: HashMap<String, String> = spec
+        .env
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    for key in &spec.secret_env_keys {
+        let value = store
+            .get_secret(&provider_secret_key(&spec.id, key))
+            .map_err(|error| {
+                crate::PultError::with_code(
+                    "provider.secret_missing",
+                    format!("secret {key} for {} could not be read: {error}", spec.id),
+                )
+            })?
+            .ok_or_else(|| {
+                crate::PultError::with_code(
+                    "provider.secret_missing",
+                    format!("set secret {key} for {} in Settings → Providers", spec.id),
+                )
+            })?;
+        env.insert(key.clone(), value);
+    }
+    Ok(env)
+}
+
 /// Binary agents run for the stdio MCP bridge (`pult mcp-stdio`).
-fn mcp_stdio_binary() -> String {
-    std::env::var("PULT_MCP_STDIO_BIN")
+fn mcp_stdio_binary() -> String {    std::env::var("PULT_MCP_STDIO_BIN")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| {
@@ -719,6 +764,25 @@ impl AgentRuntime {
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone()))
                         .collect(),
+                    secret_env: spec
+                        .secret_env_keys
+                        .iter()
+                        .map(|key| {
+                            let full = provider_secret_key(&spec.id, key);
+                            match self.store.get_secret(&full) {
+                                Ok(Some(value)) => SecretEnvMeta {
+                                    key: key.clone(),
+                                    has_value: true,
+                                    masked: Some(crate::mcp::secrets::mask_secret(&value)),
+                                },
+                                _ => SecretEnvMeta {
+                                    key: key.clone(),
+                                    has_value: false,
+                                    masked: None,
+                                },
+                            }
+                        })
+                        .collect(),
                     status: if caps.auth_required {
                         "needs_auth".to_string()
                     } else {
@@ -762,6 +826,7 @@ impl AgentRuntime {
                 "provider {instance_id} is disabled вЂ” turn it on in Settings в–ё Providers"
             )));
         }
+        let env = merged_env(&self.store, &spec)?;
         match spec.driver.as_str() {
             "mock" => {
                 let mut config = mock_spawn_config().ok_or_else(|| {
@@ -771,21 +836,13 @@ impl AgentRuntime {
                 })?;
                 // Per-instance env wins: lets tests (and users) scope mock
                 // scenarios without touching the process environment.
-                config.env.extend(
-                    spec.env
-                        .iter()
-                        .map(|(key, value)| (key.clone(), value.clone())),
-                );
+                config.env.extend(env);
                 Ok(config)
             }
             "acp" => Ok(SpawnConfig {
                 command: spec.command.clone(),
                 args: spec.args.clone(),
-                env: spec
-                    .env
-                    .iter()
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
+                env,
             }),
             other => Err(crate::PultError::internal(format!(
                 "unknown driver {other:?} for instance {instance_id}"
@@ -799,7 +856,12 @@ impl AgentRuntime {
         &self,
         specs: Vec<crate::config::InstanceSpec>,
     ) -> Result<(), crate::PultError> {
-        for spec in &specs {
+        let previous = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.instances.clone()
+        };
+        let mut cleaned = Vec::with_capacity(specs.len());
+        for mut spec in specs {
             if spec.id.trim().is_empty() {
                 return Err(crate::PultError::with_code(
                     "provider.invalid_id",
@@ -818,19 +880,58 @@ impl AgentRuntime {
                     spec.id
                 )));
             }
+            // Secret values move to the vault before config.toml is written;
+            // only names stay in the file.
+            let mut keys = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for raw in std::mem::take(&mut spec.secret_env_keys) {
+                let key = raw.trim().to_string();
+                if key.is_empty() {
+                    continue;
+                }
+                if key.chars().any(|c| c.is_control() || c == '=') {
+                    return Err(crate::PultError::with_code(
+                        "provider.invalid_secret_key",
+                        format!("invalid secret env name {key:?}"),
+                    ));
+                }
+                if !seen.insert(key.clone()) {
+                    continue;
+                }
+                if let Some(value) = spec.env.remove(&key) {
+                    if !value.is_empty() {
+                        self.store
+                            .set_secret(&provider_secret_key(&spec.id, &key), &value)?;
+                    }
+                }
+                keys.push(key);
+            }
+            spec.secret_env_keys = keys;
+            if let Some(old) = previous.iter().find(|old| old.id == spec.id) {
+                for key in &old.secret_env_keys {
+                    if !spec.secret_env_keys.contains(key) {
+                        let _ = self.store.delete_secret(&provider_secret_key(&spec.id, key));
+                    }
+                }
+            }
+            cleaned.push(spec);
         }
-        crate::config::save_instances(&crate::pult_home(), &specs)?;
+        for old in &previous {
+            if !cleaned.iter().any(|spec| spec.id == old.id) {
+                let _ = self
+                    .store
+                    .delete_secrets_with_prefix(&format!("provider:{}:", old.id));
+            }
+        }
+        crate::config::save_instances(&crate::pult_home(), &cleaned)?;
         // Warm processes are stale for every removed or saved instance.
-        let old_ids: Vec<String> = {
-            let inner = self.inner.lock().expect("runtime lock poisoned");
-            inner.instances.iter().map(|spec| spec.id.clone()).collect()
-        };
-        for id in old_ids.iter().chain(specs.iter().map(|spec| &spec.id)) {
+        let old_ids: Vec<String> = previous.iter().map(|spec| spec.id.clone()).collect();
+        for id in old_ids.iter().chain(cleaned.iter().map(|spec| &spec.id)) {
             self.pool.invalidate_instance(id);
         }
         {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
-            inner.instances = specs;
+            inner.instances = cleaned;
             // A successful save replaces the broken file we complained about.
             inner.config_error = None;
         }

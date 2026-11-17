@@ -52,28 +52,27 @@ function fromRuntime(draft: DraftRuntime): { command: string; args: string[] } {
 
 /** The full spec list, rebuilt from projections + one edited field. */
 function specList(infos: InstanceInfo[], id: string, patch: Partial<InstanceSpec>): InstanceSpec[] {
-  return infos.map((i) =>
-    i.id === id
-      ? {
-          id: i.id,
-          displayName: i.displayName,
-          driver: i.driver,
-          command: i.command,
-          args: i.args,
-          env: i.env,
-          enabled: i.enabled,
-          ...patch,
-        }
-      : {
-          id: i.id,
-          displayName: i.displayName,
-          driver: i.driver,
-          command: i.command,
-          args: i.args,
-          env: i.env,
-          enabled: i.enabled,
-        },
-  );
+  return infos.map((i) => {
+    const spec: InstanceSpec = {
+      id: i.id,
+      displayName: i.displayName,
+      driver: i.driver,
+      command: i.command,
+      args: i.args,
+      env: i.env,
+      secretEnvKeys: (i.secretEnv ?? []).map((secret) => secret.key),
+      enabled: i.enabled,
+    };
+    return i.id === id ? { ...spec, ...patch } : spec;
+  });
+}
+
+interface EnvRow {
+  key: string;
+  value: string;
+  secret: boolean;
+  hasValue?: boolean;
+  masked?: string | null;
 }
 
 function relativeTime(at: number): string {
@@ -180,7 +179,7 @@ function ProvidersSettings() {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
-  const [envDraft, setEnvDraft] = useState<Array<{ key: string; value: string }>>([]);
+  const [envDraft, setEnvDraft] = useState<EnvRow[]>([]);
   const favoriteModels = useSettingsStore((s) => s.favoriteModels);
   const disabledModels = useSettingsStore((s) => s.disabledModels);
   const modelOrder = useSettingsStore((s) => s.modelOrder);
@@ -258,18 +257,43 @@ function ProvidersSettings() {
   }, [selectedId]);
   useEffect(() => {
     setEnvDraft(
-      selected ? Object.entries(selected.env).map(([key, value]) => ({ key, value })) : [],
+      selected
+        ? [
+            ...Object.entries(selected.env).map(([key, value]) => ({
+              key,
+              value,
+              secret: false,
+            })),
+            ...(selected.secretEnv ?? []).map((secret) => ({
+              key: secret.key,
+              value: "",
+              secret: true,
+              hasValue: secret.hasValue,
+              masked: secret.masked,
+            })),
+          ]
+        : [],
     );
-    setApiKeyDraft(selected?.env?.ANTHROPIC_API_KEY ?? "");
-  }, [selectedId, selected?.env]);
+    setApiKeyDraft("");
+  }, [selectedId, selected?.env, selected?.secretEnv]);
 
   const saveEnv = () => {
     if (!selected) return;
-    const env = Object.fromEntries(
-      envDraft.map((row) => [row.key.trim(), row.value] as const).filter(([key]) => key.length > 0),
-    );
+    const env: Record<string, string> = {};
+    const secretEnvKeys: string[] = [];
+    for (const row of envDraft) {
+      const key = row.key.trim();
+      if (!key) continue;
+      if (row.secret) {
+        secretEnvKeys.push(key);
+        // Empty means "keep the stored value"; only a typed value is sent.
+        if (row.value) env[key] = row.value;
+      } else {
+        env[key] = row.value;
+      }
+    }
     setSaveError(null);
-    void saveSpecs(specList(instances, selected.id, { env })).catch((err) =>
+    void saveSpecs(specList(instances, selected.id, { env, secretEnvKeys })).catch((err) =>
       setSaveError(localizeIpcError(err)),
     );
   };
@@ -290,6 +314,12 @@ function ProvidersSettings() {
       await saveSpecs(
         specList(instances, selected.id, {
           env: { ...selected.env, ANTHROPIC_API_KEY: key },
+          secretEnvKeys: Array.from(
+            new Set([
+              ...(selected.secretEnv ?? []).map((secret) => secret.key),
+              "ANTHROPIC_API_KEY",
+            ]),
+          ),
         }),
       );
       await check(selected.id);
@@ -647,7 +677,10 @@ function ProvidersSettings() {
                       type="password"
                       value={apiKeyDraft}
                       onChange={(event) => setApiKeyDraft(event.target.value)}
-                      placeholder="ANTHROPIC_API_KEY"
+                      placeholder={
+                        selected?.secretEnv?.find((secret) => secret.key === "ANTHROPIC_API_KEY")
+                          ?.masked ?? "ANTHROPIC_API_KEY"
+                      }
                       className="h-8 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
                     />
                     <button
@@ -765,7 +798,9 @@ function ProvidersSettings() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setEnvDraft((rows) => [...rows, { key: "", value: "" }])}
+                  onClick={() =>
+                    setEnvDraft((rows) => [...rows, { key: "", value: "", secret: false }])
+                  }
                   className="flex h-7 shrink-0 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover"
                 >
                   <Plus size={12} /> Add variable
@@ -788,6 +823,7 @@ function ProvidersSettings() {
                     />
                     <input
                       value={row.value}
+                      type={row.secret ? "password" : "text"}
                       onChange={(e) =>
                         setEnvDraft((rows) =>
                           rows.map((candidate, i) =>
@@ -795,9 +831,23 @@ function ProvidersSettings() {
                           ),
                         )
                       }
-                      placeholder="value"
+                      placeholder={row.hasValue ? (row.masked ?? "••••") : "value"}
                       className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-xs text-text-primary focus:outline-none"
                     />
+                    <label className="flex shrink-0 items-center gap-1 text-xs text-text-tertiary">
+                      <input
+                        type="checkbox"
+                        checked={row.secret}
+                        onChange={(e) =>
+                          setEnvDraft((rows) =>
+                            rows.map((candidate, i) =>
+                              i === index ? { ...candidate, secret: e.target.checked } : candidate,
+                            ),
+                          )
+                        }
+                      />
+                      Secret
+                    </label>
                     <button
                       type="button"
                       aria-label="Remove variable"

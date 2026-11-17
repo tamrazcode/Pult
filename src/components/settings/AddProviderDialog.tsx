@@ -168,6 +168,7 @@ export function AddProviderDialog({
           command: instance.command,
           args: instance.args,
           env: instance.env,
+          secretEnvKeys: (instance.secretEnv ?? []).map((secret) => secret.key),
           enabled: instance.enabled,
         }));
       next.push({
@@ -180,6 +181,7 @@ export function AddProviderDialog({
           .map((value) => value.trim())
           .filter(Boolean),
         env: entry.apiKeyEnv && apiKey.trim() ? { [entry.apiKeyEnv]: apiKey.trim() } : {},
+        secretEnvKeys: entry.apiKeyEnv && apiKey.trim() ? [entry.apiKeyEnv] : [],
         enabled: true,
       });
       await providersInstancesSave(next);
@@ -194,6 +196,7 @@ export function AddProviderDialog({
             command: instance.command,
             args: instance.args,
             env: instance.env,
+            secretEnvKeys: (instance.secretEnv ?? []).map((secret) => secret.key),
             enabled: instance.enabled,
           })),
         );
@@ -432,7 +435,8 @@ export function AddProviderDialog({
                   </span>
                   <span className="mt-0.5 block text-xs text-text-tertiary">
                     Use an API key when the account has no Claude Code plan. Saved as{" "}
-                    <span className="font-mono">{entry.apiKeyEnv}</span> in the local config.
+                    <span className="font-mono">{entry.apiKeyEnv}</span> in the encrypted secret
+                    store.
                   </span>
                   <input
                     type="password"

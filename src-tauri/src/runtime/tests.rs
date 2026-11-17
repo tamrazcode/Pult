@@ -1395,6 +1395,7 @@ fn auth_runtime(env: &[(&str, &str)]) -> (Arc<AgentRuntime>, Arc<TestSink>) {
         driver: "mock".to_string(),
         command: String::new(),
         args: Vec::new(),
+        secret_env_keys: Vec::new(),
         enabled: true,
         env: env
             .iter()
@@ -3411,6 +3412,7 @@ async fn provider_switch_emits_context_reset_notice() {
             driver: "mock".to_string(),
             command: "node".to_string(),
             args: Vec::new(),
+            secret_env_keys: Vec::new(),
             env: Default::default(),
             enabled: true,
         };
@@ -3483,6 +3485,43 @@ async fn provider_switch_emits_context_reset_notice() {
     );
 
     let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn provider_secret_env_is_masked_and_merged_into_the_spawn_env() {
+    let (runtime, _sink) = mock_runtime();
+    let mut spec = crate::config::mock_spec();
+    spec.secret_env_keys = vec!["API_TOKEN".to_string()];
+    runtime
+        .store()
+        .set_secret("provider:mock:API_TOKEN", "sk-provider-1234")
+        .unwrap();
+    runtime.set_instances_in_memory(vec![spec]);
+
+    let info = runtime.instances().remove(0);
+    assert!(!info.env.contains_key("API_TOKEN"));
+    assert_eq!(info.secret_env.len(), 1);
+    assert!(info.secret_env[0].has_value);
+    assert_eq!(info.secret_env[0].masked.as_deref(), Some("••••1234"));
+
+    let config = runtime.spawn_config_for("mock").expect("spawn config");
+    assert_eq!(
+        config.env.get("API_TOKEN").map(String::as_str),
+        Some("sk-provider-1234")
+    );
+}
+
+#[tokio::test]
+async fn a_missing_provider_secret_fails_before_spawn() {
+    let (runtime, _sink) = mock_runtime();
+    let mut spec = crate::config::mock_spec();
+    spec.secret_env_keys = vec!["API_TOKEN".to_string()];
+    runtime.set_instances_in_memory(vec![spec]);
+    let error = match runtime.spawn_config_for("mock") {
+        Ok(_) => panic!("missing secret must fail"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code(), "provider.secret_missing");
 }
 
 #[tokio::test]

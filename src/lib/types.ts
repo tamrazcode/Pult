@@ -137,6 +137,8 @@ export interface InstanceInfo {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** Secret env names with hasValue + mask; raw values never cross IPC. */
+  secretEnv?: SecretEnvMeta[];
   status: "stopped" | "starting" | "running" | "crashed" | "needs_auth";
   /** From the last handshake: image content blocks accepted in prompts. */
   promptImage: boolean;
@@ -160,8 +162,16 @@ export interface InstanceSpec {
   command: string;
   args: string[];
   env: Record<string, string>;
+  /** Env names whose values live in SecretStore. */
+  secretEnvKeys?: string[];
   /** Disabled providers stay configured but never spawn (T3-style toggle). */
   enabled: boolean;
+}
+
+export interface SecretEnvMeta {
+  key: string;
+  hasValue: boolean;
+  masked?: string | null;
 }
 
 /** One advertised ACP auth method (agent-managed or terminal). */

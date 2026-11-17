@@ -25,6 +25,11 @@ pub struct InstanceSpec {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: std::collections::BTreeMap<String, String>,
+    /// Env names whose values live in SecretStore (`provider:<id>:<name>`),
+    /// never in config.toml or IPC responses.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(rename = "secretEnvKeys")]
+    pub secret_env_keys: Vec<String>,
     /// Disabled providers stay configured but never spawn (T3-style toggle).
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -47,6 +52,7 @@ pub fn mock_spec() -> InstanceSpec {
         command: "node".to_string(),
         args: Vec::new(),
         env: Default::default(),
+        secret_env_keys: Vec::new(),
         enabled: true,
     }
 }
@@ -368,6 +374,7 @@ mod tests {
                 env: [("DEBUG".to_string(), "1".to_string())]
                     .into_iter()
                     .collect(),
+                secret_env_keys: Vec::new(),
                 enabled: true,
             },
         ];
