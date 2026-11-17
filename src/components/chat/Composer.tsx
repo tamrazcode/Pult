@@ -25,6 +25,12 @@ import {
   workspaceFiles,
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
+import {
+  applyTextareaEdit,
+  handleMarkdownBackspace,
+  handleMarkdownNewline,
+  handleMarkdownSpace,
+} from "../../lib/composerMarkdown";
 import { localizeIpcError, useT } from "../../lib/i18n";
 import { useGitStore } from "../../stores/git";
 import { useProjectsStore } from "../../stores/projects";
@@ -694,6 +700,36 @@ export function Composer({ threadId }: { threadId?: string }) {
   );
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    const textarea = e.currentTarget;
+    if (!mentionOpen && !slashOpen && !awaitingDecision) {
+      if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const edit = handleMarkdownSpace(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+        );
+        if (edit) {
+          e.preventDefault();
+          applyTextareaEdit(textarea, edit, setValue);
+          requestAnimationFrame(autosize);
+          return;
+        }
+      }
+      if (e.key === "Backspace" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        const edit = handleMarkdownBackspace(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+        );
+        if (edit) {
+          e.preventDefault();
+          applyTextareaEdit(textarea, edit, setValue);
+          requestAnimationFrame(autosize);
+          return;
+        }
+      }
+    }
     if (mentionOpen) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -749,12 +785,27 @@ export function Composer({ threadId }: { threadId?: string }) {
         return;
       }
     }
-    if (e.key === "Enter" && !e.shiftKey) {
-      const shouldSend = sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey;
-      if (!shouldSend) return;
-      // Enter sends (default); Shift+Enter is always a newline.
-      e.preventDefault();
-      handlePrimary();
+    if (e.key === "Enter") {
+      const shouldSend =
+        !e.shiftKey &&
+        (sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey);
+      if (shouldSend) {
+        e.preventDefault();
+        handlePrimary();
+        return;
+      }
+      if (!mentionOpen && !slashOpen && !awaitingDecision) {
+        const edit = handleMarkdownNewline(
+          textarea.value,
+          textarea.selectionStart,
+          textarea.selectionEnd,
+        );
+        if (edit) {
+          e.preventDefault();
+          applyTextareaEdit(textarea, edit, setValue);
+          requestAnimationFrame(autosize);
+        }
+      }
     }
   };
 
