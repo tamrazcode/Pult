@@ -3517,12 +3517,35 @@ fn provider_home_paths_map_to_the_provider_env_var() {
 }
 
 #[test]
+fn claude_spawn_strips_nested_session_env() {
+    let mut claude = crate::config::mock_spec();
+    claude.id = "claude-code".to_string();
+    claude.command = "npx".to_string();
+    assert_eq!(
+        super::nested_session_env(&claude),
+        vec![
+            "CLAUDECODE".to_string(),
+            "CLAUDE_CODE_SESSION_ID".to_string(),
+            "ELECTRON_RUN_AS_NODE".to_string(),
+        ]
+    );
+
+    let mut codex = crate::config::mock_spec();
+    codex.id = "codex".to_string();
+    codex.command = "npx".to_string();
+    assert!(super::nested_session_env(&codex).is_empty());
+}
+
+#[test]
 fn startup_migration_moves_plaintext_credentials_without_touching_plain_env() {
     let store = crate::store::Store::open_in_memory().unwrap();
     let mut spec = crate::config::mock_spec();
+    spec.env.insert(
+        "ANTHROPIC_API_KEY".to_string(),
+        "sk-migrate-1234".to_string(),
+    );
     spec.env
-        .insert("ANTHROPIC_API_KEY".to_string(), "sk-migrate-1234".to_string());
-    spec.env.insert("LOG_LEVEL".to_string(), "debug".to_string());
+        .insert("LOG_LEVEL".to_string(), "debug".to_string());
     let (specs, changed) = super::move_plaintext_env(&store, vec![spec]);
     assert!(changed);
     let spec = &specs[0];
@@ -3539,7 +3562,8 @@ fn startup_migration_moves_plaintext_credentials_without_touching_plain_env() {
 }
 
 #[tokio::test]
-async fn provider_secret_env_is_masked_and_merged_into_the_spawn_env() {    let (runtime, _sink) = mock_runtime();
+async fn provider_secret_env_is_masked_and_merged_into_the_spawn_env() {
+    let (runtime, _sink) = mock_runtime();
     let mut spec = crate::config::mock_spec();
     spec.secret_env_keys = vec!["API_TOKEN".to_string()];
     runtime

@@ -33,6 +33,7 @@ fn spawn_config(extra: &[(&str, &str)]) -> SpawnConfig {
         command: "node".to_string(),
         args: vec![fixture_path().to_string_lossy().into_owned()],
         env,
+        env_remove: Vec::new(),
     }
 }
 

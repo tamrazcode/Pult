@@ -42,6 +42,9 @@ pub struct SpawnConfig {
     pub command: String,
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
+    /// Variables inherited from Pult's own process that must not leak into the
+    /// agent (a nested Claude session breaks sign-in and session ids).
+    pub env_remove: Vec<String>,
 }
 
 /// A client-side request from the agent, handed to the runtime for policy.
@@ -213,6 +216,9 @@ impl AcpConn {
         // pops a visible console window (the cascade the user saw).
         #[cfg(windows)]
         cmd.creation_flags(CREATE_NO_WINDOW);
+        for key in &config.env_remove {
+            cmd.env_remove(key);
+        }
         let mut child = cmd
             .envs(&config.env)
             .stdin(std::process::Stdio::piped())

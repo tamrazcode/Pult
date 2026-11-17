@@ -407,6 +407,24 @@ fn provider_home_env(spec: &crate::config::InstanceSpec) -> Option<&'static str>
     }
 }
 
+/// A Claude agent started from inside another Claude session refuses to run;
+/// these variables come from Pult's environment, not from the user's config.
+fn nested_session_env(spec: &crate::config::InstanceSpec) -> Vec<String> {
+    let haystack = format!("{} {}", spec.id, spec.command).to_ascii_lowercase();
+    if haystack.contains("claude") {
+        [
+            "CLAUDECODE",
+            "CLAUDE_CODE_SESSION_ID",
+            "ELECTRON_RUN_AS_NODE",
+        ]
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    } else {
+        Vec::new()
+    }
+}
+
 fn looks_secret_env(key: &str) -> bool {
     let upper = key.to_ascii_uppercase();
     upper.contains("TOKEN")
@@ -933,6 +951,7 @@ impl AgentRuntime {
                 command: spec.command.clone(),
                 args: spec.args.clone(),
                 env,
+                env_remove: nested_session_env(&spec),
             }),
             other => Err(crate::PultError::internal(format!(
                 "unknown driver {other:?} for instance {instance_id}"
@@ -2215,6 +2234,7 @@ fn mock_spawn_config() -> Option<SpawnConfig> {
         command: "node".to_string(),
         args: vec![script.to_string_lossy().into_owned()],
         env,
+        env_remove: Vec::new(),
     })
 }
 

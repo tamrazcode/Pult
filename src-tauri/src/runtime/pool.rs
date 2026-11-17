@@ -343,6 +343,7 @@ mod tests {
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
+            env_remove: Vec::new(),
         };
         let (conn, streams) = AcpConn::spawn(&config).expect("spawn mock agent");
         IdleConn {
