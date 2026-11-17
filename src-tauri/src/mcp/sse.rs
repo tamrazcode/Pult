@@ -3,19 +3,23 @@
 //! advertised endpoint. Reconnects with exponential backoff.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
 use futures::StreamExt;
 use serde_json::Value;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
+use tokio::task::AbortHandle;
 
 use super::transport::{await_reply, McpTransport, PendingRequests, SseDecoder, TransportFuture};
 
 pub struct SseConfig {
     pub url: String,
     pub headers: BTreeMap<String, String>,
+    pub pinned: Vec<SocketAddr>,
+    pub allow_localhost: bool,
     pub timeout: Duration,
     pub label: String,
 }
@@ -26,6 +30,8 @@ pub struct SseTransport {
     endpoint: Arc<AsyncMutex<Option<String>>>,
     pending: Arc<PendingRequests>,
     closed: Arc<AtomicBool>,
+    epoch: Arc<AtomicU64>,
+    task: AbortHandle,
     timeout: Duration,
 }
 
@@ -36,12 +42,23 @@ impl SseTransport {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none());
+        let client = if config.pinned.is_empty() {
+            client
+        } else {
+            let host = reqwest::Url::parse(&config.url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .ok_or_else(|| "MCP URL has no host to pin".to_string())?;
+            client.resolve_to_addrs(&host, &config.pinned)
+        };
+        let client = client
             .build()
             .map_err(|e| format!("create SSE MCP client: {e}"))?;
         let pending = Arc::new(PendingRequests::new());
         let endpoint = Arc::new(AsyncMutex::new(None));
         let closed = Arc::new(AtomicBool::new(false));
+        let epoch = Arc::new(AtomicU64::new(0));
         let (ready_tx, ready_rx) = oneshot::channel();
         let loop_client = client.clone();
         let loop_headers = config.headers.clone();
@@ -49,7 +66,9 @@ impl SseTransport {
         let loop_pending = Arc::clone(&pending);
         let loop_endpoint = Arc::clone(&endpoint);
         let loop_closed = Arc::clone(&closed);
-        tokio::spawn(async move {
+        let loop_epoch = Arc::clone(&epoch);
+        let allow_localhost = config.allow_localhost;
+        let task = tokio::spawn(async move {
             stream_loop(
                 loop_client,
                 loop_url,
@@ -57,10 +76,13 @@ impl SseTransport {
                 loop_pending,
                 loop_endpoint,
                 loop_closed,
+                loop_epoch,
+                allow_localhost,
                 Some(ready_tx),
             )
             .await;
-        });
+        })
+        .abort_handle();
         match tokio::time::timeout(config.timeout, ready_rx).await {
             Ok(Ok(Ok(()))) => {}
             Ok(Ok(Err(error))) => return Err(error),
@@ -79,6 +101,8 @@ impl SseTransport {
             endpoint,
             pending,
             closed,
+            epoch,
+            task,
             timeout: config.timeout.max(Duration::from_millis(1)),
         }))
     }
@@ -130,9 +154,14 @@ impl McpTransport for SseTransport {
     fn close(&self) -> TransportFuture<'_, ()> {
         Box::pin(async move {
             self.closed.store(true, Ordering::Relaxed);
+            self.task.abort();
             self.pending.fail_all("MCP SSE transport stopped");
             Ok(())
         })
+    }
+
+    fn session_epoch(&self) -> u64 {
+        self.epoch.load(Ordering::Relaxed)
     }
 }
 
@@ -144,6 +173,8 @@ async fn stream_loop(
     pending: Arc<PendingRequests>,
     endpoint: Arc<AsyncMutex<Option<String>>>,
     closed: Arc<AtomicBool>,
+    epoch: Arc<AtomicU64>,
+    allow_localhost: bool,
     mut ready: Option<oneshot::Sender<Result<(), String>>>,
 ) {
     let mut backoff_seconds = 1u64;
@@ -166,12 +197,27 @@ async fn stream_loop(
                     let Ok(bytes) = chunk else { break };
                     for event in decoder.push(&bytes) {
                         if event.event.as_deref() == Some("endpoint") {
-                            if let Some(resolved) = resolve_endpoint(&url, event.data.trim()) {
-                                *endpoint.lock().await = Some(resolved);
-                                announced = true;
-                                if let Some(sender) = ready.take() {
-                                    let _ = sender.send(Ok(()));
-                                }
+                            let Some(resolved) = resolve_endpoint(&url, event.data.trim()) else {
+                                continue;
+                            };
+                            if !same_origin(&url, &resolved) {
+                                tracing::warn!(target: "pult::mcp",
+                                    endpoint = %resolved,
+                                    "SSE endpoint rejected: different origin");
+                                continue;
+                            }
+                            if let Err(error) =
+                                super::security::validate_url(&resolved, allow_localhost).await
+                            {
+                                tracing::warn!(target: "pult::mcp", error = %error,
+                                    endpoint = %resolved, "SSE endpoint rejected by SSRF rules");
+                                continue;
+                            }
+                            *endpoint.lock().await = Some(resolved);
+                            epoch.fetch_add(1, Ordering::Relaxed);
+                            announced = true;
+                            if let Some(sender) = ready.take() {
+                                let _ = sender.send(Ok(()));
                             }
                         } else if let Ok(value) = serde_json::from_str::<Value>(&event.data) {
                             pending.complete(value);
@@ -214,6 +260,18 @@ fn resolve_endpoint(base: &str, data: &str) -> Option<String> {
     }
     let base = reqwest::Url::parse(base).ok()?;
     base.join(data).ok().map(|url| url.to_string())
+}
+
+/// A legacy SSE endpoint must stay on the origin that served the stream;
+/// otherwise a hostile server could point POSTs (and secret headers) elsewhere.
+fn same_origin(base: &str, endpoint: &str) -> bool {
+    let (Ok(base), Ok(endpoint)) = (reqwest::Url::parse(base), reqwest::Url::parse(endpoint))
+    else {
+        return false;
+    };
+    base.scheme() == endpoint.scheme()
+        && base.host_str() == endpoint.host_str()
+        && base.port_or_known_default() == endpoint.port_or_known_default()
 }
 
 #[cfg(test)]
@@ -276,6 +334,8 @@ mod tests {
         let transport = SseTransport::connect(SseConfig {
             url: sse_url,
             headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            allow_localhost: true,
             timeout: Duration::from_secs(10),
             label: "mock".to_string(),
         })
@@ -288,6 +348,8 @@ mod tests {
         assert_eq!(reply["id"], "abc");
         assert_eq!(reply["result"]["ok"], true);
         transport.close().await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(transport.task.is_finished(), "close must abort the SSE task");
     }
 
     #[test]
@@ -300,5 +362,14 @@ mod tests {
             resolve_endpoint("https://host/sse", "https://other/messages").as_deref(),
             Some("https://other/messages")
         );
+    }
+
+    #[test]
+    fn rejects_cross_origin_endpoints() {
+        assert!(same_origin("https://host/sse", "https://host/messages"));
+        assert!(!same_origin("https://host/sse", "https://other/messages"));
+        assert!(!same_origin("https://host/sse", "http://host/messages"));
+        assert!(!same_origin("https://host/sse", "http://127.0.0.1/messages"));
+        assert!(!same_origin("https://host/sse", "http://169.254.169.254/"));
     }
 }

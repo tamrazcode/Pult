@@ -231,6 +231,7 @@ fn remote_transports_need_an_http_scheme() {
         ("http", "file:///etc/passwd"),
         ("sse", "javascript:alert(1)"),
         ("http", "not a url"),
+        ("http", "https://user:password@example.com/mcp"),
     ] {
         let error = config::create(
             &store,
@@ -430,7 +431,9 @@ async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
     )
     .await
     .unwrap();
-    let endpoint = gateway.endpoint_for(Some("owner"), &created.id);
+    let endpoint = gateway
+        .endpoint_for(Some("owner"), &created.id)
+        .expect("gateway token");
 
     async fn post(url: &str, token: &str, body: serde_json::Value) -> String {
         let parsed = reqwest::Url::parse(url).unwrap();

@@ -519,6 +519,15 @@ fn prepare_transport(
 
 fn clean_url(raw: &str) -> Result<String, PultError> {
     let url = raw.trim();
+    let parsed = reqwest::Url::parse(url).map_err(|e| {
+        PultError::with_code("mcp.invalid_url", format!("Invalid MCP server URL: {e}"))
+    })?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(PultError::with_code(
+            "mcp.invalid_url",
+            "MCP server URL must not contain credentials; use secret headers",
+        ));
+    }
     let lowered = url.to_ascii_lowercase();
     if !(lowered.starts_with("https://") || lowered.starts_with("http://")) {
         return Err(PultError::with_code(

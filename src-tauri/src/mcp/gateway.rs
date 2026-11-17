@@ -68,13 +68,13 @@ impl GatewayTokens {
         }
     }
 
-    pub fn issue(&self, server_id: &str) -> String {
+    pub fn issue(&self, server_id: &str) -> Result<String, String> {
         self.issue_for(None, server_id)
     }
 
     /// Token bound to one ACP session so it can be revoked with that session.
-    pub fn issue_for(&self, owner: Option<&str>, server_id: &str) -> String {
-        let token = random_token();
+    pub fn issue_for(&self, owner: Option<&str>, server_id: &str) -> Result<String, String> {
+        let token = random_token()?;
         if let Ok(mut tokens) = self.tokens.lock() {
             tokens.insert(
                 token.clone(),
@@ -84,7 +84,7 @@ impl GatewayTokens {
                 },
             );
         }
-        token
+        Ok(token)
     }
 
     pub fn resolve(&self, token: &str) -> Option<String> {
@@ -126,9 +126,12 @@ pub struct McpGateway {
     connector: Arc<dyn GatewayConnector>,
     clients: AsyncMutex<HashMap<String, Arc<dyn McpTransport>>>,
     stats: AsyncMutex<HashMap<String, GatewayStats>>,
+    /// Bumped by `close_server`; an in-flight connect from an older generation
+    /// must not repopulate the cache.
+    generations: AsyncMutex<HashMap<String, u64>>,
     /// Upstream initialize result per server, so repeated downstream
     /// handshakes do not re-initialize the same upstream session.
-    initialized: AsyncMutex<HashMap<String, Value>>,
+    initialized: AsyncMutex<HashMap<String, (Value, u64)>>,
     initialize_lock: AsyncMutex<()>,
 }
 
@@ -155,6 +158,7 @@ impl McpGateway {
             connector,
             clients: AsyncMutex::new(HashMap::new()),
             stats: AsyncMutex::new(HashMap::new()),
+            generations: AsyncMutex::new(HashMap::new()),
             initialized: AsyncMutex::new(HashMap::new()),
             initialize_lock: AsyncMutex::new(()),
         });
@@ -182,21 +186,40 @@ impl McpGateway {
     }
 
     /// Issues a fresh bearer token for one agent session.
-    pub fn endpoint(&self, server_id: &str) -> GatewayEndpoint {
+    pub fn endpoint(&self, server_id: &str) -> Result<GatewayEndpoint, String> {
         self.endpoint_for(None, server_id)
     }
 
-    pub fn endpoint_for(&self, owner: Option<&str>, server_id: &str) -> GatewayEndpoint {
-        GatewayEndpoint {
+    pub fn endpoint_for(
+        &self,
+        owner: Option<&str>,
+        server_id: &str,
+    ) -> Result<GatewayEndpoint, String> {
+        Ok(GatewayEndpoint {
             url: format!("{}/{}", self.url, server_id),
-            token: self.tokens.issue_for(owner, server_id),
-        }
+            token: self.tokens.issue_for(owner, server_id)?,
+        })
     }
 
     /// Drops the cached upstream connection and every token for the server.
     pub async fn close_server(&self, server_id: &str) {
+        self.bump_generation(server_id).await;
         self.tokens.revoke_server(server_id);
         self.drop_client(server_id).await;
+    }
+
+    async fn bump_generation(&self, server_id: &str) {
+        let mut generations = self.generations.lock().await;
+        *generations.entry(server_id.to_string()).or_insert(0) += 1;
+    }
+
+    async fn generation(&self, server_id: &str) -> u64 {
+        *self
+            .generations
+            .lock()
+            .await
+            .get(server_id)
+            .unwrap_or(&0)
     }
 
     /// Drops just the upstream connection (failure recovery). Agent tokens
@@ -241,8 +264,14 @@ impl McpGateway {
         if let Some(client) = self.clients.lock().await.get(server_id).cloned() {
             return Ok(client);
         }
+        let generation = self.generation(server_id).await;
         let client = self.connector.connect(server_id).await?;
         let mut clients = self.clients.lock().await;
+        if self.generation(server_id).await != generation {
+            drop(clients);
+            let _ = client.close().await;
+            return Err("MCP configuration changed while connecting; retry the call".to_string());
+        }
         match clients.get(server_id).cloned() {
             Some(existing) => {
                 drop(clients);
@@ -261,11 +290,15 @@ impl McpGateway {
         server_id: &str,
     ) -> Result<(Arc<dyn McpTransport>, Value), String> {
         let _serial = self.initialize_lock.lock().await;
-        if let Some(result) = self.initialized.lock().await.get(server_id).cloned() {
-            let client = self.client(server_id).await?;
-            return Ok((client, result));
-        }
         let client = self.client(server_id).await?;
+        let epoch = client.session_epoch();
+        if let Some((result, cached_epoch)) = self.initialized.lock().await.get(server_id).cloned() {
+            if cached_epoch == epoch {
+                return Ok((client, result));
+            }
+            self.initialized.lock().await.remove(server_id);
+        }
+        let generation = self.generation(server_id).await;
         let reply = client
             .request(json!({
                 "jsonrpc": "2.0",
@@ -288,10 +321,16 @@ impl McpGateway {
         client
             .notify(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
             .await?;
+        // A config edit or SSE reconnect during the handshake makes this result
+        // stale; never cache it for the next caller.
+        if self.generation(server_id).await != generation || client.session_epoch() != epoch {
+            let _ = client.close().await;
+            return Err("MCP session changed during initialization; retry the call".to_string());
+        }
         self.initialized
             .lock()
             .await
-            .insert(server_id.to_string(), result.clone());
+            .insert(server_id.to_string(), (result.clone(), epoch));
         Ok((client, result))
     }
 }
@@ -449,17 +488,11 @@ fn rpc_error_code(id: Value, code: i64, message: impl Into<String>) -> Value {
     })
 }
 
-fn random_token() -> String {
+fn random_token() -> Result<String, String> {
     let mut bytes = [0u8; 16];
-    if getrandom::fill(&mut bytes).is_err() {
-        // Extremely unlikely; a predictable token would be a security hole, so
-        // refuse to hand out a weak one by mixing the fallback with time.
-        let now = crate::events::now_millis().to_le_bytes();
-        for (index, byte) in bytes.iter_mut().enumerate() {
-            *byte = now[index % now.len()];
-        }
-    }
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    getrandom::fill(&mut bytes)
+        .map_err(|e| format!("secure randomness unavailable for MCP gateway token: {e}"))?;
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -573,7 +606,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let endpoint = gateway.endpoint("mcp-1");
+        let endpoint = gateway.endpoint("mcp-1").unwrap();
 
         let init = post(
             &endpoint.url,

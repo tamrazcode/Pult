@@ -20,6 +20,11 @@ pub trait McpTransport: Send + Sync {
     fn request<'a>(&'a self, request: Value) -> TransportFuture<'a, Value>;
     fn notify<'a>(&'a self, notification: Value) -> TransportFuture<'a, ()>;
     fn close(&self) -> TransportFuture<'_, ()>;
+    /// Bumped whenever the upstream MCP session changes (SSE reconnect), so
+    /// the gateway knows a cached `initialize` no longer applies.
+    fn session_epoch(&self) -> u64 {
+        0
+    }
     /// Last stderr lines (stdio servers); empty for HTTP/SSE.
     fn logs(&self) -> Vec<String> {
         Vec::new()

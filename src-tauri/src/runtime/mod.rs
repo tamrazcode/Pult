@@ -314,6 +314,9 @@ pub struct AgentRuntime {
     pub gateway_tokens: Arc<crate::mcp::gateway::GatewayTokens>,
     /// Loopback gateway for user MCP servers; set once at boot.
     pub gateway: std::sync::OnceLock<Arc<crate::mcp::gateway::McpGateway>>,
+    /// Bumped on any custom MCP config change; warm sessions from an older
+    /// generation are discarded instead of serving a stale server list.
+    pub mcp_generation: std::sync::atomic::AtomicU64,
 }
 
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
@@ -401,6 +404,7 @@ impl AgentRuntime {
             mcp_registry,
             gateway_tokens,
             gateway: std::sync::OnceLock::new(),
+            mcp_generation: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
@@ -414,6 +418,8 @@ impl AgentRuntime {
     /// edit. Warm sessions are invalidated because their `session/new` already
     /// carried the old server list.
     pub async fn custom_mcp_changed(&self, server_id: &str) {
+        self.mcp_generation
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if let Some(gateway) = self.gateway.get() {
             gateway.close_server(server_id).await;
         }
@@ -637,7 +643,14 @@ impl AgentRuntime {
             };
         let binary = mcp_stdio_binary();
         for custom in resolved {
-            let endpoint = gateway.endpoint_for(Some(owner_token), &custom.id);
+            let endpoint = match gateway.endpoint_for(Some(owner_token), &custom.id) {
+                Ok(endpoint) => endpoint,
+                Err(error) => {
+                    tracing::warn!(target: "pult::mcp", error = %error,
+                        server = %custom.name, "custom MCP endpoint skipped");
+                    continue;
+                }
+            };
             let entry = if http_capable {
                 crate::protocol::types::McpServer::Http {
                     extra: serde_json::json!({
@@ -2151,7 +2164,13 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // and session/new|load; re-send only the settings that changed.
     let pooled = runtime
         .pool
-        .take_matching(&thread_id, &instance_id, &root, &spawn_sig);
+        .take_matching_generation(
+            &thread_id,
+            &instance_id,
+            &root,
+            &spawn_sig,
+            runtime.mcp_generation.load(std::sync::atomic::Ordering::Relaxed),
+        );
 
     let conn: Arc<AcpConn>;
     let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
@@ -2763,6 +2782,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 mcp_token,
                 instructions_injected: false,
                 compaction_epoch: 0,
+                mcp_generation: runtime
+                    .mcp_generation
+                    .load(std::sync::atomic::Ordering::Relaxed),
                 last_used: std::time::Instant::now(),
             },
         );

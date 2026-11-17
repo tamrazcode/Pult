@@ -170,7 +170,7 @@ impl PtyRegistry {
             crate::processes::register_process(
                 pid,
                 crate::processes::ProcessMeta::new("terminal")
-                    .with_label(title.trim())
+                    .with_label(&program)
                     .with_thread(&params.thread_id),
             );
         }

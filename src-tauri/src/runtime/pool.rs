@@ -46,6 +46,8 @@ pub struct IdleConn {
     pub instructions_injected: bool,
     /// Compaction generation the injection belongs to.
     pub compaction_epoch: u64,
+    /// MCP configuration generation this session was opened with.
+    pub mcp_generation: u64,
     pub last_used: Instant,
 }
 
@@ -120,9 +122,27 @@ impl IdlePool {
         root: &Path,
         spawn_sig: &SpawnSig,
     ) -> Option<IdleConn> {
+        self.take_matching_generation(thread_id, instance_id, root, spawn_sig, 0)
+    }
+
+    /// A session opened under an older MCP configuration is stale: kill it and
+    /// let the next turn open a fresh one with the current server list.
+    pub fn take_matching_generation(
+        &self,
+        thread_id: &str,
+        instance_id: &str,
+        root: &Path,
+        spawn_sig: &SpawnSig,
+        mcp_generation: u64,
+    ) -> Option<IdleConn> {
         // Reap any entry past its TTL even when no new turn parks one.
         self.evict_expired();
         let entry = self.lock().remove(thread_id)?;
+        if entry.mcp_generation != mcp_generation {
+            self.kill_idle(entry);
+            self.evicted.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
         if Instant::now().duration_since(entry.last_used) > IDLE_TTL {
             self.kill_idle(entry);
             self.expired.fetch_add(1, Ordering::Relaxed);
@@ -339,6 +359,7 @@ mod tests {
             mcp_token: None,
             instructions_injected: false,
             compaction_epoch: 0,
+            mcp_generation: 0,
             last_used,
         }
     }
@@ -466,6 +487,23 @@ mod tests {
             .is_none());
         assert_eq!(pool.stats().idle, 0);
         wait_dead(&conn3).await;
+    }
+
+    #[tokio::test]
+    async fn a_stale_mcp_generation_is_discarded_instead_of_reused() {
+        let _env = env_lock();
+        let pool = IdlePool::new();
+        let root = std::env::temp_dir().join("pult-pool-mcp-generation");
+        let sig = mock_sig();
+        let entry = spawn_idle_conn("th-gen", "mock", &root, &sig, Instant::now());
+        let conn = Arc::clone(&entry.conn);
+        pool.park("th-gen".to_string(), entry);
+
+        assert!(pool
+            .take_matching_generation("th-gen", "mock", &root, &sig, 1)
+            .is_none());
+        assert_eq!(pool.stats().idle, 0);
+        wait_dead(&conn).await;
     }
 
     #[tokio::test]

@@ -9,10 +9,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, Command};
 use tokio::sync::Mutex as AsyncMutex;
 
+use super::security::{redact_values, MAX_LOG_LINE, MAX_MESSAGE_BYTES};
 use super::transport::{await_reply, LogRing, McpTransport, PendingRequests, TransportFuture};
 
 const STDERR_LIMIT: usize = 256 * 1024;
@@ -23,6 +24,8 @@ pub struct StdioConfig {
     pub cwd: Option<String>,
     /// Plain env plus resolved secret values; never surfaced back to the UI.
     pub env: BTreeMap<String, String>,
+    /// Exact secret values, scrubbed from stdout/stderr before logging.
+    pub secret_values: Vec<String>,
     pub timeout: Duration,
     pub label: String,
 }
@@ -71,6 +74,7 @@ impl StdioTransport {
                 crate::processes::ProcessMeta::new("mcp").with_label(&config.label),
             );
         }
+        let pid = child.id();
         let stdin = child
             .stdin
             .take()
@@ -88,14 +92,17 @@ impl StdioTransport {
         let logs = Arc::new(LogRing::new(STDERR_LIMIT));
         let reader_pending = Arc::clone(&pending);
         let reader_logs = Arc::clone(&logs);
+        let reader_secrets = config.secret_values.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
+            let mut lines = BufReader::new(stdout);
+            while let Ok(Some((line, truncated))) =
+                next_line_capped(&mut lines, MAX_MESSAGE_BYTES).await
+            {
                 let line = line.trim();
                 if line.is_empty() {
                     continue;
                 }
-                if line.len() > super::security::MAX_MESSAGE_BYTES {
+                if truncated {
                     reader_logs.push("dropped an oversized MCP message".to_string());
                     continue;
                 }
@@ -105,17 +112,25 @@ impl StdioTransport {
                             reader_pending.complete(value);
                         }
                     }
-                    Err(_) => reader_logs.push(format!("stdout: {line}")),
+                    Err(_) => reader_logs.push(format!(
+                        "stdout: {}",
+                        redact_values(line, &reader_secrets)
+                    )),
                 }
             }
             reader_pending.fail_all("MCP server stdout closed");
             reader_logs.push("stdout closed".to_string());
+            if let Some(pid) = pid {
+                crate::processes::unregister_process(pid);
+            }
         });
         let stderr_logs = Arc::clone(&logs);
+        let stderr_secrets = config.secret_values.clone();
         tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                stderr_logs.push(super::security::redact(&line));
+            let mut lines = BufReader::new(stderr);
+            while let Ok(Some((line, _truncated))) = next_line_capped(&mut lines, MAX_LOG_LINE).await
+            {
+                stderr_logs.push(redact_values(&line, &stderr_secrets));
             }
         });
 
@@ -192,6 +207,41 @@ impl McpTransport for StdioTransport {
     }
 }
 
+/// Reads one line with a hard byte cap. Oversized lines are consumed up to the
+/// newline but only the first `max` bytes are returned, so a hostile server
+/// cannot allocate unbounded memory.
+async fn next_line_capped<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    max: usize,
+) -> std::io::Result<Option<(String, bool)>> {
+    let mut out = Vec::new();
+    let mut truncated = false;
+    loop {
+        let buffer = reader.fill_buf().await?;
+        if buffer.is_empty() {
+            return if out.is_empty() && !truncated {
+                Ok(None)
+            } else {
+                Ok(Some((String::from_utf8_lossy(&out).into_owned(), truncated)))
+            };
+        }
+        let newline = buffer.iter().position(|byte| *byte == b'\n');
+        let data_len = newline.unwrap_or(buffer.len());
+        let used = data_len + usize::from(newline.is_some());
+        let room = max.saturating_sub(out.len());
+        if data_len <= room {
+            out.extend_from_slice(&buffer[..data_len]);
+        } else {
+            out.extend_from_slice(&buffer[..room]);
+            truncated = true;
+        }
+        reader.consume(used);
+        if newline.is_some() {
+            return Ok(Some((String::from_utf8_lossy(&out).into_owned(), truncated)));
+        }
+    }
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -232,6 +282,7 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
             ],
             cwd: None,
             env: BTreeMap::new(),
+            secret_values: Vec::new(),
             timeout: Duration::from_secs(20),
             label: "mock".to_string(),
         }
@@ -269,12 +320,24 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
 
     #[tokio::test]
-    async fn unknown_command_fails_loudly() {
-        let error = StdioTransport::spawn(StdioConfig {
+    async fn bounds_oversized_lines_without_allocating_them() {
+        let data = [b'a'; 64];
+        let mut reader = tokio::io::BufReader::new(&data[..]);
+        let (line, truncated) = super::next_line_capped(&mut reader, 8)
+            .await
+            .unwrap()
+            .expect("line");
+        assert!(truncated);
+        assert_eq!(line, "aaaaaaaa");
+    }
+
+    #[tokio::test]
+    async fn unknown_command_fails_loudly() {        let error = StdioTransport::spawn(StdioConfig {
             command: "pult-definitely-missing-binary".to_string(),
             args: Vec::new(),
             cwd: None,
             env: BTreeMap::new(),
+            secret_values: Vec::new(),
             timeout: Duration::from_secs(2),
             label: "missing".to_string(),
         })

@@ -1,18 +1,20 @@
 //! Security boundary for user MCP servers: URL/SSRF validation, tool
 //! allow/deny filtering, response size caps and log redaction.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use serde_json::Value;
 
 pub const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_LOG_LINE: usize = 8 * 1024;
 
-/// Rejects non-TLS URLs, credential-bearing URLs and addresses that reach the
-/// local machine, private networks or cloud metadata.
-///
-/// `allow_localhost` only relaxes loopback; RFC1918 and link-local stay blocked.
-pub async fn validate_url(raw: &str, allow_localhost: bool) -> Result<(), String> {
+/// Resolves a URL to the exact addresses it may connect to, enforcing every
+/// SSRF rule first. Callers pin these addresses on their HTTP client so a
+/// second DNS lookup cannot rebind to a private address.
+pub async fn resolve_validated(
+    raw: &str,
+    allow_localhost: bool,
+) -> Result<Vec<SocketAddr>, String> {
     let url = reqwest::Url::parse(raw).map_err(|e| format!("invalid MCP URL: {e}"))?;
     if !url.username().is_empty() || url.password().is_some() {
         return Err("MCP URL must not contain credentials; use secret headers".to_string());
@@ -52,17 +54,35 @@ pub async fn validate_url(raw: &str, allow_localhost: bool) -> Result<(), String
     if addresses.is_empty() {
         return Err(format!("MCP host `{host}` resolved to no addresses"));
     }
+    let mut pinned = Vec::with_capacity(addresses.len());
     for address in addresses {
         if blocked_ip(address, allow_localhost) {
             return Err(format!(
                 "MCP host `{host}` points at a blocked address ({address})"
             ));
         }
+        pinned.push(SocketAddr::new(address, port));
     }
-    // shortcut: DNS is checked once before connecting, not pinned; a rebinding
-    // attacker could race the second lookup. Pin resolved IPs if that threat
-    // enters the model.
-    Ok(())
+    Ok(pinned)
+}
+
+/// Rejects non-TLS URLs, credential-bearing URLs and addresses that reach the
+/// local machine, private networks or cloud metadata.
+pub async fn validate_url(raw: &str, allow_localhost: bool) -> Result<(), String> {
+    resolve_validated(raw, allow_localhost).await.map(|_| ())
+}
+
+/// Removes known secret values from diagnostic text before it is persisted or
+/// shown. Short values are left alone: replacing a one-character secret would
+/// mangle every log line without protecting anything.
+pub fn redact_values(text: &str, values: &[String]) -> String {
+    let mut out = text.to_string();
+    for value in values {
+        if value.len() >= 4 {
+            out = out.replace(value, "••••");
+        }
+    }
+    out
 }
 
 fn blocked_ip(ip: IpAddr, allow_localhost: bool) -> bool {
@@ -225,9 +245,25 @@ mod tests {
         validate_url("http://localhost:8787/mcp", true)
             .await
             .unwrap();
+        let pinned = resolve_validated("http://127.0.0.1:8787/mcp", true)
+            .await
+            .unwrap();
+        assert_eq!(pinned.len(), 1);
+        assert_eq!(pinned[0].port(), 8787);
         // Loopback relaxation never opens private networks.
         assert!(validate_url("http://10.0.0.5/mcp", true).await.is_err());
         assert!(validate_url("http://127.0.0.1/mcp", false).await.is_err());
+    }
+
+    #[test]
+    fn redacts_exact_secret_values_from_errors() {
+        let text = "request failed: invalid key sk-live-123456 for server";
+        assert_eq!(
+            redact_values(text, &["sk-live-123456".to_string()]),
+            "request failed: invalid key •••• for server"
+        );
+        // Very short values are not replaced to keep logs readable.
+        assert_eq!(redact_values("code 1 failed", &["1".to_string()]), "code 1 failed");
     }
 
     #[test]

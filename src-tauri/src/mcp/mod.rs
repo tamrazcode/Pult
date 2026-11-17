@@ -43,12 +43,14 @@ pub(crate) async fn connect_custom(
             secret_env_keys,
         } => {
             let mut env: BTreeMap<String, String> = env.clone();
+            let mut secret_values = Vec::new();
             for key in secret_env_keys {
                 let full = config::secret_store_key_for("env", &server.id, key);
                 let value = store
                     .get_secret(&full)
                     .map_err(|error| error.to_string())?
                     .ok_or_else(|| format!("MCP secret `{key}` is not set"))?;
+                secret_values.push(value.clone());
                 env.insert(key.clone(), value);
             }
             stdio::StdioTransport::spawn(stdio::StdioConfig {
@@ -56,6 +58,7 @@ pub(crate) async fn connect_custom(
                 args: args.clone(),
                 cwd: cwd.clone(),
                 env,
+                secret_values,
                 timeout,
                 label: server.name.clone(),
             })
@@ -66,11 +69,14 @@ pub(crate) async fn connect_custom(
             headers,
             secret_header_keys,
         } => {
-            security::validate_url(url, server.allow_localhost).await?;
-            let headers = resolve_headers(store, server, headers, secret_header_keys)?;
+            let pinned = security::resolve_validated(url, server.allow_localhost).await?;
+            let (headers, secret_values) =
+                resolve_headers(store, server, headers, secret_header_keys)?;
             http::HttpTransport::connect(http::HttpConfig {
                 url: url.clone(),
                 headers,
+                pinned,
+                secret_values,
                 timeout,
                 label: server.name.clone(),
             })
@@ -81,11 +87,13 @@ pub(crate) async fn connect_custom(
             headers,
             secret_header_keys,
         } => {
-            security::validate_url(url, server.allow_localhost).await?;
-            let headers = resolve_headers(store, server, headers, secret_header_keys)?;
+            let pinned = security::resolve_validated(url, server.allow_localhost).await?;
+            let (headers, _) = resolve_headers(store, server, headers, secret_header_keys)?;
             sse::SseTransport::connect(sse::SseConfig {
                 url: url.clone(),
                 headers,
+                pinned,
+                allow_localhost: server.allow_localhost,
                 timeout,
                 label: server.name.clone(),
             })
@@ -100,17 +108,19 @@ fn resolve_headers(
     server: &CustomMcpServer,
     plain: &BTreeMap<String, String>,
     secret_keys: &[String],
-) -> Result<BTreeMap<String, String>, String> {
+) -> Result<(BTreeMap<String, String>, Vec<String>), String> {
     let mut headers = plain.clone();
+    let mut secret_values = Vec::new();
     for key in secret_keys {
         let full = config::secret_store_key_for("header", &server.id, key);
         let value = store
             .get_secret(&full)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("MCP secret `{key}` is not set"))?;
+        secret_values.push(value.clone());
         headers.insert(key.clone(), value);
     }
-    Ok(headers)
+    Ok((headers, secret_values))
 }
 
 /// Connector used by the app gateway: reads the config row, then connects.

@@ -35,6 +35,9 @@ pub async fn test_connection(store: &Store, server: &CustomMcpServer) -> ProbeRe
     let result = probe(store, server).await;
     let mut result = result;
     result.latency_ms = started.elapsed().as_millis() as u64;
+    if let Some(error) = result.error.take() {
+        result.error = Some(redact_error(store, server, &error));
+    }
     let tools_json = result
         .tools
         .iter()
@@ -57,8 +60,33 @@ pub async fn test_connection(store: &Store, server: &CustomMcpServer) -> ProbeRe
     result
 }
 
-async fn probe(store: &Store, server: &CustomMcpServer) -> ProbeResult {
-    let failed = |error: String, latency_ms: u64| ProbeResult {
+fn redact_error(store: &Store, server: &CustomMcpServer, error: &str) -> String {
+    let mut values = Vec::new();
+    let keys: Vec<(&str, &[String])> = match &server.transport {
+        super::config::TransportConfig::Stdio {
+            secret_env_keys, ..
+        } => vec![("env", secret_env_keys)],
+        super::config::TransportConfig::Http {
+            secret_header_keys,
+            ..
+        }
+        | super::config::TransportConfig::Sse {
+            secret_header_keys,
+            ..
+        } => vec![("header", secret_header_keys)],
+    };
+    for (section, keys) in keys {
+        for key in keys {
+            let full = super::config::secret_store_key_for(section, &server.id, key);
+            if let Ok(Some(value)) = store.get_secret(&full) {
+                values.push(value);
+            }
+        }
+    }
+    super::security::redact_values(&super::security::redact(error), &values)
+}
+
+async fn probe(store: &Store, server: &CustomMcpServer) -> ProbeResult {    let failed = |error: String, latency_ms: u64| ProbeResult {
         ok: false,
         server_info: None,
         protocol_version: None,

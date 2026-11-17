@@ -81,7 +81,12 @@ fn build_node(
         }
     }
     let name = process.name().to_string_lossy().into_owned();
-    let meta = global().get(pid);
+    // A registry row only counts when the PID still has the start time we
+    // recorded; otherwise the OS reused the PID for another process.
+    let meta = global().get(pid).filter(|meta| {
+        meta.started_at
+            .is_none_or(|started| started.abs_diff(process.start_time()) <= 2)
+    });
     let role = if pid == std::process::id() {
         "core".to_string()
     } else if let Some(meta) = &meta {

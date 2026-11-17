@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde_json::Value;
 
-use super::transport::{parse_sse_events, McpTransport, TransportFuture};
+use super::transport::{McpTransport, TransportFuture};
 
 const MAX_ERROR_BODY: usize = 8 * 1024;
 
@@ -16,6 +16,10 @@ pub struct HttpConfig {
     pub url: String,
     /// Plain headers plus resolved secrets; never surfaced back to the UI.
     pub headers: BTreeMap<String, String>,
+    /// Validated addresses pinned on the client, so DNS cannot rebind later.
+    pub pinned: Vec<std::net::SocketAddr>,
+    /// Exact secret values, scrubbed from error text before it leaves.
+    pub secret_values: Vec<String>,
     pub timeout: Duration,
     pub label: String,
 }
@@ -25,6 +29,7 @@ pub struct HttpTransport {
     url: String,
     headers: BTreeMap<String, String>,
     session: Mutex<Option<String>>,
+    secret_values: Vec<String>,
     timeout: Duration,
 }
 
@@ -37,7 +42,17 @@ impl HttpTransport {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none());
+        let client = if config.pinned.is_empty() {
+            client
+        } else {
+            let host = reqwest::Url::parse(&config.url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .ok_or_else(|| "MCP URL has no host to pin".to_string())?;
+            client.resolve_to_addrs(&host, &config.pinned)
+        };
+        let client = client
             .build()
             .map_err(|e| format!("create HTTP MCP client: {e}"))?;
         Ok(Self {
@@ -45,6 +60,7 @@ impl HttpTransport {
             url: config.url,
             headers: config.headers,
             session: Mutex::new(None),
+            secret_values: config.secret_values,
             timeout: config.timeout.max(Duration::from_millis(1)),
         })
     }
@@ -104,7 +120,13 @@ impl HttpTransport {
                 if body.trim().is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", super::security::redact(body.trim()))
+                    format!(
+                        ": {}",
+                        super::security::redact_values(
+                            &super::security::redact(body.trim()),
+                            &self.secret_values
+                        )
+                    )
                 }
             ));
         }
@@ -115,6 +137,8 @@ impl HttpTransport {
 impl McpTransport for HttpTransport {
     fn request<'a>(&'a self, request: Value) -> TransportFuture<'a, Value> {
         Box::pin(async move {
+            use futures::StreamExt;
+
             let id = request.get("id").cloned();
             let response = self.send(&request).await?;
             let is_sse = response
@@ -123,34 +147,54 @@ impl McpTransport for HttpTransport {
                 .and_then(|value| value.to_str().ok())
                 .map(|value| value.contains("text/event-stream"))
                 .unwrap_or(false);
-            let body = tokio::time::timeout(self.timeout, response.bytes())
-                .await
-                .map_err(|_| {
-                    format!(
-                        "MCP response timed out after {} ms",
-                        self.timeout.as_millis()
-                    )
-                })?
-                .map_err(|e| format!("read MCP response: {e}"))?;
-            if body.len() > super::security::MAX_MESSAGE_BYTES {
-                return Err(format!(
-                    "MCP response exceeds {} bytes",
-                    super::security::MAX_MESSAGE_BYTES
-                ));
-            }
-            let body = String::from_utf8_lossy(&body).into_owned();
-            if is_sse {
-                for event in parse_sse_events(&body) {
-                    let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
-                        continue;
-                    };
-                    if id.as_ref().is_none_or(|id| value.get("id") == Some(id)) {
-                        return Ok(value);
+            let deadline = tokio::time::Instant::now() + self.timeout;
+            let mut stream = response.bytes_stream();
+            let mut raw = Vec::new();
+            let mut events = String::new();
+            loop {
+                let next = tokio::time::timeout_at(deadline, stream.next())
+                    .await
+                    .map_err(|_| {
+                        format!(
+                            "MCP response timed out after {} ms",
+                            self.timeout.as_millis()
+                        )
+                    })?;
+                let Some(chunk) = next else {
+                    break;
+                };
+                let chunk = chunk.map_err(|e| format!("read MCP response: {e}"))?;
+                if !is_sse {
+                    raw.extend_from_slice(&chunk);
+                    if raw.len() > super::security::MAX_MESSAGE_BYTES {
+                        return Err(format!(
+                            "MCP response exceeds {} bytes",
+                            super::security::MAX_MESSAGE_BYTES
+                        ));
+                    }
+                    continue;
+                }
+                events.push_str(&String::from_utf8_lossy(&chunk));
+                if events.len() > 2 * super::security::MAX_MESSAGE_BYTES {
+                    return Err("MCP event stream exceeded the size limit".to_string());
+                }
+                while let Some(index) = events.find("\n\n") {
+                    let block = events[..index].to_string();
+                    events.drain(..index + 2);
+                    for event in super::transport::parse_sse_events(&block) {
+                        let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
+                            continue;
+                        };
+                        if id.as_ref().is_none_or(|id| value.get("id") == Some(id)) {
+                            return Ok(value);
+                        }
                     }
                 }
+            }
+            if is_sse {
                 return Err("MCP server ended the stream without a response".to_string());
             }
-            serde_json::from_str(&body).map_err(|e| format!("decode MCP response: {e}"))
+            serde_json::from_slice(&raw).map_err(|e| format!("decode MCP response: {e}"))
         })
     }
 
@@ -220,6 +264,8 @@ mod tests {
         let transport = HttpTransport::connect(HttpConfig {
             url,
             headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            secret_values: Vec::new(),
             timeout: Duration::from_secs(10),
             label: "mock".to_string(),
         })
@@ -234,6 +280,50 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(call["result"]["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn returns_an_sse_reply_before_the_stream_closes() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = read_request(&mut stream, 1 << 20).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            stream
+                .write_all(
+                    b"event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{\"ok\":true}}\n\n",
+                )
+                .await
+                .unwrap();
+            stream.flush().await.unwrap();
+            // A real server may keep the stream open; the reply is already out.
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        });
+        let transport = HttpTransport::connect(HttpConfig {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            secret_values: Vec::new(),
+            timeout: Duration::from_secs(5),
+            label: "mock".to_string(),
+        })
+        .unwrap();
+        let started = std::time::Instant::now();
+        let reply = transport
+            .request(json!({ "jsonrpc": "2.0", "id": 9, "method": "ping" }))
+            .await
+            .unwrap();
+        assert_eq!(reply["result"]["ok"], true);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "SSE reply must not wait for EOF"
+        );
     }
 
     #[tokio::test]
@@ -253,6 +343,8 @@ mod tests {
         let transport = HttpTransport::connect(HttpConfig {
             url: format!("http://127.0.0.1:{port}/mcp"),
             headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            secret_values: Vec::new(),
             timeout: Duration::from_secs(5),
             label: "mock".to_string(),
         })

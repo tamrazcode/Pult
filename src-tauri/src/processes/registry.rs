@@ -11,6 +11,9 @@ pub struct ProcessMeta {
     pub thread_id: Option<String>,
     pub run_id: Option<String>,
     pub instance_id: Option<String>,
+    /// OS start time (epoch seconds), filled by `register`. A reused PID with a
+    /// different start time is a different process and is never killable.
+    pub started_at: Option<u64>,
 }
 
 impl ProcessMeta {
@@ -64,7 +67,15 @@ impl ProcessRegistry {
         Self::default()
     }
 
-    pub fn register(&self, pid: u32, meta: ProcessMeta) {
+    pub fn register(&self, pid: u32, mut meta: ProcessMeta) {
+        if meta.started_at.is_none() {
+            meta.started_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0),
+            );
+        }
         if let Ok(mut entries) = self.entries.lock() {
             entries.insert(pid, meta);
         }
