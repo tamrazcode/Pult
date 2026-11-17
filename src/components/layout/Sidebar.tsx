@@ -34,6 +34,8 @@ import { buildSidebarGroups, useThreadsStore, type SidebarFilter } from "../../s
 import { useProjectsStore } from "../../stores/projects";
 import { useSettingsStore } from "../../stores/settings";
 import { useDraftsStore } from "../../stores/drafts";
+import { isTaskActive, useThreadSubagents } from "../../stores/subagents";
+import { SubagentRobotAscii } from "../chat/SubagentRobotAscii";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import type { Project, Thread, WorktreeDirtyStatus } from "../../lib/types";
 import { PultLogo } from "../ui/PultLogo";
@@ -89,6 +91,8 @@ function ThreadRow({
 }) {
   const t = useT();
   const working = thread.status === "working" || thread.status === "waiting";
+  const subagents = useThreadSubagents(thread.id);
+  const subagentWorking = !working && subagents.some((task) => isTaskActive(task.status));
   const renameDone = useRef(false);
   useEffect(() => {
     if (renaming) renameDone.current = false;
@@ -154,6 +158,10 @@ function ThreadRow({
           {working ? (
             <span className="ml-auto flex w-8 shrink-0 justify-end">
               <ThinkingAscii />
+            </span>
+          ) : subagentWorking ? (
+            <span className="ml-auto flex w-8 shrink-0 justify-end">
+              <SubagentRobotAscii />
             </span>
           ) : unread ? (
             <span
