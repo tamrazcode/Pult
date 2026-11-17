@@ -1405,7 +1405,7 @@ impl AgentRuntime {
         self.store.move_queue_item_to_head(thread_id, queue_id)?;
         self.emit_queue_updated(thread_id);
         if let Some(run_id) = self.active_run_for(thread_id) {
-            if let Err(err) = self.cancel(&run_id) {
+            if let Err(err) = self.cancel_for_steer(&run_id) {
                 tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed; retrying");
                 // The run may still be finishing its handshake, so its live
                 // connection is not registered yet. Retry off the caller.
@@ -1417,7 +1417,7 @@ impl AgentRuntime {
                             runtime.auto_dispatch_queue(&thread_id);
                             return;
                         }
-                        if runtime.cancel(&run_id).is_ok() {
+                        if runtime.cancel_for_steer(&run_id).is_ok() {
                             return;
                         }
                         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -1806,7 +1806,7 @@ impl AgentRuntime {
 
     /// Stop button / Esc: cancel the active run's prompt turn (В§5.3).
     pub fn cancel(self: &Arc<Self>, run_id: &str) -> Result<(), crate::PultError> {
-        self.cancel_with_force(run_id, false)
+        self.cancel_with_opts(run_id, false, true)
     }
 
     /// Stop with escalation: the cancel notification is advisory, so a run
@@ -1816,6 +1816,22 @@ impl AgentRuntime {
         self: &Arc<Self>,
         run_id: &str,
         force: bool,
+    ) -> Result<(), crate::PultError> {
+        self.cancel_with_opts(run_id, force, true)
+    }
+
+    /// Queue Steer replaces the current turn with the next queued message on
+    /// the same thread. It must not cascade: sending a new message to the
+    /// parent is not a Stop, and running subagents keep working.
+    pub fn cancel_for_steer(self: &Arc<Self>, run_id: &str) -> Result<(), crate::PultError> {
+        self.cancel_with_opts(run_id, false, false)
+    }
+
+    fn cancel_with_opts(
+        self: &Arc<Self>,
+        run_id: &str,
+        force: bool,
+        cascade_children: bool,
     ) -> Result<(), crate::PultError> {
         let (conn, session_id, thread_id, owner_token) = {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
@@ -1842,8 +1858,11 @@ impl AgentRuntime {
             "run:cancelling",
             &serde_json::json!({ "runId": run_id, "threadId": thread_id }),
         );
-        // Stop cascades: no child or grandchild outlives the run that asked.
-        self.orchestrator.cancel_subtree(&thread_id, force);
+        // Only an explicit Stop cascades: no child or grandchild outlives the
+        // run the user asked to stop. A Steer is just the next message.
+        if cascade_children {
+            self.orchestrator.cancel_subtree(&thread_id, force);
+        }
         if force {
             conn.kill();
             let terminals = {

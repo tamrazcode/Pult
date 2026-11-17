@@ -306,6 +306,79 @@ async fn orchestrator_cancel_stops_a_blocked_child_run() {
 }
 
 #[tokio::test]
+async fn steering_the_parent_keeps_children_running() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_HANG", "1")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-root-steer"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-root-steer").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let parent_run = runtime.dispatch(&root, "coordinate", &[], "mock").unwrap();
+
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-root".to_string(),
+        thread_id: root.id.clone(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({ "title": "Long child", "task": "hang", "role": "general" }),
+        )
+        .await
+        .expect("delegate_task succeeds");
+    let task_id = started["task"]["taskId"].as_str().unwrap().to_string();
+    let child_thread_id = started["task"]["childThreadId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let child_run_id = started["task"]["childRunId"].as_str().unwrap().to_string();
+    wait_for(Duration::from_secs(10), || {
+        runtime.live_run_registered(&child_run_id)
+    })
+    .await;
+
+    // A new message for the parent queues normally; "send now" (Steer) is a
+    // turn replacement, not a Stop: it must leave the child subtree alone.
+    let queued = runtime
+        .send(&root, "next turn", &[], "mock", None, &Default::default())
+        .expect("queue the next message");
+    assert!(queued.queued, "an active parent must queue, not dispatch");
+    let queue = runtime.store().list_queue(&root.id).unwrap();
+    runtime.steer(&root.id, &queue[0].id).expect("steer");
+
+    wait_for(Duration::from_secs(10), || {
+        runtime
+            .active_run_for(&root.id)
+            .map(|run_id| run_id != parent_run.id)
+            .unwrap_or(true)
+    })
+    .await;
+    let child_task = runtime.store().get_delegated_task(&task_id).unwrap();
+    assert_eq!(
+        child_task.status, "running",
+        "steering the parent must not cancel the child task"
+    );
+    assert!(
+        runtime.active_run_for(&child_thread_id).is_some(),
+        "the child run must still be alive after a parent steer"
+    );
+
+    runtime.cancel_with_force(&child_run_id, true).ok();
+    if let Some(run_id) = runtime.active_run_for(&root.id) {
+        runtime.cancel_with_force(&run_id, true).ok();
+    }
+}
+
+#[tokio::test]
 async fn queue_auto_dispatch_failure_keeps_the_message() {
     let (runtime, _sink) = mock_runtime();
     let thread = thread_record("th-queue-fail");

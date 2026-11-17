@@ -1102,7 +1102,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   disabled={awaitingDecision || busy}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
-                  <ListPlus size={15} />
+                  <ListPlus size={15} className="translate-x-[1px]" />
                 </button>
               ) : (
                 <button

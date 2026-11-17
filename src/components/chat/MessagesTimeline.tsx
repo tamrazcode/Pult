@@ -695,13 +695,25 @@ function ActionGroupRow({
       const timer = window.setInterval(() => setNow(Date.now()), 1000);
       return () => window.clearInterval(timer);
     }
-  }, [spinning, activeItem, startedAt]);
+    // Depend on the item type, not the object: a thought delta replaces the
+    // item object and must not restart the clock every chunk.
+  }, [spinning, activeItem?.type, startedAt]);
+
+  // Consecutive thoughts/tools share one continuous clock for the group.
+  const groupStartedAt = entries.reduce<number | undefined>((min, entry) => {
+    const ts = entry.item.type === "thought" ? entry.item.startedAt : entry.item.ts;
+    return ts === undefined ? min : min === undefined ? ts : Math.min(min, ts);
+  }, undefined);
 
   let label: string;
   if (activeItem?.type === "thought") {
-    label = t("chat.thinkingWithDuration", {
-      duration: formatDuration(activeItem.startedAt, now),
-    });
+    const thoughtStart = groupStartedAt ?? activeItem.startedAt;
+    label =
+      now - thoughtStart < 1000
+        ? t("chat.thinking")
+        : t("chat.thinkingWithDuration", {
+            duration: formatDuration(thoughtStart, now),
+          });
   } else if (activeItem?.type === "tool") {
     const action = t(ACTION_LABEL_KEYS[activeItem.kind] ?? "chat.tool.working");
     label =
