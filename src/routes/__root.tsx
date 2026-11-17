@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Outlet, createRootRoute, useRouter, useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
 import { RightPanel } from "../components/layout/RightPanel";
+import { ElicitationModal } from "../components/chat/ElicitationModal";
 import { CommandPalette, useGlobalHotkeys } from "../components/ui/CommandPalette";
 import { ErrorBanner, RouteErrorCard } from "../components/ui/ErrorBanner";
 import { ContextMenu, type ContextMenuItem } from "../components/ui/ContextMenu";
@@ -14,6 +15,7 @@ import {
   openInEditor,
   projectsList,
   providersWarmup,
+  runsRespondElicitation,
   settingsGet,
   settingsSet,
   threadsList,
@@ -27,6 +29,8 @@ import { useT } from "../lib/i18n";
 import { useProjectsStore } from "../stores/projects";
 import { useSettingsStore } from "../stores/settings";
 import { hydrateLayout, useUiStore } from "../stores/ui";
+import { useRunsStore } from "../stores/runs";
+import { useThreadsStore } from "../stores/threads";
 
 export const Route = createRootRoute({
   component: RootLayout,
@@ -49,6 +53,15 @@ function RootLayout() {
   const setRightPanelWidth = useUiStore((s) => s.setRightPanelWidth);
   const paletteOpen = useUiStore((s) => s.paletteOpen);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
+  const activeElicitation = useRunsStore((s) => s.activeElicitation);
+  const activeThreadId = useThreadsStore((s) => s.activeThreadId);
+  const inlineCovered = useRunsStore((s) =>
+    Boolean(
+      activeThreadId &&
+      s.activeElicitation &&
+      s.runsByThread[activeThreadId]?.some((run) => run.id === s.activeElicitation?.runId),
+    ),
+  );
   const pendingThreadId = useUiStore((s) => s.pendingThreadId);
   const selectedInstanceId = useUiStore((s) => s.selectedInstanceId);
   const selectedProjectId = useProjectsStore((s) => s.selectedProjectId);
@@ -418,6 +431,19 @@ function RootLayout() {
           <RightPanel width={rightPanelWidth} />
         </div>
       </div>
+      {activeElicitation && !inlineCovered && (
+        <ElicitationModal
+          key={activeElicitation.requestId}
+          request={activeElicitation}
+          onSubmit={(action, content) => {
+            const { runId, requestId } = activeElicitation;
+            useRunsStore.getState().clearElicitation();
+            runsRespondElicitation(runId, requestId, action, content).catch((err) =>
+              console.error("runs_respond_elicitation failed", err),
+            );
+          }}
+        />
+      )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {contextMenu && (
         <ContextMenu

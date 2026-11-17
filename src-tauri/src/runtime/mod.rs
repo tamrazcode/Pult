@@ -3233,14 +3233,9 @@ impl AgentRuntime {
             Some(stop_reason),
             failure.as_deref(),
         );
-        // Child runs settle their delegated-task row and wake `wait_tasks`.
-        self.orchestrator.finish_child_run(
-            thread_id,
-            run_id,
-            status,
-            stop_reason,
-            failure.as_deref(),
-        );
+        // Child runs settle their delegated-task row only after the run is no
+        // longer "working": a steer that lands in between sees a free thread
+        // and dispatches a follow-up instead of racing a finished task.
         if let Some(detail) = &failure {
             tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
         }
@@ -3256,6 +3251,13 @@ impl AgentRuntime {
         // so the UI must see the settled status before the delete attempt.
         let _ = self.store.set_thread_status(thread_id, "settled");
         self.emit_thread_updated(thread_id);
+        self.orchestrator.finish_child_run(
+            thread_id,
+            run_id,
+            status,
+            stop_reason,
+            failure.as_deref(),
+        );
         if deleting {
             // The thread is going away: never start its next queued message.
             return Ok(());

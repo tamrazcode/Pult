@@ -253,6 +253,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     activeRun ? s.viewsByRun[activeRun.id]?.pendingApproval : undefined,
   );
   const awaitingDecision = pendingApproval !== undefined;
+  const elicitationForActiveRun = activeElicitation?.runId === activeRun?.id;
   const runIdForApproval = pendingApproval !== undefined ? (activeRun?.id ?? null) : null;
   const runActive =
     activeRun !== undefined && (activeRun.status === "running" || activeRun.status === "queued");
@@ -672,7 +673,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         document.querySelector("[data-escape-layer]") !== null;
       const overlayOpen =
         paletteOpen ||
-        activeElicitation !== null ||
+        elicitationForActiveRun ||
         awaitingDecision ||
         slashOpen ||
         mentionOpen ||
@@ -686,7 +687,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   }, [
     runActive,
     paletteOpen,
-    activeElicitation,
+    elicitationForActiveRun,
     awaitingDecision,
     slashOpen,
     mentionOpen,
@@ -708,7 +709,9 @@ export function Composer({ threadId }: { threadId?: string }) {
         if (tag === "INPUT" || tag === "SELECT" || target.isContentEditable) return;
         if (tag === "TEXTAREA" && !(target as HTMLTextAreaElement).readOnly) return;
       }
-      if (useUiStore.getState().paletteOpen || useRunsStore.getState().activeElicitation) return;
+      if (useUiStore.getState().paletteOpen) return;
+      const elicitation = useRunsStore.getState().activeElicitation;
+      if (elicitation?.runId === runIdForApproval) return;
       const options = pendingApproval.options;
       const pick = (match: (kind: string) => boolean) =>
         options.find((o) => match(o.kind))?.optionId;

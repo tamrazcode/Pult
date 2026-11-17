@@ -29,6 +29,8 @@ pub struct OrchestratorEngine {
     /// Tasks already reported to an idle parent in this process; keeps a
     /// second child finish from replaying the first result.
     notified: std::sync::Mutex<std::collections::HashSet<String>>,
+    /// Serializes wake decisions for one engine (no lock across await points).
+    wake_lock: std::sync::Mutex<()>,
 }
 
 impl OrchestratorEngine {
@@ -40,6 +42,7 @@ impl OrchestratorEngine {
             waiters: tokio::sync::Notify::new(),
             seq: AtomicU64::new(0),
             notified: std::sync::Mutex::new(std::collections::HashSet::new()),
+            wake_lock: std::sync::Mutex::new(()),
         }
     }
 
@@ -530,7 +533,7 @@ impl OrchestratorEngine {
         if task.parent_thread_id != scope.thread_id {
             return Err("task belongs to another thread".to_string());
         }
-        Ok(task_json(&task))
+        Ok(self.task_json_with_queue(&task))
     }
 
     fn list_tasks(&self, scope: &McpScope) -> Result<Value, String> {
@@ -538,7 +541,9 @@ impl OrchestratorEngine {
             .store
             .list_delegated_tasks(&scope.thread_id)
             .map_err(|error| error.to_string())?;
-        Ok(json!({ "tasks": tasks.iter().map(task_json).collect::<Vec<_>>() }))
+        Ok(
+            json!({ "tasks": tasks.iter().map(|task| self.task_json_with_queue(task)).collect::<Vec<_>>() }),
+        )
     }
 
     fn cancel_task(&self, scope: &McpScope, arguments: &Value) -> Result<Value, String> {
@@ -646,7 +651,7 @@ impl OrchestratorEngine {
                                 &json!({ "taskId": updated.id, "status": updated.status }),
                             );
                         }
-                        return Ok(task_json(&updated));
+                        return Ok(self.task_json_with_queue(&updated));
                     }
                     let text = error.to_string();
                     let _ = self.store.update_delegated_task_status(
@@ -699,7 +704,7 @@ impl OrchestratorEngine {
                 &json!({ "taskId": updated.id, "status": updated.status }),
             );
         }
-        Ok(task_json(&updated))
+        Ok(self.task_json_with_queue(&updated))
     }
 
     fn mark_cancelled(&self, task: &DelegatedTaskRecord) {
@@ -850,7 +855,7 @@ impl OrchestratorEngine {
                 "parentRunId": updated.parent_run_id,
             }),
         );
-        Ok(task_json(&updated))
+        Ok(self.task_json_with_queue(&updated))
     }
 
     /// Called by the runtime finalizer for every finished run. Only child runs
@@ -943,6 +948,7 @@ impl OrchestratorEngine {
     /// once: whichever child finishes first starts the continuation run, the
     /// rest see an active parent run and stand down.
     fn maybe_wake_parent(&self, parent_thread_id: &str) {
+        let _wake = self.wake_lock.lock().expect("wake lock poisoned");
         let Ok(runtime) = self.runtime() else {
             return;
         };
@@ -973,11 +979,6 @@ impl OrchestratorEngine {
         if finished.is_empty() {
             return;
         }
-        let latest_finished = finished
-            .iter()
-            .filter_map(|task| task.finished_at)
-            .max()
-            .unwrap_or(0);
         let runs = match self.store.list_runs(parent_thread_id) {
             Ok(runs) => runs,
             Err(_) => return,
@@ -985,11 +986,9 @@ impl OrchestratorEngine {
         let Some(last_run) = runs.last() else {
             return;
         };
-        // Already answered after this result, or the user stopped the parent:
-        // never resurrect a cancelled thread or replay an old report.
-        if last_run.started_at >= latest_finished
-            || last_run.stop_reason.as_deref() == Some("cancelled")
-        {
+        // A cancelled parent is never resurrected. A later user run does NOT
+        // drop a child report: the notified set is the only delivery ledger.
+        if last_run.stop_reason.as_deref() == Some("cancelled") {
             self.mark_notified(&finished);
             return;
         }
@@ -1041,7 +1040,22 @@ impl OrchestratorEngine {
             }
         }
         let summary = summary.trim();
-        (!summary.is_empty()).then(|| truncate(summary, 2_000))
+        format_run_summary(summary)
+    }
+
+    /// Task JSON with the child's live queue depth, so a steer response cannot
+    /// blank the badge with a stale count.
+    fn task_json_with_queue(&self, task: &DelegatedTaskRecord) -> Value {
+        let mut value = task_json(task);
+        let queued = self
+            .store
+            .list_queue(&task.child_thread_id)
+            .map(|queue| queue.len())
+            .unwrap_or(0);
+        if let Some(object) = value.as_object_mut() {
+            object.insert("queuedCount".to_string(), json!(queued));
+        }
+        value
     }
 
     /// Child run reached the human gate (permission or elicitation). The
@@ -1139,6 +1153,22 @@ fn flatten_options(options: &SessionConfigSelectOptions) -> Vec<Value> {
             .map(|item| json!({ "id": item.value, "name": item.name }))
             .collect(),
     }
+}
+
+fn format_run_summary(summary: &str) -> Option<String> {
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return None;
+    }
+    const LIMIT: usize = 8_000;
+    Some(if summary.chars().count() > LIMIT {
+        format!(
+            "{}\n\n[report truncated; open the child chat for the full transcript]",
+            truncate(summary, LIMIT)
+        )
+    } else {
+        summary.to_string()
+    })
 }
 
 fn task_json(task: &DelegatedTaskRecord) -> Value {
@@ -1296,6 +1326,15 @@ mod tests {
         assert_eq!(task_status_for_run("completed"), "completed");
         assert_eq!(task_status_for_run("cancelled"), "cancelled");
         assert_eq!(task_status_for_run("failed"), "failed");
+    }
+
+    #[test]
+    fn long_child_report_is_truncated_with_a_marker() {
+        let long = format_run_summary(&"x".repeat(9_000)).unwrap();
+        assert!(long.contains("report truncated"));
+        assert!(long.len() < 9_000);
+        assert_eq!(format_run_summary("  short  ").as_deref(), Some("short"));
+        assert!(format_run_summary("").is_none());
     }
 
     #[test]
