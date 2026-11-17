@@ -2070,7 +2070,10 @@ pub fn orchestrator_tasks_list(
 }
 
 #[tauri::command]
-pub fn orchestrator_cancel_task(
+// Must be async: cancel_with_force resolves a Tokio handle to send the graceful
+// Agent Client Protocol cancel. A sync command runs outside Tauri's runtime, so
+// the handle lookup fails and the agent is only force-killed (or not at all).
+pub async fn orchestrator_cancel_task(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     task_id: String,
     force: Option<bool>,
@@ -2083,7 +2086,8 @@ pub fn orchestrator_cancel_task(
 
 /// Stop button on the parent chat: children and grandchildren go first.
 #[tauri::command]
-pub fn orchestrator_cancel_all(
+// Same Tokio-context requirement as orchestrator_cancel_task.
+pub async fn orchestrator_cancel_all(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
     force: Option<bool>,
