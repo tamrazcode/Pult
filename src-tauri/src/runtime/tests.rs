@@ -3517,6 +3517,37 @@ fn provider_home_paths_map_to_the_provider_env_var() {
 }
 
 #[test]
+fn shadow_home_is_created_and_shares_auth_json() {
+    let base = std::env::temp_dir().join(format!(
+        "pult-shadow-{}-{}",
+        std::process::id(),
+        crate::events::now_millis()
+    ));
+    let home = base.join("home");
+    let shadow = base.join("shadow");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("auth.json"), "token-123").unwrap();
+
+    let mut spec = crate::config::mock_spec();
+    spec.id = "codex".to_string();
+    spec.home_path = Some(home.to_string_lossy().into_owned());
+    spec.shadow_home_path = Some(format!("  {}  ", shadow.display()));
+    super::prepare_shadow_home(&spec);
+
+    let shared = shadow.join("auth.json");
+    assert!(
+        shared.is_file(),
+        "auth.json should exist in the shadow home"
+    );
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "token-123");
+
+    // Idempotent: a second spawn keeps the existing file.
+    super::prepare_shadow_home(&spec);
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "token-123");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
 fn claude_spawn_strips_nested_session_env() {
     let mut claude = crate::config::mock_spec();
     claude.id = "claude-code".to_string();

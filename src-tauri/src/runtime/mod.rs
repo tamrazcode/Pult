@@ -407,6 +407,44 @@ fn provider_home_env(spec: &crate::config::InstanceSpec) -> Option<&'static str>
     }
 }
 
+/// Hardlink (or copy) the provider's `auth.json` into a shadow home so the
+/// shadow profile starts signed in without sharing the whole config tree.
+/// Best effort: a read-only profile must not stop the agent from spawning.
+fn prepare_shadow_home(spec: &crate::config::InstanceSpec) {
+    let Some(shadow) = spec
+        .shadow_home_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    if let Err(error) = std::fs::create_dir_all(shadow) {
+        tracing::warn!(target: "pult::runtime", path = %shadow, error = %error,
+            "could not create the shadow provider home");
+        return;
+    }
+    let Some(home) = spec
+        .home_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return;
+    };
+    let auth = std::path::Path::new(home).join("auth.json");
+    let target = std::path::Path::new(shadow).join("auth.json");
+    if !auth.is_file() || target.exists() {
+        return;
+    }
+    if std::fs::hard_link(&auth, &target).is_err() {
+        if let Err(error) = std::fs::copy(&auth, &target) {
+            tracing::warn!(target: "pult::runtime", path = %target.display(), error = %error,
+                "could not share auth.json with the shadow provider home");
+        }
+    }
+}
+
 /// A Claude agent started from inside another Claude session refuses to run;
 /// these variables come from Pult's environment, not from the user's config.
 fn nested_session_env(spec: &crate::config::InstanceSpec) -> Vec<String> {
@@ -935,6 +973,7 @@ impl AgentRuntime {
             )));
         }
         let env = merged_env(&self.store, &spec)?;
+        prepare_shadow_home(&spec);
         match spec.driver.as_str() {
             "mock" => {
                 let mut config = mock_spawn_config().ok_or_else(|| {
