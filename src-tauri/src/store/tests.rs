@@ -7,6 +7,35 @@ use super::*;
 use crate::events::{Event, EventKind, PermissionOption, PlanEntry, PlanEntryStatus};
 
 #[test]
+fn provider_model_preferences_round_trip_and_delete() {
+    let store = Store::open_in_memory().unwrap();
+    let prefs = crate::store::ProviderModelPrefs {
+        instance_id: "codex".to_string(),
+        default_model_id: Some("gpt-6".to_string()),
+        disable_all: false,
+        disabled_models: vec!["gpt-5".to_string()],
+        model_order: vec!["gpt-6".to_string(), "gpt-5".to_string()],
+        custom_models: vec!["my-model".to_string()],
+        updated_at: 0,
+    };
+    store.set_provider_model_prefs(&prefs).unwrap();
+    let loaded = store
+        .get_provider_model_prefs("codex")
+        .unwrap()
+        .expect("stored prefs");
+    assert_eq!(loaded.instance_id, prefs.instance_id);
+    assert_eq!(loaded.default_model_id, prefs.default_model_id);
+    assert_eq!(loaded.disabled_models, prefs.disabled_models);
+    assert_eq!(loaded.model_order, prefs.model_order);
+    assert_eq!(loaded.custom_models, prefs.custom_models);
+    assert!(loaded.updated_at > 0);
+    assert_eq!(store.list_provider_model_prefs().unwrap().len(), 1);
+
+    store.delete_provider_model_prefs("codex").unwrap();
+    assert!(store.get_provider_model_prefs("codex").unwrap().is_none());
+}
+
+#[test]
 fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
     let store = Store::open_in_memory().unwrap();
     let mut parent = thread("parent", 1);
@@ -581,7 +610,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 7, "migrations applied through v7");
+    assert_eq!(version, 8, "migrations applied through v8");
     drop(first);
 
     let second = Store::open(&path).unwrap();
@@ -867,7 +896,7 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 7, "migrations v4-v7 should bump user_version to 7");
+    assert_eq!(version, 8, "migrations v4-v8 should bump user_version to 8");
 
     let has_pinned_col: bool = store
         .with_conn(|conn| {

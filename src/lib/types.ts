@@ -139,6 +139,8 @@ export interface InstanceInfo {
   env: Record<string, string>;
   /** Secret env names with hasValue + mask; raw values never cross IPC. */
   secretEnv?: SecretEnvMeta[];
+  homePath?: string | null;
+  shadowHomePath?: string | null;
   status: "stopped" | "starting" | "running" | "crashed" | "needs_auth";
   /** From the last handshake: image content blocks accepted in prompts. */
   promptImage: boolean;
@@ -164,6 +166,8 @@ export interface InstanceSpec {
   env: Record<string, string>;
   /** Env names whose values live in SecretStore. */
   secretEnvKeys?: string[];
+  homePath?: string | null;
+  shadowHomePath?: string | null;
   /** Disabled providers stay configured but never spawn (T3-style toggle). */
   enabled: boolean;
 }
@@ -172,6 +176,16 @@ export interface SecretEnvMeta {
   key: string;
   hasValue: boolean;
   masked?: string | null;
+}
+
+export interface ProviderModelPrefs {
+  instanceId: string;
+  defaultModelId?: string | null;
+  disableAll: boolean;
+  disabledModels: string[];
+  modelOrder: string[];
+  customModels: string[];
+  updatedAt: number;
 }
 
 /** One advertised ACP auth method (agent-managed or terminal). */

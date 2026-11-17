@@ -1396,6 +1396,8 @@ fn auth_runtime(env: &[(&str, &str)]) -> (Arc<AgentRuntime>, Arc<TestSink>) {
         command: String::new(),
         args: Vec::new(),
         secret_env_keys: Vec::new(),
+        home_path: None,
+        shadow_home_path: None,
         enabled: true,
         env: env
             .iter()
@@ -3413,6 +3415,8 @@ async fn provider_switch_emits_context_reset_notice() {
             command: "node".to_string(),
             args: Vec::new(),
             secret_env_keys: Vec::new(),
+            home_path: None,
+            shadow_home_path: None,
             env: Default::default(),
             enabled: true,
         };
@@ -3487,9 +3491,55 @@ async fn provider_switch_emits_context_reset_notice() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
+#[test]
+fn provider_home_paths_map_to_the_provider_env_var() {
+    let store = crate::store::Store::open_in_memory().unwrap();
+    let mut claude = crate::config::mock_spec();
+    claude.id = "claude-code".to_string();
+    claude.command = "npx".to_string();
+    claude.home_path = Some("C:\\claude-home".to_string());
+    let env = super::merged_env(&store, &claude).unwrap();
+    assert_eq!(
+        env.get("CLAUDE_CONFIG_DIR").map(String::as_str),
+        Some("C:\\claude-home")
+    );
+
+    let mut codex = crate::config::mock_spec();
+    codex.id = "codex".to_string();
+    codex.command = "npx".to_string();
+    codex.home_path = Some("C:\\codex-home".to_string());
+    codex.shadow_home_path = Some("C:\\codex-shadow".to_string());
+    let env = super::merged_env(&store, &codex).unwrap();
+    assert_eq!(
+        env.get("CODEX_HOME").map(String::as_str),
+        Some("C:\\codex-shadow")
+    );
+}
+
+#[test]
+fn startup_migration_moves_plaintext_credentials_without_touching_plain_env() {
+    let store = crate::store::Store::open_in_memory().unwrap();
+    let mut spec = crate::config::mock_spec();
+    spec.env
+        .insert("ANTHROPIC_API_KEY".to_string(), "sk-migrate-1234".to_string());
+    spec.env.insert("LOG_LEVEL".to_string(), "debug".to_string());
+    let (specs, changed) = super::move_plaintext_env(&store, vec![spec]);
+    assert!(changed);
+    let spec = &specs[0];
+    assert!(!spec.env.contains_key("ANTHROPIC_API_KEY"));
+    assert_eq!(spec.env.get("LOG_LEVEL").map(String::as_str), Some("debug"));
+    assert_eq!(spec.secret_env_keys, vec!["ANTHROPIC_API_KEY".to_string()]);
+    assert_eq!(
+        store
+            .get_secret("provider:mock:ANTHROPIC_API_KEY")
+            .unwrap()
+            .as_deref(),
+        Some("sk-migrate-1234")
+    );
+}
+
 #[tokio::test]
-async fn provider_secret_env_is_masked_and_merged_into_the_spawn_env() {
-    let (runtime, _sink) = mock_runtime();
+async fn provider_secret_env_is_masked_and_merged_into_the_spawn_env() {    let (runtime, _sink) = mock_runtime();
     let mut spec = crate::config::mock_spec();
     spec.secret_env_keys = vec!["API_TOKEN".to_string()];
     runtime

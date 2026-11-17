@@ -61,6 +61,8 @@ function specList(infos: InstanceInfo[], id: string, patch: Partial<InstanceSpec
       args: i.args,
       env: i.env,
       secretEnvKeys: (i.secretEnv ?? []).map((secret) => secret.key),
+      homePath: i.homePath ?? null,
+      shadowHomePath: i.shadowHomePath ?? null,
       enabled: i.enabled,
     };
     return i.id === id ? { ...spec, ...patch } : spec;

@@ -869,6 +869,29 @@ pub fn providers_instances_save(
     runtime.set_instances(instances)
 }
 
+#[tauri::command]
+pub fn providers_model_prefs_list(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<Vec<crate::store::ProviderModelPrefs>, PultError> {
+    runtime.store().list_provider_model_prefs()
+}
+
+#[tauri::command]
+pub fn providers_model_prefs_get(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    instance_id: String,
+) -> Result<Option<crate::store::ProviderModelPrefs>, PultError> {
+    runtime.store().get_provider_model_prefs(&instance_id)
+}
+
+#[tauri::command]
+pub fn providers_model_prefs_set(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    prefs: crate::store::ProviderModelPrefs,
+) -> Result<(), PultError> {
+    runtime.store().set_provider_model_prefs(&prefs)
+}
+
 /// Switches the active run's session mode (§5.4; the agent echoes a
 /// mode_change update that the timeline renders). Async: set_mode spawns on
 /// the tokio runtime, and sync commands would run on the main thread.
@@ -2314,6 +2337,8 @@ mod update_tests {
             args: Vec::new(),
             env: Default::default(),
             secret_env_keys: Vec::new(),
+            home_path: None,
+            shadow_home_path: None,
             enabled: true,
         }
     }

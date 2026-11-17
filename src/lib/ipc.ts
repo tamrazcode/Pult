@@ -32,6 +32,7 @@ import type {
   PushOutcome,
   PreflightReport,
   ProcessNode,
+  ProviderModelPrefs,
   QueueUpdatedPayload,
   RememberedPermission,
   Run,
@@ -852,4 +853,18 @@ export function diagnosticsKillProcess(pid: number): Promise<void> {
 
 export function mcpReconnectServer(id: string): Promise<McpProbeResult> {
   return invokeRequired<McpProbeResult>("mcp_reconnect_server", { id });
+}
+
+export function providersModelPrefsList(): Promise<ProviderModelPrefs[]> {
+  return invokeRequired<ProviderModelPrefs[]>("providers_model_prefs_list");
+}
+
+export function providersModelPrefsGet(instanceId: string): Promise<ProviderModelPrefs | null> {
+  return invokeRequired<ProviderModelPrefs | null>("providers_model_prefs_get", {
+    instanceId,
+  });
+}
+
+export function providersModelPrefsSet(prefs: ProviderModelPrefs): Promise<void> {
+  return invokeRequired<void>("providers_model_prefs_set", { prefs });
 }

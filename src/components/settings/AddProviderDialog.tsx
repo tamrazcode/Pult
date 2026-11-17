@@ -48,6 +48,8 @@ export function AddProviderDialog({
   const [id, setId] = useState(initial.id);
   const [command, setCommand] = useState(initial.command);
   const [args, setArgs] = useState(initial.args);
+  const [homePath, setHomePath] = useState("");
+  const [shadowHomePath, setShadowHomePath] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -102,6 +104,8 @@ export function AddProviderDialog({
     setId(fields.id);
     setCommand(fields.command);
     setArgs(fields.args);
+    setHomePath("");
+    setShadowHomePath("");
     setApiKey("");
     setError(null);
   };
@@ -169,6 +173,8 @@ export function AddProviderDialog({
           args: instance.args,
           env: instance.env,
           secretEnvKeys: (instance.secretEnv ?? []).map((secret) => secret.key),
+          homePath: instance.homePath ?? null,
+          shadowHomePath: instance.shadowHomePath ?? null,
           enabled: instance.enabled,
         }));
       next.push({
@@ -182,6 +188,8 @@ export function AddProviderDialog({
           .filter(Boolean),
         env: entry.apiKeyEnv && apiKey.trim() ? { [entry.apiKeyEnv]: apiKey.trim() } : {},
         secretEnvKeys: entry.apiKeyEnv && apiKey.trim() ? [entry.apiKeyEnv] : [],
+        homePath: homePath.trim() || null,
+        shadowHomePath: shadowHomePath.trim() || null,
         enabled: true,
       });
       await providersInstancesSave(next);
@@ -197,6 +205,8 @@ export function AddProviderDialog({
             args: instance.args,
             env: instance.env,
             secretEnvKeys: (instance.secretEnv ?? []).map((secret) => secret.key),
+            homePath: instance.homePath ?? null,
+            shadowHomePath: instance.shadowHomePath ?? null,
             enabled: instance.enabled,
           })),
         );
@@ -419,6 +429,29 @@ export function AddProviderDialog({
                   onChange={(event) => setArgs(event.target.value)}
                   rows={3}
                   className="mt-1.5 w-full resize-y rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 py-1.5 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-text-primary">Home path</span>
+                <span className="mt-0.5 block text-xs text-text-tertiary">
+                  Optional config directory: CLAUDE_CONFIG_DIR for Claude, CODEX_HOME for Codex.
+                </span>
+                <input
+                  value={homePath}
+                  onChange={(event) => setHomePath(event.target.value)}
+                  placeholder="C:\\Users\\me\\.claude"
+                  className="mt-1.5 h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="text-sm font-medium text-text-primary">Shadow home path</span>
+                <span className="mt-0.5 block text-xs text-text-tertiary">
+                  Optional separate profile; wins over the home path when set.
+                </span>
+                <input
+                  value={shadowHomePath}
+                  onChange={(event) => setShadowHomePath(event.target.value)}
+                  className="mt-1.5 h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
                 />
               </label>
               {entry.installPackage && !detectedAgent && (

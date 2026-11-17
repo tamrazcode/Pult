@@ -86,6 +86,9 @@ pub struct InstanceInfo {
     pub env: HashMap<String, String>,
     /// Secret env names with `hasValue` + mask; raw values never cross IPC.
     pub secret_env: Vec<SecretEnvMeta>,
+    /// Provider config directory shown in Settings.
+    pub home_path: Option<String>,
+    pub shadow_home_path: Option<String>,
     pub status: String,
     /// From the last initialize this instance answered: images in prompts.
     pub prompt_image: bool,
@@ -373,7 +376,30 @@ fn merged_env(
             })?;
         env.insert(key.clone(), value);
     }
+    if let Some(home) = spec
+        .shadow_home_path
+        .as_deref()
+        .or(spec.home_path.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(variable) = provider_home_env(spec) {
+            env.insert(variable.to_string(), home.to_string());
+        }
+    }
     Ok(env)
+}
+
+/// Env variable a provider reads for its config directory.
+fn provider_home_env(spec: &crate::config::InstanceSpec) -> Option<&'static str> {
+    let haystack = format!("{} {}", spec.id, spec.command).to_ascii_lowercase();
+    if haystack.contains("claude") {
+        Some("CLAUDE_CONFIG_DIR")
+    } else if haystack.contains("codex") {
+        Some("CODEX_HOME")
+    } else {
+        None
+    }
 }
 
 fn looks_secret_env(key: &str) -> bool {
@@ -390,8 +416,23 @@ fn looks_secret_env(key: &str) -> bool {
 /// credential-looking name move into the vault and the file is rewritten.
 fn migrate_plaintext_env(
     store: &crate::store::Store,
-    mut specs: Vec<crate::config::InstanceSpec>,
+    specs: Vec<crate::config::InstanceSpec>,
 ) -> Vec<crate::config::InstanceSpec> {
+    let (specs, changed) = move_plaintext_env(store, specs);
+    if changed {
+        if let Err(error) = crate::config::save_instances(&crate::pult_home(), &specs) {
+            tracing::warn!(target: "pult::runtime", error = %error,
+                "provider secret migration could not rewrite config.toml");
+        }
+    }
+    specs
+}
+
+/// Pure half of the migration (no file writes), shared with tests.
+fn move_plaintext_env(
+    store: &crate::store::Store,
+    mut specs: Vec<crate::config::InstanceSpec>,
+) -> (Vec<crate::config::InstanceSpec>, bool) {
     let mut changed = false;
     for spec in &mut specs {
         let keys: Vec<String> = spec.env.keys().cloned().collect();
@@ -414,13 +455,7 @@ fn migrate_plaintext_env(
             }
         }
     }
-    if changed {
-        if let Err(error) = crate::config::save_instances(&crate::pult_home(), &specs) {
-            tracing::warn!(target: "pult::runtime", error = %error,
-                "provider secret migration could not rewrite config.toml");
-        }
-    }
-    specs
+    (specs, changed)
 }
 
 /// Binary agents run for the stdio MCP bridge (`pult mcp-stdio`).
@@ -831,6 +866,8 @@ impl AgentRuntime {
                             }
                         })
                         .collect(),
+                    home_path: spec.home_path.clone(),
+                    shadow_home_path: spec.shadow_home_path.clone(),
                     status: if caps.auth_required {
                         "needs_auth".to_string()
                     } else {
@@ -976,6 +1013,7 @@ impl AgentRuntime {
                 let _ = self
                     .store
                     .delete_secrets_with_prefix(&format!("provider:{}:", old.id));
+                let _ = self.store.delete_provider_model_prefs(&old.id);
             }
         }
         crate::config::save_instances(&crate::pult_home(), &cleaned)?;

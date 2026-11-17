@@ -1,6 +1,12 @@
 import { create } from "zustand";
 import { isEditorId, type EditorId } from "../lib/editors";
-import { settingsGet, settingsSet } from "../lib/ipc";
+import {
+  settingsGet,
+  settingsSet,
+  providersModelPrefsList,
+  providersModelPrefsSet,
+} from "../lib/ipc";
+import type { ProviderModelPrefs } from "../lib/types";
 import { isTauri } from "../lib/tauri";
 import { applyLocale } from "../lib/i18n/store";
 import type { LocaleId } from "../lib/i18n/types";
@@ -76,6 +82,9 @@ interface SettingsState {
   favoriteModels: Record<string, string[]>;
   disabledModels: Record<string, string[]>;
   modelOrder: Record<string, string[]>;
+  /** Raw per-instance prefs (default/custom models and disableAll). */
+  modelPrefs: Record<string, ProviderModelPrefs>;
+  modelsDisabledAll: Record<string, boolean>;
   setTheme: (theme: ThemeName) => void;
   setAccentHue: (hue: number | null) => void;
   setPermissionMode: (mode: PermissionMode) => void;
@@ -99,6 +108,19 @@ interface SettingsState {
 
 const isThemeName = (v: unknown): v is ThemeName =>
   v === "dark" || v === "light" || v === "graphite";
+
+/** Current model prefs for one instance, preserving default/custom fields. */
+function modelPrefsFor(state: SettingsState, instanceId: string): ProviderModelPrefs {
+  return {
+    instanceId,
+    defaultModelId: state.favoriteModels[instanceId]?.[0] ?? null,
+    disableAll: state.modelsDisabledAll[instanceId] ?? false,
+    disabledModels: state.disabledModels[instanceId] ?? [],
+    modelOrder: state.modelOrder[instanceId] ?? [],
+    customModels: state.modelPrefs[instanceId]?.customModels ?? [],
+    updatedAt: 0,
+  };
+}
 
 /** Lowercase handle without the leading @; 2–24 letters, digits or underscores. */
 export function isValidHandle(value: string): boolean {
@@ -153,6 +175,8 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   favoriteModels: {},
   disabledModels: {},
   modelOrder: {},
+  modelPrefs: {},
+  modelsDisabledAll: {},
   setTheme: (theme) => {
     set({ theme });
     applyTheme(theme, get().accentHue);
@@ -232,26 +256,42 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       : [...current, modelId];
     const favoriteModels = { ...get().favoriteModels, [instanceId]: next };
     set({ favoriteModels });
-    if (isTauri()) void settingsSet("favorite_models", favoriteModels).catch(() => {});
+    if (isTauri()) {
+      void settingsSet("favorite_models", favoriteModels).catch(() => {});
+      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+    }
   },
   toggleModelEnabled: (instanceId, modelId) => {
     const current = get().disabledModels[instanceId] ?? [];
-    const next = current.includes(modelId)
-      ? current.filter((id) => id !== modelId)
-      : [...current, modelId];
+    const enabling = current.includes(modelId);
+    const next = enabling ? current.filter((id) => id !== modelId) : [...current, modelId];
     const disabledModels = { ...get().disabledModels, [instanceId]: next };
-    set({ disabledModels });
-    if (isTauri()) void settingsSet("disabled_models", disabledModels).catch(() => {});
+    const modelsDisabledAll = {
+      ...get().modelsDisabledAll,
+      [instanceId]: enabling ? false : (get().modelsDisabledAll[instanceId] ?? false),
+    };
+    set({ disabledModels, modelsDisabledAll });
+    if (isTauri()) {
+      void settingsSet("disabled_models", disabledModels).catch(() => {});
+      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+    }
   },
   disableAllModels: (instanceId, modelIds) => {
     const disabledModels = { ...get().disabledModels, [instanceId]: [...modelIds] };
-    set({ disabledModels });
-    if (isTauri()) void settingsSet("disabled_models", disabledModels).catch(() => {});
+    const modelsDisabledAll = { ...get().modelsDisabledAll, [instanceId]: true };
+    set({ disabledModels, modelsDisabledAll });
+    if (isTauri()) {
+      void settingsSet("disabled_models", disabledModels).catch(() => {});
+      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+    }
   },
   setModelOrder: (instanceId, order) => {
     const modelOrder = { ...get().modelOrder, [instanceId]: order };
     set({ modelOrder });
-    if (isTauri()) void settingsSet("model_order", modelOrder).catch(() => {});
+    if (isTauri()) {
+      void settingsSet("model_order", modelOrder).catch(() => {});
+      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+    }
   },
   hydrate: async () => {
     if (!isTauri()) return;
@@ -274,6 +314,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       glassOpacity,
       language,
       profile,
+      modelPrefsList,
     ] = await Promise.all([
       settingsGet("theme").catch(() => null),
       settingsGet("accent_hue").catch(() => null),
@@ -293,6 +334,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("glass_opacity").catch(() => null),
       settingsGet("language").catch(() => null),
       settingsGet("profile").catch(() => null),
+      providersModelPrefsList().catch(() => [] as ProviderModelPrefs[]),
     ]);
     const resolvedTheme = isThemeName(theme) ? theme : "graphite";
     const resolvedHue =
@@ -340,6 +382,26 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           ? (modelOrder as Record<string, string[]>)
           : {},
     });
+    if (modelPrefsList.length > 0) {
+      const modelPrefs = Object.fromEntries(
+        modelPrefsList.map((prefs) => [prefs.instanceId, prefs]),
+      );
+      const disabledFromPrefs = Object.fromEntries(
+        modelPrefsList.map((prefs) => [prefs.instanceId, prefs.disabledModels]),
+      );
+      const orderFromPrefs = Object.fromEntries(
+        modelPrefsList.map((prefs) => [prefs.instanceId, prefs.modelOrder]),
+      );
+      const modelsDisabledAll = Object.fromEntries(
+        modelPrefsList.filter((prefs) => prefs.disableAll).map((prefs) => [prefs.instanceId, true]),
+      );
+      set((state) => ({
+        modelPrefs,
+        modelsDisabledAll,
+        disabledModels: { ...state.disabledModels, ...disabledFromPrefs },
+        modelOrder: { ...state.modelOrder, ...orderFromPrefs },
+      }));
+    }
     applyTheme(resolvedTheme, resolvedHue);
     useGitStore.setState({ viewMode: diffViewMode === "split" ? "split" : "unified" });
   },

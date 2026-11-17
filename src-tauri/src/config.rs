@@ -30,6 +30,12 @@ pub struct InstanceSpec {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[serde(rename = "secretEnvKeys")]
     pub secret_env_keys: Vec<String>,
+    /// Provider config directory (`CLAUDE_CONFIG_DIR` / `CODEX_HOME`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_path: Option<String>,
+    /// Optional shadow profile directory; wins over `home_path` when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadow_home_path: Option<String>,
     /// Disabled providers stay configured but never spawn (T3-style toggle).
     #[serde(default = "default_true")]
     pub enabled: bool,
@@ -53,6 +59,8 @@ pub fn mock_spec() -> InstanceSpec {
         args: Vec::new(),
         env: Default::default(),
         secret_env_keys: Vec::new(),
+        home_path: None,
+        shadow_home_path: None,
         enabled: true,
     }
 }
@@ -375,6 +383,8 @@ mod tests {
                     .into_iter()
                     .collect(),
                 secret_env_keys: Vec::new(),
+                home_path: None,
+                shadow_home_path: None,
                 enabled: true,
             },
         ];

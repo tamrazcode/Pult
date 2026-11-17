@@ -12,6 +12,7 @@ mod events;
 mod migrations;
 mod projects;
 mod queue;
+mod providers;
 pub mod records;
 mod runs;
 mod secrets;
@@ -22,6 +23,7 @@ pub mod usage;
 
 pub use custom_mcp::McpBinding;
 pub use delegated_tasks::DelegatedTaskUpdate;
+pub use providers::ProviderModelPrefs;
 pub use records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
 
 use std::path::Path;

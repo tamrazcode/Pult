@@ -19,6 +19,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_5,
     migration_6,
     migration_7,
+    migration_8,
 ];
 
 /// Applies every migration newer than the stored `user_version`.
@@ -265,4 +266,23 @@ fn migration_7(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 7: app secrets", e))
+}
+
+/// Version 8: per-instance model preferences (default, disabled, order,
+/// custom models). Instance ids live in config.toml, so no foreign key.
+fn migration_8(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        CREATE TABLE provider_model_preferences (
+            instance_id TEXT PRIMARY KEY,
+            default_model_id TEXT NULL,
+            disable_all INTEGER NOT NULL DEFAULT 0,
+            disabled_models_json TEXT NOT NULL DEFAULT '[]',
+            model_order_json TEXT NOT NULL DEFAULT '[]',
+            custom_models_json TEXT NOT NULL DEFAULT '[]',
+            updated_at INTEGER NOT NULL
+        );
+        "#,
+    )
+    .map_err(|e| sql("migration 8: provider model preferences", e))
 }

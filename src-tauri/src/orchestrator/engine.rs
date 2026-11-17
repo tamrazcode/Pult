@@ -90,13 +90,27 @@ impl OrchestratorEngine {
 
     fn capabilities(&self, scope: &McpScope) -> Result<Value, String> {
         let runtime = self.runtime()?;
+        let disabled: std::collections::HashMap<String, Vec<String>> = self
+            .store
+            .get_setting("disabled_models")
+            .ok()
+            .flatten()
+            .and_then(|value| serde_json::from_value(value).ok())
+            .unwrap_or_default();
+        let prefs: std::collections::HashMap<String, crate::store::ProviderModelPrefs> = self
+            .store
+            .list_provider_model_prefs()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|prefs| (prefs.instance_id.clone(), prefs))
+            .collect();
         // Disabled instances stay visible but cannot be chosen.
         let instances: Vec<Value> = runtime
             .instances()
             .into_iter()
             .filter(|instance| instance.enabled)
             .map(|instance| {
-                let model = instance
+                let mut model = instance
                     .config_options
                     .iter()
                     .find(|option| {
@@ -109,6 +123,11 @@ impl OrchestratorEngine {
                         SessionConfigOptionKind::Boolean { .. } => None,
                     })
                     .unwrap_or_default();
+                if let Some(prefs) = prefs.get(&instance.id) {
+                    apply_model_prefs(&mut model, prefs);
+                } else if let Some(disabled_ids) = disabled.get(&instance.id) {
+                    retain_enabled_models(&mut model, disabled_ids);
+                }
                 json!({
                     "instanceId": instance.id,
                     "displayName": instance.display_name,
@@ -1031,6 +1050,22 @@ impl OrchestratorEngine {
     }
 }
 
+fn apply_model_prefs(models: &mut Vec<Value>, prefs: &crate::store::ProviderModelPrefs) {
+    if prefs.disable_all {
+        models.clear();
+    } else {
+        retain_enabled_models(models, &prefs.disabled_models);
+    }
+}
+
+fn retain_enabled_models(models: &mut Vec<Value>, disabled_ids: &[String]) {
+    models.retain(|item| {
+        !disabled_ids
+            .iter()
+            .any(|id| item["id"].as_str() == Some(id.as_str()))
+    });
+}
+
 fn flatten_options(options: &SessionConfigSelectOptions) -> Vec<Value> {
     match options {
         SessionConfigSelectOptions::Flat(items) => items
@@ -1148,6 +1183,41 @@ impl OrchestratorHost for RuntimeHost {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disable_all_and_disabled_models_hide_capability_models() {
+        let mut models = vec![
+            json!({ "id": "a", "name": "A" }),
+            json!({ "id": "b", "name": "B" }),
+        ];
+        let mut prefs = crate::store::ProviderModelPrefs {
+            instance_id: "i".into(),
+            default_model_id: None,
+            disable_all: false,
+            disabled_models: vec!["b".into()],
+            model_order: Vec::new(),
+            custom_models: Vec::new(),
+            updated_at: 0,
+        };
+        apply_model_prefs(&mut models, &prefs);
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0]["id"], "a");
+        prefs.disable_all = true;
+        apply_model_prefs(&mut models, &prefs);
+        assert!(models.is_empty());
+    }
+
+    #[test]
+    fn disabled_models_are_hidden_from_capabilities() {
+        let mut models = vec![
+            json!({ "id": "a", "name": "A" }),
+            json!({ "id": "b", "name": "B" }),
+            json!({ "id": "c", "name": "C" }),
+        ];
+        retain_enabled_models(&mut models, &["b".to_string()]);
+        assert_eq!(models.len(), 2);
+        assert!(models.iter().all(|model| model["id"] != "b"));
+    }
 
     #[test]
     fn task_json_carries_duration_and_lineage() {
