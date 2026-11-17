@@ -111,13 +111,14 @@ const isThemeName = (v: unknown): v is ThemeName =>
 
 /** Current model prefs for one instance, preserving default/custom fields. */
 function modelPrefsFor(state: SettingsState, instanceId: string): ProviderModelPrefs {
+  const existing = state.modelPrefs[instanceId];
   return {
     instanceId,
-    defaultModelId: state.favoriteModels[instanceId]?.[0] ?? null,
-    disableAll: state.modelsDisabledAll[instanceId] ?? false,
+    defaultModelId: state.favoriteModels[instanceId]?.[0] ?? existing?.defaultModelId ?? null,
+    disableAll: state.modelsDisabledAll[instanceId] ?? existing?.disableAll ?? false,
     disabledModels: state.disabledModels[instanceId] ?? [],
     modelOrder: state.modelOrder[instanceId] ?? [],
-    customModels: state.modelPrefs[instanceId]?.customModels ?? [],
+    customModels: existing?.customModels ?? [],
     updatedAt: 0,
   };
 }
@@ -256,14 +257,17 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       : [...current, modelId];
     const favoriteModels = { ...get().favoriteModels, [instanceId]: next };
     set({ favoriteModels });
+    const prefs = modelPrefsFor(get(), instanceId);
+    set((state) => ({ modelPrefs: { ...state.modelPrefs, [instanceId]: prefs } }));
     if (isTauri()) {
       void settingsSet("favorite_models", favoriteModels).catch(() => {});
-      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+      void providersModelPrefsSet(prefs).catch(() => {});
     }
   },
   toggleModelEnabled: (instanceId, modelId) => {
     const current = get().disabledModels[instanceId] ?? [];
-    const enabling = current.includes(modelId);
+    // With disable-all on, every model is off even if the list is stale.
+    const enabling = (get().modelsDisabledAll[instanceId] ?? false) || current.includes(modelId);
     const next = enabling ? current.filter((id) => id !== modelId) : [...current, modelId];
     const disabledModels = { ...get().disabledModels, [instanceId]: next };
     const modelsDisabledAll = {
@@ -271,26 +275,32 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       [instanceId]: enabling ? false : (get().modelsDisabledAll[instanceId] ?? false),
     };
     set({ disabledModels, modelsDisabledAll });
+    const prefs = modelPrefsFor(get(), instanceId);
+    set((state) => ({ modelPrefs: { ...state.modelPrefs, [instanceId]: prefs } }));
     if (isTauri()) {
       void settingsSet("disabled_models", disabledModels).catch(() => {});
-      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+      void providersModelPrefsSet(prefs).catch(() => {});
     }
   },
   disableAllModels: (instanceId, modelIds) => {
     const disabledModels = { ...get().disabledModels, [instanceId]: [...modelIds] };
     const modelsDisabledAll = { ...get().modelsDisabledAll, [instanceId]: true };
     set({ disabledModels, modelsDisabledAll });
+    const prefs = modelPrefsFor(get(), instanceId);
+    set((state) => ({ modelPrefs: { ...state.modelPrefs, [instanceId]: prefs } }));
     if (isTauri()) {
       void settingsSet("disabled_models", disabledModels).catch(() => {});
-      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+      void providersModelPrefsSet(prefs).catch(() => {});
     }
   },
   setModelOrder: (instanceId, order) => {
     const modelOrder = { ...get().modelOrder, [instanceId]: order };
     set({ modelOrder });
+    const prefs = modelPrefsFor(get(), instanceId);
+    set((state) => ({ modelPrefs: { ...state.modelPrefs, [instanceId]: prefs } }));
     if (isTauri()) {
       void settingsSet("model_order", modelOrder).catch(() => {});
-      void providersModelPrefsSet(modelPrefsFor(get(), instanceId)).catch(() => {});
+      void providersModelPrefsSet(prefs).catch(() => {});
     }
   },
   hydrate: async () => {
@@ -393,14 +403,24 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         modelPrefsList.map((prefs) => [prefs.instanceId, prefs.modelOrder]),
       );
       const modelsDisabledAll = Object.fromEntries(
-        modelPrefsList.filter((prefs) => prefs.disableAll).map((prefs) => [prefs.instanceId, true]),
+        modelPrefsList.map((prefs) => [prefs.instanceId, prefs.disableAll]),
       );
-      set((state) => ({
-        modelPrefs,
-        modelsDisabledAll,
-        disabledModels: { ...state.disabledModels, ...disabledFromPrefs },
-        modelOrder: { ...state.modelOrder, ...orderFromPrefs },
-      }));
+      set((state) => {
+        // Legacy favorite_models may be empty while SQLite keeps the default.
+        const seededFavorites = { ...state.favoriteModels };
+        for (const prefs of modelPrefsList) {
+          if (!seededFavorites[prefs.instanceId]?.length && prefs.defaultModelId) {
+            seededFavorites[prefs.instanceId] = [prefs.defaultModelId];
+          }
+        }
+        return {
+          modelPrefs,
+          modelsDisabledAll,
+          favoriteModels: seededFavorites,
+          disabledModels: { ...state.disabledModels, ...disabledFromPrefs },
+          modelOrder: { ...state.modelOrder, ...orderFromPrefs },
+        };
+      });
     }
     applyTheme(resolvedTheme, resolvedHue);
     useGitStore.setState({ viewMode: diffViewMode === "split" ? "split" : "unified" });

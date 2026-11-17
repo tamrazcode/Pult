@@ -379,9 +379,14 @@ fn merged_env(
     if let Some(home) = spec
         .shadow_home_path
         .as_deref()
-        .or(spec.home_path.as_deref())
         .map(str::trim)
         .filter(|value| !value.is_empty())
+        .or_else(|| {
+            spec.home_path
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
     {
         if let Some(variable) = provider_home_env(spec) {
             env.insert(variable.to_string(), home.to_string());

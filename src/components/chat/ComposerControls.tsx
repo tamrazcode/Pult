@@ -431,8 +431,10 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
   const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
   const allDisabledModels = useSettingsStore((s) => s.disabledModels);
   const allModelOrder = useSettingsStore((s) => s.modelOrder);
+  const modelsDisabledAll = useSettingsStore((s) => s.modelsDisabledAll);
   const disabledModels = selected ? (allDisabledModels[selected.id] ?? []) : [];
   const modelOrder = selected ? (allModelOrder[selected.id] ?? []) : [];
+  const disableAll = selected ? (modelsDisabledAll[selected.id] ?? false) : false;
   const modelItems = modelOption ? flattenSelectOptions(modelOption.options) : [];
   const orderedModels = [...modelItems].sort((a, b) => {
     const ai = modelOrder.indexOf(a.value);
@@ -442,7 +444,7 @@ export function ProviderModelPicker({ threadId }: { threadId?: string }) {
     if (bi === -1) return -1;
     return ai - bi;
   });
-  const visibleModels = orderedModels
+  const visibleModels = (disableAll ? [] : orderedModels)
     .filter((item) => !disabledModels.includes(item.value))
     .filter((item) => item.name.toLowerCase().includes(modelQuery.trim().toLowerCase()));
   // Codex exposes a boolean "fast" switch; surface it as a lightning bolt

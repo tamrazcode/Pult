@@ -179,12 +179,14 @@ function ProvidersSettings() {
   const [adding, setAdding] = useState(false);
   const [runtimeDraft, setRuntimeDraft] = useState<DraftRuntime | null>(null);
   const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [homeDraft, setHomeDraft] = useState<{ home: string; shadow: string } | null>(null);
   const [runtimeOpen, setRuntimeOpen] = useState(false);
   const [apiKeyDraft, setApiKeyDraft] = useState("");
   const [envDraft, setEnvDraft] = useState<EnvRow[]>([]);
   const favoriteModels = useSettingsStore((s) => s.favoriteModels);
   const disabledModels = useSettingsStore((s) => s.disabledModels);
   const modelOrder = useSettingsStore((s) => s.modelOrder);
+  const modelsDisabledAll = useSettingsStore((s) => s.modelsDisabledAll);
   const toggleFavoriteModel = useSettingsStore((s) => s.toggleFavoriteModel);
   const toggleModelEnabled = useSettingsStore((s) => s.toggleModelEnabled);
   const disableAllModels = useSettingsStore((s) => s.disableAllModels);
@@ -256,6 +258,7 @@ function ProvidersSettings() {
   useEffect(() => {
     setRuntimeDraft(null);
     setNameDraft(null);
+    setHomeDraft(null);
   }, [selectedId]);
   useEffect(() => {
     setEnvDraft(
@@ -277,7 +280,7 @@ function ProvidersSettings() {
         : [],
     );
     setApiKeyDraft("");
-  }, [selectedId, selected?.env, selected?.secretEnv]);
+  }, [selected]);
 
   const saveEnv = () => {
     if (!selected) return;
@@ -349,6 +352,7 @@ function ProvidersSettings() {
   });
   const disabled = selected ? (disabledModels[selected.id] ?? []) : [];
   const favorites = selected ? (favoriteModels[selected.id] ?? []) : [];
+  const disabledAllSelected = selected ? (modelsDisabledAll[selected.id] ?? false) : false;
   const moveModel = (modelId: string, direction: -1 | 1) => {
     if (!selected) return;
     const ids = orderedModels.map((model) => model.value);
@@ -424,17 +428,11 @@ function ProvidersSettings() {
     setSaveError(null);
     try {
       await providersInstancesSave(
-        instances
-          .filter((i) => i.id !== id)
-          .map((i) => ({
-            id: i.id,
-            displayName: i.displayName,
-            driver: i.driver,
-            command: i.command,
-            args: i.args,
-            env: i.env,
-            enabled: i.enabled,
-          })),
+        specList(
+          instances.filter((i) => i.id !== id),
+          id,
+          {},
+        ),
       );
       await reload();
     } catch (err) {
@@ -457,6 +455,19 @@ function ProvidersSettings() {
     setSaveError(null);
     void saveSpecs(specList(instances, selected.id, { command, args }))
       .then(() => setRuntimeDraft(null))
+      .catch((err) => setSaveError(localizeIpcError(err)));
+  };
+
+  const saveHome = () => {
+    if (!selected || !homeDraft) return;
+    setSaveError(null);
+    void saveSpecs(
+      specList(instances, selected.id, {
+        homePath: homeDraft.home.trim() || null,
+        shadowHomePath: homeDraft.shadow.trim() || null,
+      }),
+    )
+      .then(() => setHomeDraft(null))
       .catch((err) => setSaveError(localizeIpcError(err)));
   };
 
@@ -789,6 +800,57 @@ function ProvidersSettings() {
                 </>
               )}
 
+              <p className="mt-5 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+                Provider home
+              </p>
+              <p className="mt-0.5 text-xs text-text-tertiary">
+                Config directory for this provider; the shadow path wins when set.
+              </p>
+              <div className="mt-1.5 space-y-2">
+                <input
+                  aria-label="Home path"
+                  value={homeDraft ? homeDraft.home : (selected.homePath ?? "")}
+                  onChange={(e) =>
+                    setHomeDraft({
+                      home: e.target.value,
+                      shadow: homeDraft?.shadow ?? selected.shadowHomePath ?? "",
+                    })
+                  }
+                  placeholder="C:\Users\me\.claude"
+                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                />
+                <input
+                  aria-label="Shadow home path"
+                  value={homeDraft ? homeDraft.shadow : (selected.shadowHomePath ?? "")}
+                  onChange={(e) =>
+                    setHomeDraft({
+                      home: homeDraft?.home ?? selected.homePath ?? "",
+                      shadow: e.target.value,
+                    })
+                  }
+                  placeholder="Optional shadow profile"
+                  className="h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:outline-none"
+                />
+                {homeDraft &&
+                  (homeDraft.home !== (selected.homePath ?? "") ||
+                    homeDraft.shadow !== (selected.shadowHomePath ?? "")) && (
+                    <div className="flex justify-end gap-2">
+                      <button
+                        onClick={() => setHomeDraft(null)}
+                        className="flex h-7 items-center rounded-(--radius-sm) px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                      >
+                        <X size={12} /> {t("common.cancel")}
+                      </button>
+                      <button
+                        onClick={saveHome}
+                        className="flex h-7 items-center rounded-(--radius-sm) bg-accent px-3 text-xs font-medium text-accent-fg transition hover:brightness-110"
+                      >
+                        {t("common.save")}
+                      </button>
+                    </div>
+                  )}
+              </div>
+
               <div className="mt-5 flex items-start justify-between gap-2">
                 <div>
                   <p className="text-xs font-semibold tracking-wider text-text-tertiary uppercase">
@@ -900,7 +962,7 @@ function ProvidersSettings() {
               </div>
               <div className="mt-2 space-y-0.5">
                 {orderedModels.map((model) => {
-                  const off = disabled.includes(model.value);
+                  const off = disabledAllSelected || disabled.includes(model.value);
                   const favorite = favorites.includes(model.value);
                   return (
                     <div

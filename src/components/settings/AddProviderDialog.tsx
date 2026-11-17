@@ -439,7 +439,7 @@ export function AddProviderDialog({
                 <input
                   value={homePath}
                   onChange={(event) => setHomePath(event.target.value)}
-                  placeholder="C:\\Users\\me\\.claude"
+                  placeholder="C:\Users\me\.claude"
                   className="mt-1.5 h-8 w-full rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 font-mono text-sm text-text-primary focus:border-border-strong focus:outline-none"
                 />
               </label>
