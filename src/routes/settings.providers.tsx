@@ -354,7 +354,7 @@ function ProvidersSettings() {
     void providersLogin(selected.id).catch((err) => setSaveError(localizeIpcError(err)));
   };
 
-  const modelOption = selected?.configOptions.find(isModelOption) as
+  const modelOption = selected?.configOptions?.find(isModelOption) as
     Extract<InstanceInfo["configOptions"][number], { type: "select" }> | undefined;
   const modelItems = modelOption ? flattenSelectOptions(modelOption.options) : [];
   const selectedOrder = selected ? (modelOrder[selected.id] ?? []) : [];
