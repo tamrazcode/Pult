@@ -13,6 +13,7 @@ import type { LocaleId } from "../lib/i18n/types";
 import { isLocaleId } from "../lib/i18n/types";
 import { applyTheme } from "../lib/theme";
 import { useGitStore } from "./git";
+import { useUiStore } from "./ui";
 
 export type PermissionMode = "supervised" | "auto_edit" | "auto" | "full_access";
 export type ThemeName = "dark" | "light" | "graphite";
@@ -121,6 +122,19 @@ function modelPrefsFor(state: SettingsState, instanceId: string): ProviderModelP
     customModels: existing?.customModels ?? [],
     updatedAt: 0,
   };
+}
+
+/** Model ids the provider advertises right now (disable-all stays exhaustive). */
+function knownModelIds(instanceId: string): string[] {
+  const instance = useUiStore.getState().instances.find((item) => item.id === instanceId);
+  const option = instance?.configOptions.find(
+    (candidate) =>
+      candidate.type === "select" && (candidate.id === "model" || candidate.category === "model"),
+  );
+  if (!option || option.type !== "select") return [];
+  return option.options
+    .flatMap((entry) => ("group" in entry ? entry.options : [entry]))
+    .map((entry) => entry.value);
 }
 
 /** Lowercase handle without the leading @; 2–24 letters, digits or underscores. */
@@ -267,12 +281,25 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   toggleModelEnabled: (instanceId, modelId) => {
     const current = get().disabledModels[instanceId] ?? [];
     // With disable-all on, every model is off even if the list is stale.
-    const enabling = (get().modelsDisabledAll[instanceId] ?? false) || current.includes(modelId);
-    const next = enabling ? current.filter((id) => id !== modelId) : [...current, modelId];
+    const allOff = get().modelsDisabledAll[instanceId] ?? false;
+    const enabling = allOff || current.includes(modelId);
+    let next: string[];
+    if (enabling) {
+      next = current.filter((id) => id !== modelId);
+      if (allOff) {
+        // Enabling one model keeps every other advertised model off, including
+        // ids the stored list never saw (a provider can add models later).
+        for (const id of knownModelIds(instanceId)) {
+          if (id !== modelId && !next.includes(id)) next.push(id);
+        }
+      }
+    } else {
+      next = [...current, modelId];
+    }
     const disabledModels = { ...get().disabledModels, [instanceId]: next };
     const modelsDisabledAll = {
       ...get().modelsDisabledAll,
-      [instanceId]: enabling ? false : (get().modelsDisabledAll[instanceId] ?? false),
+      [instanceId]: enabling ? false : allOff,
     };
     set({ disabledModels, modelsDisabledAll });
     const prefs = modelPrefsFor(get(), instanceId);

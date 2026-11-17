@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import {
   Bot,
@@ -255,21 +255,21 @@ function ProvidersSettings() {
     () => instances.find((i) => i.id === selectedId) ?? null,
     [instances, selectedId],
   );
+  // Drafts are per provider: a background refresh reloads instances but must
+  // not wipe unsaved env edits for the provider the user is still editing.
+  const selectedSnapshot = useRef(selected);
+  selectedSnapshot.current = selected;
   useEffect(() => {
-    setRuntimeDraft(null);
-    setNameDraft(null);
-    setHomeDraft(null);
-  }, [selectedId]);
-  useEffect(() => {
+    const current = selectedSnapshot.current;
     setEnvDraft(
-      selected
+      current
         ? [
-            ...Object.entries(selected.env).map(([key, value]) => ({
+            ...Object.entries(current.env).map(([key, value]) => ({
               key,
               value,
               secret: false,
             })),
-            ...(selected.secretEnv ?? []).map((secret) => ({
+            ...(current.secretEnv ?? []).map((secret) => ({
               key: secret.key,
               value: "",
               secret: true,
@@ -280,7 +280,12 @@ function ProvidersSettings() {
         : [],
     );
     setApiKeyDraft("");
-  }, [selected]);
+  }, [selectedId]);
+  useEffect(() => {
+    setRuntimeDraft(null);
+    setNameDraft(null);
+    setHomeDraft(null);
+  }, [selectedId]);
 
   const saveEnv = () => {
     if (!selected) return;
