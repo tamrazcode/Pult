@@ -838,7 +838,6 @@ function ActionGroupRow({
         >
           {label}
         </span>
-        {spinning && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-accent" />}
         <ChevronRight
           size={12}
           className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}

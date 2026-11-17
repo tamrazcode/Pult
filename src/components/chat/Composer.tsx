@@ -23,8 +23,6 @@ import {
   runsQueueUpdate,
   runsRespondPermission,
   workspaceFiles,
-  attachmentsSaveImage,
-  attachmentsSaveText,
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import {
@@ -108,10 +106,10 @@ const EMPTY_FILES: FileChip[] = [];
 const MAX_ATTACHMENT_TEXT = 200_000;
 const MAX_ATTACHMENT_BYTES = 5_000_000;
 
-function chipFromDataUrl(dataUrl: string): ImageChip | null {
+function chipFromDataUrl(name: string, size: number, dataUrl: string): ImageChip | null {
   const match = /^data:([^;]+);base64,(.+)$/.exec(dataUrl);
   if (!match) return null;
-  return { mimeType: match[1], data: match[2], preview: dataUrl };
+  return { mimeType: match[1], data: match[2], preview: dataUrl, name, size };
 }
 
 function fileToChip(file: File): Promise<ImageChip | null> {
@@ -120,7 +118,11 @@ function fileToChip(file: File): Promise<ImageChip | null> {
   return new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = () =>
-      resolve(typeof reader.result === "string" ? chipFromDataUrl(reader.result) : null);
+      resolve(
+        typeof reader.result === "string"
+          ? chipFromDataUrl(file.name || "image.png", file.size, reader.result)
+          : null,
+      );
     reader.onerror = () => resolve(null);
     reader.readAsDataURL(file);
   });
@@ -144,12 +146,14 @@ async function fileToTextChip(file: File): Promise<FileChip | null> {
     name: file.name,
     text: raw.slice(0, MAX_ATTACHMENT_TEXT),
     truncated: raw.length > MAX_ATTACHMENT_TEXT,
+    size: file.size,
   };
 }
 
-/** `@path`, quoted when the path has spaces, so the agent reads it as one ref. */
-function formatFileRef(path: string): string {
-  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
+function formatAttachmentSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** Text files travel inside the prompt; the agent sees a name and a fence. */
@@ -340,53 +344,41 @@ export function Composer({ threadId }: { threadId?: string }) {
     return () => window.removeEventListener("resize", onResize);
   }, [autosize]);
 
-  const insertTokens = useCallback(
-    (tokens: string[]) => {
-      if (tokens.length === 0) return;
-      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
-      const el = textareaRef.current;
-      const start = el?.selectionStart ?? current.length;
-      const end = el?.selectionEnd ?? current.length;
-      const before = current.slice(0, start);
-      const prefix = before.length > 0 && !/\s/.test(before[before.length - 1]!) ? " " : "";
-      const insertion = `${prefix}${tokens.join(" ")} `;
-      setValue(current.slice(0, start) + insertion + current.slice(end));
-      requestAnimationFrame(() => {
-        const caret = start + insertion.length;
-        textareaRef.current?.setSelectionRange(caret, caret);
-        autosize();
-      });
+  const attachFiles = useCallback(
+    async (picked: FileList | File[] | null) => {
+      if (!picked) return;
+      const list = Array.from(picked);
+      if (list.length === 0) return;
+
+      const room = MAX_ATTACHMENTS - chips.length - fileChips.length;
+      if (room <= 0) {
+        setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
+        return;
+      }
+      if (list.length > room) setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
+      const accepted = list.slice(0, room);
+      const images = accepted.filter((file) => file.type.startsWith("image/"));
+      const docs = accepted.filter((file) => !file.type.startsWith("image/"));
+
+      if (images.length > 0 && !imageCapable) {
+        setError(t("composer.noImagesAttach"));
+      }
+      const importedImages = imageCapable
+        ? (await Promise.all(images.map(fileToChip))).filter(
+            (chip): chip is ImageChip => chip !== null,
+          )
+        : [];
+      const importedDocs = (await Promise.all(docs.map(fileToTextChip))).filter(
+        (chip): chip is FileChip => chip !== null,
+      );
+      if (docs.length > 0 && importedDocs.length === 0) {
+        setError(t("composer.onlyTextFiles"));
+      }
+      if (importedImages.length > 0) setChips((prev) => [...prev, ...importedImages]);
+      if (importedDocs.length > 0) setFileChips((prev) => [...prev, ...importedDocs]);
     },
-    [autosize, draftKey, setValue],
+    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, t],
   );
-
-  const removeImageChip = (index: number) => {
-    const chip = chips[index];
-    if (chip?.token) {
-      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
-      setValue(
-        current
-          .replace(chip.token, "")
-          .replace(/[ \t]{2,}/g, " ")
-          .trimEnd(),
-      );
-    }
-    setChips((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const removeFileChip = (index: number) => {
-    const chip = fileChips[index];
-    if (chip?.token) {
-      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
-      setValue(
-        current
-          .replace(chip.token, "")
-          .replace(/[ \t]{2,}/g, " ")
-          .trimEnd(),
-      );
-    }
-    setFileChips((prev) => prev.filter((_, i) => i !== index));
-  };
 
   const dispatchRun = useCallback(
     async (
@@ -497,9 +489,13 @@ export function Composer({ threadId }: { threadId?: string }) {
     setBusy(true);
     setError(null);
     const images: ImageInput[] = chips.map(({ data, mimeType }) => ({ data, mimeType }));
-    const promptText = withFileAttachments(text, fileChips);
-    const pendingText =
-      text || t("composer.attached", { files: fileChips.map((file) => file.name).join(", ") });
+    const attachedNames = [...chips, ...fileChips].map((attachment) => attachment.name).join(", ");
+    const attachedFallback = attachedNames
+      ? t("composer.attached", { files: attachedNames })
+      : "";
+    // Image-only sends still need a non-empty title and queue label.
+    const promptText = withFileAttachments(text, fileChips) || attachedFallback;
+    const pendingText = text || attachedFallback;
     void (async () => {
       try {
         if (!threadId) {
@@ -730,80 +726,6 @@ export function Composer({ threadId }: { threadId?: string }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [pendingApproval, runIdForApproval]);
-
-  const attachFiles = useCallback(
-    async (picked: FileList | File[] | null) => {
-      if (!picked) return;
-      const list = Array.from(picked);
-      if (list.length === 0) return;
-
-      const room = MAX_ATTACHMENTS - chips.length - fileChips.length;
-      if (room <= 0) {
-        setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
-        return;
-      }
-      if (list.length > room) setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
-      const accepted = list.slice(0, room);
-      const images = accepted.filter((file) => file.type.startsWith("image/"));
-      const docs = accepted.filter((file) => !file.type.startsWith("image/"));
-
-      if (images.length > 0 && !imageCapable) {
-        setError(t("composer.noImagesAttach"));
-      }
-      const importedImages = imageCapable
-        ? (await Promise.all(images.map(fileToChip))).filter(
-            (chip): chip is ImageChip => chip !== null,
-          )
-        : [];
-      const importedDocs = (await Promise.all(docs.map(fileToTextChip))).filter(
-        (chip): chip is FileChip => chip !== null,
-      );
-      if (docs.length > 0 && importedDocs.length === 0) {
-        setError(t("composer.onlyTextFiles"));
-      }
-      const tokens: string[] = [];
-      if (importedImages.length > 0) {
-        if (isTauri()) {
-          const withTokens = await Promise.all(
-            importedImages.map(async (chip) => {
-              try {
-                const path = await attachmentsSaveImage(chip.data, chip.mimeType);
-                const token = formatFileRef(path);
-                tokens.push(token);
-                return { ...chip, token };
-              } catch {
-                return chip;
-              }
-            }),
-          );
-          setChips((prev) => [...prev, ...withTokens]);
-        } else {
-          setChips((prev) => [...prev, ...importedImages]);
-        }
-      }
-      if (importedDocs.length > 0) {
-        if (isTauri()) {
-          const withTokens = await Promise.all(
-            importedDocs.map(async (chip) => {
-              try {
-                const path = await attachmentsSaveText(chip.name, chip.text);
-                const token = formatFileRef(path);
-                tokens.push(token);
-                return { ...chip, token };
-              } catch {
-                return chip;
-              }
-            }),
-          );
-          setFileChips((prev) => [...prev, ...withTokens]);
-        } else {
-          setFileChips((prev) => [...prev, ...importedDocs]);
-        }
-      }
-      if (tokens.length > 0) insertTokens(tokens);
-    },
-    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, insertTokens, t],
-  );
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1144,29 +1066,34 @@ export function Composer({ threadId }: { threadId?: string }) {
             </div>
           )}
           {chips.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-4 pt-3">
+            <div className="flex flex-wrap gap-1.5 px-4 pt-3">
               {chips.map((chip, i) => (
-                <div
+                <span
                   key={`${chip.preview.slice(-16)}-${i}`}
                   data-image-chip
-                  className="group relative h-14 w-14 overflow-hidden rounded-(--radius-md) border border-border-subtle"
+                  className="group flex max-w-[260px] items-center gap-1.5 rounded-(--radius-sm) bg-surface-raised py-1 pl-1.5 pr-1 text-xs"
                 >
                   <img
                     src={chip.preview}
                     alt={t("chat.attached")}
                     onClick={() =>
-                      useUiStore.getState().openImagePreview(chip.preview, t("chat.attached"))
+                      useUiStore.getState().openImagePreview(chip.preview, chip.name)
                     }
-                    className="h-full w-full cursor-zoom-in object-cover"
+                    className="h-[18px] w-[18px] shrink-0 cursor-zoom-in rounded-[3px] object-cover"
                   />
+                  <span className="min-w-0 truncate text-accent">{chip.name}</span>
+                  <span className="shrink-0 text-text-tertiary">
+                    {formatAttachmentSize(chip.size)}
+                  </span>
                   <button
-                    onClick={() => removeImageChip(i)}
+                    type="button"
+                    onClick={() => setChips((prev) => prev.filter((_, index) => index !== i))}
                     aria-label={t("composer.removeImage")}
-                    className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
+                    className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
                     <X size={10} />
                   </button>
-                </div>
+                </span>
               ))}
             </div>
           )}
@@ -1176,17 +1103,21 @@ export function Composer({ threadId }: { threadId?: string }) {
                 <span
                   key={`${file.name}-${i}`}
                   data-file-chip
-                  className="flex max-w-[240px] items-center gap-1.5 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1 text-xs text-text-secondary"
+                  className="flex max-w-[260px] items-center gap-1.5 rounded-(--radius-sm) bg-surface-raised py-1 pl-1.5 pr-1 text-xs"
                 >
-                  <FileText size={12} className="shrink-0 text-text-tertiary" />
-                  <span className="truncate">{file.name}</span>
-                  {file.truncated && (
-                    <span className="shrink-0 text-warning">{t("composer.truncated")}</span>
-                  )}
+                  <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-[3px] bg-surface">
+                    <FileText size={12} className="text-text-tertiary" />
+                  </span>
+                  <span className="min-w-0 truncate text-accent">{file.name}</span>
+                  <span className="shrink-0 text-text-tertiary">
+                    {file.truncated
+                      ? t("composer.truncated")
+                      : formatAttachmentSize(file.size)}
+                  </span>
                   <button
                     type="button"
                     aria-label={t("composer.removeAttachment", { name: file.name })}
-                    onClick={() => removeFileChip(i)}
+                    onClick={() => setFileChips((prev) => prev.filter((_, index) => index !== i))}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
                     <X size={10} />

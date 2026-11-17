@@ -706,6 +706,8 @@ export const es: Record<string, string> = {
   "errors.queue.item_not_found": "Ese mensaje en cola ya no existe.",
   "errors.queue.order_mismatch": "La cola cambió; reordénala de nuevo.",
   "errors.run.finished": "Esa ejecución ya terminó.",
+  "errors.run.protected":
+    "Un comando sigue en ejecución. Espera a que termine o pulsa Stop para cancelar.",
   "errors.terminal.input_closed": "El terminal ya no acepta entrada.",
   "errors.browser.state_failed":
     "El navegador está en un estado inconsistente. Vuelve a abrir el panel.",

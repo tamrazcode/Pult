@@ -703,6 +703,8 @@ export const de: Record<string, string> = {
   "errors.queue.item_not_found": "Diese Warteschlangen-Nachricht ist nicht mehr vorhanden.",
   "errors.queue.order_mismatch": "Die Warteschlange hat sich geändert; bitte neu sortieren.",
   "errors.run.finished": "Diese Ausführung ist bereits beendet.",
+  "errors.run.protected":
+    "Ein Befehl läuft noch. Warte auf das Ende oder drücke Stop, um abzubrechen.",
   "errors.terminal.input_closed": "Das Terminal nimmt keine Eingaben mehr an.",
   "errors.browser.state_failed":
     "Der Browser ist in einem inkonsistenten Zustand. Panel neu öffnen.",

@@ -379,6 +379,75 @@ async fn steering_the_parent_keeps_children_running() {
 }
 
 #[tokio::test]
+async fn steer_is_refused_while_a_long_execute_runs() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_LONG_EXECUTE_MS", "5000")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-steer-protected"))
+        .unwrap();
+    let thread = runtime.store().get_thread("th-steer-protected").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let build_run = runtime.dispatch(&thread, "long_execute", &[], "mock").unwrap();
+    wait_for(Duration::from_secs(10), || {
+        runtime
+            .store()
+            .load_events(&build_run.id)
+            .map(|events| {
+                events.iter().any(|event| {
+                    matches!(&event.kind, crate::events::EventKind::ToolCall { kind, .. } if kind == "execute")
+                })
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    runtime
+        .send(&thread, "first queued", &[], "mock", None, &Default::default())
+        .expect("queue 1");
+    let second = runtime
+        .send(&thread, "steer me", &[], "mock", None, &Default::default())
+        .expect("queue 2");
+    assert!(second.queued, "an active run must queue the follow-up");
+    let queue_id = second.queue_id.expect("queue id");
+
+    std::env::set_var("PULT_STEER_PROTECT_MS", "100");
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    let err = runtime
+        .steer(&thread.id, &queue_id)
+        .expect_err("a long execute must not be cancelled by a queue steer");
+    std::env::remove_var("PULT_STEER_PROTECT_MS");
+    assert_eq!(err.code(), "run.protected");
+
+    let queue = runtime.store().list_queue(&thread.id).unwrap();
+    assert_eq!(
+        queue.iter().map(|item| item.text.as_str()).collect::<Vec<_>>(),
+        vec!["first queued", "steer me"],
+        "a refused steer must not reorder the queue"
+    );
+    assert!(
+        runtime.active_run_for(&thread.id).is_some(),
+        "the build run must survive the refused steer"
+    );
+
+    wait_for(Duration::from_secs(20), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|run| run.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    let runs = runtime.store().list_runs(&thread.id).unwrap();
+    assert!(
+        runs.iter()
+            .any(|run| run.id == build_run.id && run.status == "finished"),
+        "the build run must finish normally"
+    );
+}
+
+#[tokio::test]
 async fn steering_a_running_child_queues_without_cancelling_its_turn() {
     let _env = env_lock();
     let (runtime, sink) = mock_runtime();

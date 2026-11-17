@@ -709,6 +709,8 @@ export const fr: Record<string, string> = {
   "errors.queue.item_not_found": "Ce message en file d’attente a disparu.",
   "errors.queue.order_mismatch": "La file d’attente a changé ; réorganisez-la.",
   "errors.run.finished": "Cette exécution est déjà terminée.",
+  "errors.run.protected":
+    "Une commande est toujours en cours. Attendez la fin ou appuyez sur Stop pour annuler.",
   "errors.terminal.input_closed": "Le terminal n’accepte plus d’entrée.",
   "errors.browser.state_failed": "Le navigateur est dans un état incohérent. Rouvrez le panneau.",
   "errors.browser.window_missing": "La fenêtre principale n'est pas disponible.",

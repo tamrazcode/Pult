@@ -57,16 +57,15 @@ export interface ImageChip {
   mimeType: string;
   /** Full data URL for the thumbnail. */
   preview: string;
-  /** Inline `@path` token inserted into the composer text. */
-  token?: string;
+  name: string;
+  size: number;
 }
 
 export interface FileChip {
   name: string;
   text: string;
   truncated: boolean;
-  /** Inline `@path` token inserted into the composer text. */
-  token?: string;
+  size: number;
 }
 
 export interface DraftAttachments {

@@ -719,6 +719,8 @@ export const ru: Record<string, string> = {
   "errors.queue.item_not_found": "Это сообщение в очереди уже исчезло.",
   "errors.queue.order_mismatch": "Очередь изменилась; упорядочите её заново.",
   "errors.run.finished": "Этот запуск уже завершился.",
+  "errors.run.protected":
+    "Команда ещё выполняется. Дождитесь её завершения или нажмите Stop, чтобы прервать.",
   "errors.terminal.input_closed": "Терминал больше не принимает ввод.",
   "errors.browser.state_failed": "Браузер в несогласованном состоянии. Откройте панель заново.",
   "errors.browser.window_missing": "Главное окно недоступно.",

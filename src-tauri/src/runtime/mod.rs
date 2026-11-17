@@ -258,6 +258,14 @@ struct RunState {
     instance_id: String,
 }
 
+/// A tool call that is still open for a live run. Long `execute` calls are
+/// protected from a casual Steer (builds must not be killed by a queue click).
+struct ActiveTool {
+    kind: String,
+    /// `Some` once the tool is actually running; `None` while pending approval.
+    started_at: Option<std::time::Instant>,
+}
+
 /// Pre-initialized agent connection for the selected provider. `session/new`
 /// still runs on first use, but the slow CLI startup + initialize are paid
 /// while the user is reading the empty state instead of on the first send.
@@ -299,6 +307,8 @@ struct Inner {
     /// Hidden wake/continuation runs: the agent may echo the prompt as a
     /// user_message_chunk; that echo must never become a visible bubble.
     hidden_runs: std::collections::HashSet<String>,
+    /// run_id -> open tool calls, for the long-command Steer guard.
+    active_tools: HashMap<String, HashMap<String, ActiveTool>>,
     /// instance_id в†’ capabilities observed at the last handshake.
     capabilities: HashMap<String, CachedCaps>,
     /// thread_id в†’ permission mode override (settings default otherwise).
@@ -601,6 +611,7 @@ impl AgentRuntime {
                 deleting_threads: std::collections::HashSet::new(),
                 cancelling_runs: std::collections::HashSet::new(),
                 hidden_runs: std::collections::HashSet::new(),
+                active_tools: HashMap::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
                 terminals,
@@ -1451,9 +1462,18 @@ impl AgentRuntime {
         thread_id: &str,
         queue_id: &str,
     ) -> Result<(), crate::PultError> {
+        let active = self.active_run_for(thread_id);
+        if let Some(run_id) = &active {
+            if self.protected_tool_running(run_id) {
+                return Err(crate::PultError::with_code(
+                    "run.protected",
+                    "A long command is still running. Wait for it to finish or press Stop.",
+                ));
+            }
+        }
         self.store.move_queue_item_to_head(thread_id, queue_id)?;
         self.emit_queue_updated(thread_id);
-        if let Some(run_id) = self.active_run_for(thread_id) {
+        if let Some(run_id) = active {
             if let Err(err) = self.cancel_for_steer(&run_id) {
                 tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed; retrying");
                 // The run may still be finishing its handshake, so its live
@@ -1464,6 +1484,9 @@ impl AgentRuntime {
                     for _ in 0..100 {
                         if runtime.active_run_for(&thread_id).is_none() {
                             runtime.auto_dispatch_queue(&thread_id);
+                            return;
+                        }
+                        if runtime.protected_tool_running(&run_id) {
                             return;
                         }
                         if runtime.cancel_for_steer(&run_id).is_ok() {
@@ -1478,6 +1501,26 @@ impl AgentRuntime {
             self.auto_dispatch_queue(thread_id);
         }
         Ok(())
+    }
+
+    /// True while the run is executing a shell command older than the guard
+    /// threshold. A queue Steer must not kill builds and long test runs; Stop
+    /// (`runs_cancel`) and an explicit interrupt remain deliberate overrides.
+    fn protected_tool_running(&self, run_id: &str) -> bool {
+        let threshold = steer_protect_threshold();
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .active_tools
+            .get(run_id)
+            .is_some_and(|tools| {
+                tools.values().any(|tool| {
+                    tool.kind == "execute"
+                        && tool
+                            .started_at
+                            .is_some_and(|started| started.elapsed() >= threshold)
+                })
+            })
     }
 
     /// Pushes the thread's current queue to the UI ("queue:update").
@@ -1852,6 +1895,7 @@ impl AgentRuntime {
         inner.runs.remove(run_id);
         inner.answer_queues.remove(run_id);
         inner.threads_working.remove(thread_id);
+        inner.active_tools.remove(run_id);
     }
 
     /// Roll back a start that failed after the run row was written; the row is
@@ -2450,6 +2494,78 @@ fn persist_event_batch(
     Ok(())
 }
 
+/// How long an `execute` tool must run before a queue Steer refuses to cancel
+/// it. Overridable for tests; production default is 3s.
+fn steer_protect_threshold() -> std::time::Duration {
+    std::env::var("PULT_STEER_PROTECT_MS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(std::time::Duration::from_millis(3_000))
+}
+
+/// Keeps `Inner.active_tools` in sync with the run's tool events. Pending
+/// tools (waiting for approval) do not start the clock; updates preserve the
+/// original start time.
+fn track_active_tool(runtime: &AgentRuntime, run_id: &str, kind: &EventKind) {
+    let mut inner = runtime.inner.lock().expect("runtime lock poisoned");
+    match kind {
+        EventKind::ToolCall {
+            tool_call_id,
+            kind,
+            status,
+            ..
+        } => {
+            let open = !matches!(status.as_str(), "completed" | "failed");
+            if open {
+                let tool = inner
+                    .active_tools
+                    .entry(run_id.to_string())
+                    .or_default()
+                    .entry(tool_call_id.clone())
+                    .or_insert_with(|| ActiveTool {
+                        kind: kind.clone(),
+                        started_at: None,
+                    });
+                tool.kind = kind.clone();
+                // A repeated ToolCall for an open tool must not restart the clock.
+                if status == "in_progress" {
+                    tool.started_at.get_or_insert_with(std::time::Instant::now);
+                }
+            } else if let Some(tools) = inner.active_tools.get_mut(run_id) {
+                tools.remove(tool_call_id);
+            }
+        }
+        EventKind::ToolCallUpdate {
+            tool_call_id,
+            status,
+            ..
+        } => {
+            match status.as_deref() {
+                Some("completed" | "failed") => {
+                    if let Some(tools) = inner.active_tools.get_mut(run_id) {
+                        tools.remove(tool_call_id);
+                    }
+                }
+                Some("in_progress") => {
+                    if let Some(tool) = inner
+                        .active_tools
+                        .get_mut(run_id)
+                        .and_then(|tools| tools.get_mut(tool_call_id))
+                    {
+                        tool.started_at.get_or_insert_with(std::time::Instant::now);
+                    }
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    if inner.active_tools.get(run_id).is_some_and(HashMap::is_empty) {
+        inner.active_tools.remove(run_id);
+    }
+}
+
 /// Applies one projected agent event to the run: first-delta timing, coalesced
 /// persistence, and session metadata. Shared by the select loop and the
 /// post-prompt drain, which picks up events the select did not get to.
@@ -2490,6 +2606,7 @@ fn apply_session_event(
         EventKind::ConfigOptions { .. } | EventKind::SessionInfo { title: Some(_) }
     )
     .then(|| kind.clone());
+    track_active_tool(runtime, run_id, &kind);
     let flushed = batcher.push(kind);
     persist_event_batch(runtime, run_id, flushed).map_err(|err| format!("store: {err}"))?;
     if let Some(kind) = metadata {
@@ -3265,6 +3382,7 @@ impl AgentRuntime {
             guard.threads_working.remove(thread_id);
             guard.cancelling_runs.remove(run_id);
             guard.hidden_runs.remove(run_id);
+            guard.active_tools.remove(run_id);
             guard.deleting_threads.contains(thread_id)
         };
         // The run is over either way; a refused delete leaves a usable thread,
