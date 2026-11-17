@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
+use crate::http1::{read_request, respond, respond_json, HttpReadError, HttpRequest};
 use crate::orchestrator::{
     is_read_only_tool, tool_specs, McpScope, McpTokenRegistry, OrchestratorHost,
     ORCHESTRATOR_TOOL_NAMES,
@@ -19,7 +19,6 @@ use crate::orchestrator::{
 
 pub const ORCHESTRATOR_SERVER_NAME: &str = "pult_orchestrator";
 const MAX_BODY: usize = 1024 * 1024;
-const MAX_HEADERS: usize = 16 * 1024;
 /// Reading a request must be prompt; tool execution may legitimately wait
 /// (`wait_tasks` up to 240 s), so it is never wrapped in this timeout.
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
@@ -72,15 +71,16 @@ async fn serve(
     host: Arc<dyn OrchestratorHost>,
     registry: Arc<McpTokenRegistry>,
 ) -> io::Result<()> {
-    let request = match tokio::time::timeout(READ_TIMEOUT, read_request(&mut stream)).await {
-        Ok(Ok(Some(request))) => request,
-        Ok(Ok(None)) => return Ok(()),
-        Ok(Err(Failure::TooLarge)) => {
-            return respond(&mut stream, 413, "text/plain", b"request too large").await
-        }
-        Ok(Err(Failure::Io(error))) => return Err(error),
-        Err(_) => return respond(&mut stream, 408, "text/plain", b"request timed out").await,
-    };
+    let request =
+        match tokio::time::timeout(READ_TIMEOUT, read_request(&mut stream, MAX_BODY)).await {
+            Ok(Ok(Some(request))) => request,
+            Ok(Ok(None)) => return Ok(()),
+            Ok(Err(HttpReadError::TooLarge)) => {
+                return respond(&mut stream, 413, "text/plain", b"request too large").await
+            }
+            Ok(Err(HttpReadError::Io(error))) => return Err(error),
+            Err(_) => return respond(&mut stream, 408, "text/plain", b"request timed out").await,
+        };
 
     if request.method != "POST" {
         return respond(&mut stream, 405, "text/plain", b"method not allowed").await;
@@ -117,81 +117,6 @@ async fn serve(
         },
     };
     respond_json(&mut stream, &reply).await
-}
-
-struct HttpRequest {
-    method: String,
-    path: String,
-    headers: Vec<(String, String)>,
-    body: Vec<u8>,
-}
-
-enum Failure {
-    Io(io::Error),
-    TooLarge,
-}
-
-impl From<io::Error> for Failure {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
-}
-
-async fn read_request(stream: &mut TcpStream) -> Result<Option<HttpRequest>, Failure> {
-    let mut buffer = Vec::with_capacity(4096);
-    let header_end = loop {
-        if let Some(index) = find_bytes(&buffer, b"\r\n\r\n") {
-            break index;
-        }
-        if buffer.len() > MAX_HEADERS {
-            return Err(Failure::TooLarge);
-        }
-        let mut chunk = [0u8; 2048];
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            return Ok(None);
-        }
-        buffer.extend_from_slice(&chunk[..read]);
-    };
-
-    let head = String::from_utf8_lossy(&buffer[..header_end]).into_owned();
-    let mut lines = head.split("\r\n");
-    let mut request_line = lines.next().unwrap_or_default().split_whitespace();
-    let method = request_line.next().unwrap_or_default().to_string();
-    let path = request_line.next().unwrap_or_default().to_string();
-    let mut headers = Vec::new();
-    for line in lines {
-        if let Some((name, value)) = line.split_once(':') {
-            headers.push((name.trim().to_string(), value.trim().to_string()));
-        }
-    }
-
-    let content_length = headers
-        .iter()
-        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    if content_length > MAX_BODY {
-        return Err(Failure::TooLarge);
-    }
-
-    let mut body = buffer[(header_end + 4)..].to_vec();
-    while body.len() < content_length {
-        let mut chunk = [0u8; 8192];
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            break;
-        }
-        body.extend_from_slice(&chunk[..read]);
-    }
-    body.truncate(content_length);
-
-    Ok(Some(HttpRequest {
-        method,
-        path,
-        headers,
-        body,
-    }))
 }
 
 fn authorized(request: &HttpRequest, registry: &McpTokenRegistry) -> Option<McpScope> {
@@ -310,53 +235,12 @@ fn rpc_error(id: Value, code: i64, message: &str) -> Value {
     })
 }
 
-async fn respond_json(stream: &mut TcpStream, value: &Value) -> io::Result<()> {
-    respond(
-        stream,
-        200,
-        "application/json",
-        value.to_string().as_bytes(),
-    )
-    .await
-}
-
-async fn respond(
-    stream: &mut TcpStream,
-    status: u16,
-    content_type: &str,
-    body: &[u8],
-) -> io::Result<()> {
-    let reason = match status {
-        200 => "OK",
-        202 => "Accepted",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        408 => "Request Timeout",
-        413 => "Payload Too Large",
-        _ => "Error",
-    };
-    let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\nX-Content-Type-Options: nosniff\r\n\r\n",
-        body.len()
-    );
-    stream.write_all(head.as_bytes()).await?;
-    stream.write_all(body).await?;
-    stream.flush().await
-}
-
-fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::Mutex;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     struct FakeHost {
         active: Mutex<HashMap<String, String>>,

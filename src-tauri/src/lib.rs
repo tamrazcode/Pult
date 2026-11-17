@@ -6,6 +6,7 @@ pub mod config;
 pub mod drivers;
 pub mod events;
 pub mod git;
+pub mod http1;
 pub mod ipc;
 pub mod mcp;
 pub mod orchestrator;

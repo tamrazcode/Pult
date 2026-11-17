@@ -272,3 +272,22 @@ fn http_secrets_are_stored_under_the_header_namespace() {
     assert!(!serialized.contains("abc12345"));
     assert!(serialized.contains("••••2345"));
 }
+
+#[tokio::test]
+async fn connecting_reports_a_secret_that_was_deleted() {
+    let store = Store::open_in_memory().unwrap();
+    let created = config::create(
+        &store,
+        stdio("Files", json!([{ "key": "API_TOKEN", "value": "sk-old" }])),
+    )
+    .unwrap();
+    let server = store.get_custom_mcp_server(&created.id).unwrap();
+    store
+        .delete_secret(&format!("mcp:{}:env:API_TOKEN", created.id))
+        .unwrap();
+    let error = super::connect_custom(&store, &server)
+        .await
+        .err()
+        .expect("missing secret must fail before spawning");
+    assert!(error.contains("API_TOKEN"), "{error}");
+}

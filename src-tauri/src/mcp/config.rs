@@ -610,6 +610,11 @@ fn secret_store_key(id: &str, transport: &TransportConfig, key: &str) -> String 
         TransportConfig::Stdio { .. } => "env",
         TransportConfig::Http { .. } | TransportConfig::Sse { .. } => "header",
     };
+    secret_store_key_for(section, id, key)
+}
+
+/// Namespaced vault key for one secret; keep in sync with `connect_custom`.
+pub(crate) fn secret_store_key_for(section: &str, id: &str, key: &str) -> String {
     format!("mcp:{id}:{section}:{key}")
 }
 

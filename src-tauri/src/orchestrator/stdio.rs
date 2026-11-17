@@ -20,11 +20,12 @@ pub fn handle_cli() -> Option<i32> {
 }
 
 fn run(args: &[String]) -> i32 {
-    if args.first().map(String::as_str) == Some("--custom") {
-        // User MCP gateways arrive with T16; refusing loudly beats pretending.
-        eprintln!("pult mcp-stdio: custom MCP servers are not available yet");
-        return 2;
-    }
+    // `--custom <id>` is the same loopback bridge; the app supplies the
+    // gateway URL and bearer through PULT_MCP_URL / PULT_MCP_TOKEN.
+    let _custom_server = args
+        .first()
+        .filter(|arg| arg.as_str() == "--custom")
+        .and_then(|_| args.get(1));
     let (Some(url), Some(token)) = (
         std::env::var("PULT_MCP_URL").ok(),
         std::env::var("PULT_MCP_TOKEN").ok(),
