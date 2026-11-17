@@ -376,8 +376,56 @@ fn merged_env(
     Ok(env)
 }
 
+fn looks_secret_env(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    upper.contains("TOKEN")
+        || upper.contains("SECRET")
+        || upper.contains("PASSWORD")
+        || upper.contains("API_KEY")
+        || upper.contains("APIKEY")
+        || upper.ends_with("_KEY")
+}
+
+/// One-time startup migration: values already sitting in config.toml under a
+/// credential-looking name move into the vault and the file is rewritten.
+fn migrate_plaintext_env(
+    store: &crate::store::Store,
+    mut specs: Vec<crate::config::InstanceSpec>,
+) -> Vec<crate::config::InstanceSpec> {
+    let mut changed = false;
+    for spec in &mut specs {
+        let keys: Vec<String> = spec.env.keys().cloned().collect();
+        for key in keys {
+            if !looks_secret_env(&key) || spec.secret_env_keys.contains(&key) {
+                continue;
+            }
+            if let Some(value) = spec.env.remove(&key) {
+                if !value.is_empty() {
+                    if let Err(error) =
+                        store.set_secret(&provider_secret_key(&spec.id, &key), &value)
+                    {
+                        tracing::warn!(target: "pult::runtime", error = %error,
+                            instance = %spec.id, key = %key, "provider secret migration failed");
+                        continue;
+                    }
+                }
+                spec.secret_env_keys.push(key);
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        if let Err(error) = crate::config::save_instances(&crate::pult_home(), &specs) {
+            tracing::warn!(target: "pult::runtime", error = %error,
+                "provider secret migration could not rewrite config.toml");
+        }
+    }
+    specs
+}
+
 /// Binary agents run for the stdio MCP bridge (`pult mcp-stdio`).
-fn mcp_stdio_binary() -> String {    std::env::var("PULT_MCP_STDIO_BIN")
+fn mcp_stdio_binary() -> String {
+    std::env::var("PULT_MCP_STDIO_BIN")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .or_else(|| {
@@ -410,7 +458,7 @@ impl AgentRuntime {
         }
         let home = crate::pult_home();
         let (instances, config_error) = match crate::config::load_instances_checked(&home) {
-            Ok(instances) => (instances, None),
+            Ok(instances) => (migrate_plaintext_env(&store, instances), None),
             Err(err) => {
                 tracing::error!(target: "pult::runtime", error = %err,
                     "config.toml could not be read; no agents are available until it is fixed");
@@ -882,6 +930,11 @@ impl AgentRuntime {
             }
             // Secret values move to the vault before config.toml is written;
             // only names stay in the file.
+            for key in spec.env.keys().cloned().collect::<Vec<_>>() {
+                if looks_secret_env(&key) && !spec.secret_env_keys.contains(&key) {
+                    spec.secret_env_keys.push(key);
+                }
+            }
             let mut keys = Vec::new();
             let mut seen = std::collections::HashSet::new();
             for raw in std::mem::take(&mut spec.secret_env_keys) {
@@ -910,7 +963,9 @@ impl AgentRuntime {
             if let Some(old) = previous.iter().find(|old| old.id == spec.id) {
                 for key in &old.secret_env_keys {
                     if !spec.secret_env_keys.contains(key) {
-                        let _ = self.store.delete_secret(&provider_secret_key(&spec.id, key));
+                        let _ = self
+                            .store
+                            .delete_secret(&provider_secret_key(&spec.id, key));
                     }
                 }
             }
