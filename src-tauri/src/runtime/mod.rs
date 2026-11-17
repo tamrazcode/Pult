@@ -2182,6 +2182,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mcp_token: Option<String>;
     let session_context_ready: bool;
     let session_has_orchestrator: bool;
+    let session_mcp_generation: u64;
     let mut context_reset_reason: Option<String> = None;
     let mut replayed_metadata = Vec::new();
     let mut preinit: Option<crate::protocol::types::InitializeResult> = None;
@@ -2212,6 +2213,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         owner_token = pooled_owner;
         applied_config = pooled_config;
         mcp_token = pooled_token;
+        session_mcp_generation = runtime
+            .mcp_generation
+            .load(std::sync::atomic::Ordering::Relaxed);
         // A parked session already got the instructions on its first prompt.
         session_context_ready = true;
         session_has_orchestrator = mcp_token.is_some();
@@ -2330,6 +2334,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         session_id = resolved.session_id;
         context_reset_reason = resolved.context_reset_reason;
         mcp_token = resolved.mcp_token;
+        session_mcp_generation = resolved.mcp_generation;
         // A resumed session keeps the context it was given before.
         session_context_ready = resolved.resumed;
         session_has_orchestrator = mcp_token.is_some();
@@ -2782,9 +2787,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 mcp_token,
                 instructions_injected: false,
                 compaction_epoch: 0,
-                mcp_generation: runtime
-                    .mcp_generation
-                    .load(std::sync::atomic::Ordering::Relaxed),
+                mcp_generation: session_mcp_generation,
                 last_used: std::time::Instant::now(),
             },
         );
@@ -3252,6 +3255,8 @@ pub(crate) struct ResolvedSession {
     pub mcp_token: Option<String>,
     /// Set when the UI history and the agent's context can no longer match.
     pub context_reset_reason: Option<String>,
+    /// MCP configuration generation this session was opened under.
+    pub mcp_generation: u64,
     pub handshake_ms: u64,
     pub session_ms: u64,
 }
@@ -3292,6 +3297,11 @@ async fn resolve_session(
         .and_then(|caps| caps.get("http"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
+    // Capture before resolving: a config edit during session creation must
+    // leave this session stamped with the old generation.
+    let mcp_generation = runtime
+        .mcp_generation
+        .load(std::sync::atomic::Ordering::Relaxed);
     let (mcp_servers, mcp_token) =
         runtime.mcp_servers_for(thread_id, instance_id, owner_token, http_mcp);
     // A SQLite failure is not "no previous session": surface it instead of
@@ -3400,6 +3410,7 @@ async fn resolve_session(
         resumed,
         mcp_token,
         context_reset_reason,
+        mcp_generation,
         handshake_ms,
         session_ms: t_session.elapsed().as_millis() as u64,
     })

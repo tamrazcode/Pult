@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
+use futures::StreamExt;
 use serde_json::Value;
 
 use super::transport::{McpTransport, TransportFuture};
@@ -107,13 +108,19 @@ impl HttpTransport {
         self.remember_session(&response);
         let status = response.status();
         if !status.is_success() {
-            let body = response
-                .bytes()
-                .await
-                .map(|bytes| {
-                    String::from_utf8_lossy(&bytes[..bytes.len().min(MAX_ERROR_BODY)]).to_string()
-                })
-                .unwrap_or_default();
+            let mut body = Vec::new();
+            let mut stream = response.bytes_stream();
+            while let Some(Ok(chunk)) = stream.next().await {
+                let room = MAX_ERROR_BODY.saturating_sub(body.len());
+                if room == 0 {
+                    break;
+                }
+                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                if body.len() >= MAX_ERROR_BODY {
+                    break;
+                }
+            }
+            let body = String::from_utf8_lossy(&body).to_string();
             return Err(format!(
                 "MCP HTTP {} from server{}",
                 status.as_u16(),
@@ -175,6 +182,9 @@ impl McpTransport for HttpTransport {
                     continue;
                 }
                 events.push_str(&String::from_utf8_lossy(&chunk));
+                if events.contains('\r') {
+                    events = events.replace("\r\n", "\n");
+                }
                 if events.len() > 2 * super::security::MAX_MESSAGE_BYTES {
                     return Err("MCP event stream exceeded the size limit".to_string());
                 }
