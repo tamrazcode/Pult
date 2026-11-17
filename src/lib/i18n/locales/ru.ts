@@ -936,4 +936,10 @@ export const ru: Record<string, string> = {
     "Состояние, счётчики и очищенный stderr пользовательских MCP-серверов.",
   "settings.diagnostics.mcpLogs": "Логи",
   "settings.diagnostics.mcpCalls": "вызовов: {{calls}} · ошибок: {{errors}}",
+  "settings.diagnostics.processesTitle": "Процессы",
+  "settings.diagnostics.processesSubtitle":
+    "Живые потомки pult-core. Здесь видны только процессы, запущенные Pult; CPU% считается между снимками.",
+  "settings.diagnostics.processesEmpty": "Дочерних процессов сейчас нет.",
+  "settings.diagnostics.processesKill": "Завершить",
+  "settings.diagnostics.processesConfirm": "Завершить процесс {{pid}} и его дочерние процессы?",
 };

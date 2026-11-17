@@ -11,6 +11,7 @@ pub mod ipc;
 pub mod mcp;
 pub mod orchestrator;
 pub mod plugins;
+pub mod processes;
 pub mod protocol;
 pub mod runtime;
 pub mod store;
@@ -332,6 +333,8 @@ pub fn run() {
             ipc::runs_set_mode,
             ipc::runs_set_config_option,
             ipc::diagnostics_frames,
+            ipc::diagnostics_process_tree,
+            ipc::diagnostics_kill_process,
             ipc::settings_get,
             ipc::settings_set,
             ipc::providers_preflight,

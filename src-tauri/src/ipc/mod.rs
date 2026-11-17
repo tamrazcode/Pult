@@ -891,6 +891,16 @@ pub fn diagnostics_frames(
     runtime.diagnostics_frames(&instance_id)
 }
 
+#[tauri::command]
+pub fn diagnostics_process_tree() -> Result<Vec<crate::processes::ProcessNode>, PultError> {
+    Ok(crate::processes::process_tree())
+}
+
+#[tauri::command]
+pub fn diagnostics_kill_process(pid: u32) -> Result<(), PultError> {
+    crate::processes::kill_process(pid)
+}
+
 /// Reads one JSON setting (§4.5: theme, keybindings, notifications, …).
 #[tauri::command]
 pub fn settings_get(

@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { RefreshCw } from "lucide-react";
 import {
   diagnosticsFrames,
+  diagnosticsKillProcess,
+  diagnosticsProcessTree,
   mcpListServers,
   mcpServerLogs,
   mcpServerStats,
@@ -11,7 +13,7 @@ import {
 import { isTauri } from "../lib/tauri";
 import { useUiStore } from "../stores/ui";
 import { localizeIpcError, useT } from "../lib/i18n";
-import type { InstanceInfo, McpServer, McpServerStats } from "../lib/types";
+import type { InstanceInfo, McpServer, McpServerStats, ProcessNode } from "../lib/types";
 
 export const Route = createFileRoute("/settings/diagnostics")({ component: DiagnosticsSettings });
 
@@ -190,6 +192,101 @@ function McpDiagnostics() {
   );
 }
 
+function ProcessesDiagnostics() {
+  const t = useT();
+  const [tree, setTree] = useState<ProcessNode[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const next = await diagnosticsProcessTree();
+        if (!cancelled) {
+          setTree(next);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled) setError(localizeIpcError(err));
+      }
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const kill = async (node: ProcessNode) => {
+    if (!window.confirm(t("settings.diagnostics.processesConfirm", { pid: node.pid }))) {
+      return;
+    }
+    try {
+      await diagnosticsKillProcess(node.pid);
+    } catch (err) {
+      setError(localizeIpcError(err));
+    }
+  };
+
+  const row = (node: ProcessNode, depth: number): ReactNode => (
+    <div key={node.pid}>
+      <div
+        className="flex items-center gap-2 border-b border-border-subtle/60 py-1 text-xs"
+        style={{ paddingLeft: depth * 14 }}
+      >
+        <span className="w-16 shrink-0 rounded bg-active px-1 text-center font-mono text-xs text-text-tertiary">
+          {node.role}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-text-primary">
+          {node.label ?? node.name}
+          {node.threadId ? <span className="ml-2 text-text-tertiary">{node.threadId}</span> : null}
+        </span>
+        <span className="shrink-0 font-mono text-text-tertiary">pid {node.pid}</span>
+        <span className="w-14 shrink-0 text-right font-mono text-text-tertiary">
+          {node.cpuPercent != null ? `${node.cpuPercent.toFixed(1)}%` : "—"}
+        </span>
+        <span className="w-16 shrink-0 text-right font-mono text-text-tertiary">
+          {node.memoryBytes != null ? `${Math.round(node.memoryBytes / (1024 * 1024))} MB` : "—"}
+        </span>
+        {node.killable ? (
+          <button
+            onClick={() => void kill(node)}
+            className="shrink-0 rounded border border-border-subtle px-1.5 py-0.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-danger"
+          >
+            {t("settings.diagnostics.processesKill")}
+          </button>
+        ) : (
+          <span className="w-[42px] shrink-0" />
+        )}
+      </div>
+      {node.children.map((child) => row(child, depth + 1))}
+    </div>
+  );
+
+  return (
+    <div className="mt-6">
+      <h3 className="text-sm font-medium text-text-primary">
+        {t("settings.diagnostics.processesTitle")}
+      </h3>
+      <p className="mt-1 text-xs text-text-tertiary">
+        {t("settings.diagnostics.processesSubtitle")}
+      </p>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+      <div className="mt-2 rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1">
+        {tree.length === 0 ? (
+          <p className="py-2 text-xs text-text-tertiary">
+            {t("settings.diagnostics.processesEmpty")}
+          </p>
+        ) : (
+          tree.map((node) => row(node, 0))
+        )}
+      </div>
+    </div>
+  );
+}
+
 function DiagnosticsSettings() {
   const t = useT();
   const [instances, setInstances] = useState<InstanceInfo[]>([]);
@@ -222,6 +319,7 @@ function DiagnosticsSettings() {
         ))}
       </div>
       <McpDiagnostics />
+      <ProcessesDiagnostics />
     </div>
   );
 }

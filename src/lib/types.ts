@@ -656,3 +656,21 @@ export interface McpImportOutcome {
   status: "imported" | "skipped" | string;
   error?: string | null;
 }
+
+export interface ProcessNode {
+  pid: number;
+  parentPid?: number | null;
+  name: string;
+  command?: string | null;
+  role: string;
+  label?: string | null;
+  threadId?: string | null;
+  runId?: string | null;
+  instanceId?: string | null;
+  status: "running" | "sleeping" | "exited" | string;
+  cpuPercent?: number | null;
+  memoryBytes?: number | null;
+  startedAt?: number | null;
+  killable: boolean;
+  children: ProcessNode[];
+}

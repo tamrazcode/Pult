@@ -31,6 +31,7 @@ import type {
   PtyOutputPayload,
   PushOutcome,
   PreflightReport,
+  ProcessNode,
   QueueUpdatedPayload,
   RememberedPermission,
   Run,
@@ -839,4 +840,12 @@ export function mcpImportJson(json: string): Promise<McpImportOutcome[]> {
 
 export function mcpExportJson(ids: string[] = []): Promise<string> {
   return invokeRequired<string>("mcp_export_json", { ids });
+}
+
+export function diagnosticsProcessTree(): Promise<ProcessNode[]> {
+  return invokeRequired<ProcessNode[]>("diagnostics_process_tree");
+}
+
+export function diagnosticsKillProcess(pid: number): Promise<void> {
+  return invokeRequired<void>("diagnostics_kill_process", { pid });
 }

@@ -32,6 +32,8 @@ struct PtyState {
     writer: Option<Box<dyn IoWrite + Send>>,
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
+    /// OS pid for Diagnostics; unregistered when the child exits.
+    pid: Option<u32>,
     /// Exit code once the wait task observed it (None while running).
     exit: Option<i32>,
     killed: bool,
@@ -140,6 +142,7 @@ impl PtyRegistry {
             .slave
             .spawn_command(cmd)
             .map_err(|e| PultError::internal(format!("pty spawn {program}: {e}")))?;
+        let pid = child.process_id();
         // ConPTY keeps handles in the slave; drop our end after spawn.
         drop(pair.slave);
 
@@ -163,12 +166,21 @@ impl PtyRegistry {
         } else {
             format!("{program} {}", args.join(" "))
         };
+        if let Some(pid) = pid {
+            crate::processes::register_process(
+                pid,
+                crate::processes::ProcessMeta::new("terminal")
+                    .with_label(title.trim())
+                    .with_thread(&params.thread_id),
+            );
+        }
         let state = Arc::new(Mutex::new(PtyState {
             thread_id: params.thread_id.clone(),
             title: title.trim().to_string(),
             writer: Some(writer),
             master: pair.master,
             child,
+            pid,
             exit: None,
             killed: false,
         }));
@@ -294,6 +306,9 @@ impl PtyRegistry {
         {
             let mut guard = state.lock().expect("pty lock poisoned");
             guard.killed = true;
+            if let Some(pid) = guard.pid.take() {
+                crate::processes::unregister_process(pid);
+            }
             let _ = guard.child.kill();
         }
         Ok(())
@@ -344,6 +359,9 @@ impl PtyRegistry {
         for state in states {
             let mut guard = state.lock().expect("pty lock poisoned");
             guard.killed = true;
+            if let Some(pid) = guard.pid.take() {
+                crate::processes::unregister_process(pid);
+            }
             let _ = guard.child.kill();
         }
     }
@@ -377,6 +395,9 @@ fn flush(
 
 fn record_exit(state: &Arc<Mutex<PtyState>>, code: Option<i32>) {
     let mut guard = state.lock().expect("pty lock poisoned");
+    if let Some(pid) = guard.pid.take() {
+        crate::processes::unregister_process(pid);
+    }
     guard.exit.get_or_insert(code.unwrap_or(-1));
     guard.writer = None;
 }

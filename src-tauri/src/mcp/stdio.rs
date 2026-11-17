@@ -65,6 +65,12 @@ impl StdioTransport {
         let mut child = cmd
             .spawn()
             .map_err(|e| format!("failed to start `{command}`: {e}"))?;
+        if let Some(pid) = child.id() {
+            crate::processes::register_process(
+                pid,
+                crate::processes::ProcessMeta::new("mcp").with_label(&config.label),
+            );
+        }
         let stdin = child
             .stdin
             .take()
@@ -170,6 +176,9 @@ impl McpTransport for StdioTransport {
                             .status()
                             .await;
                     }
+                }
+                if let Some(pid) = child.id() {
+                    crate::processes::unregister_process(pid);
                 }
                 let _ = child.start_kill();
                 let _ = child.wait().await;

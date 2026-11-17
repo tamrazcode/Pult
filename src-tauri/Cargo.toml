@@ -52,6 +52,7 @@ rustls = { version = "0.23", default-features = false, features = [
     "std",
     "tls12",
 ] }
+sysinfo = "0.33"
 tauri-plugin-dialog = "2"
 
 [target.'cfg(windows)'.dependencies]

@@ -128,9 +128,7 @@ async fn parse_transport(entry: &Value) -> Option<TransportInput> {
     }
 }
 
-fn split_secrets(
-    value: Option<&Value>,
-) -> (BTreeMap<String, String>, Vec<SecretInput>) {
+fn split_secrets(value: Option<&Value>) -> (BTreeMap<String, String>, Vec<SecretInput>) {
     let mut plain = BTreeMap::new();
     let mut secret = Vec::new();
     let Some(map) = value.and_then(Value::as_object) else {

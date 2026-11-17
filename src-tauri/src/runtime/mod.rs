@@ -476,7 +476,16 @@ impl AgentRuntime {
         };
         let (conn, streams) = AcpConn::spawn(&spawn_config)
             .map_err(|e| crate::PultError::internal(format!("warmup spawn: {e}")))?;
+        let pid = conn.pid();
         let conn = Arc::new(conn);
+        if let Some(pid) = pid {
+            crate::processes::register_process(
+                pid,
+                crate::processes::ProcessMeta::new("agent")
+                    .with_label(instance_id)
+                    .with_instance(instance_id),
+            );
+        }
         let init = conn
             .initialize()
             .await
@@ -2224,6 +2233,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             } = streams;
             timing.spawn_ms = spawn_started.elapsed().as_millis() as u64;
             emit_process("spawned", None);
+            if let Some(pid) = conn_raw.pid() {
+                crate::processes::register_process(
+                    pid,
+                    crate::processes::ProcessMeta::new("agent")
+                        .with_label(instance_id.clone())
+                        .with_thread(thread_id.clone())
+                        .with_run(run_id.clone())
+                        .with_instance(instance_id.clone()),
+                );
+            }
             (Arc::new(conn_raw), spawned_events, spawned_requests)
         };
         conn = spawn_conn;
@@ -2978,6 +2997,14 @@ impl AgentRuntime {
         let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
+        if let Some(pid) = conn.pid() {
+            crate::processes::register_process(
+                pid,
+                crate::processes::ProcessMeta::new("agent")
+                    .with_label(&spec.display_name)
+                    .with_instance(instance_id),
+            );
+        }
         let init = conn.initialize().await.map_err(|e| {
             conn.kill();
             crate::PultError::internal(format!(
@@ -3100,6 +3127,14 @@ impl AgentRuntime {
         let (conn, _streams) = crate::drivers::acp::AcpConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
+        if let Some(pid) = conn.pid() {
+            crate::processes::register_process(
+                pid,
+                crate::processes::ProcessMeta::new("agent")
+                    .with_label(&spec.display_name)
+                    .with_instance(instance_id),
+            );
+        }
         let init = conn.initialize().await.map_err(|e| {
             conn.kill();
             crate::PultError::internal(format!(

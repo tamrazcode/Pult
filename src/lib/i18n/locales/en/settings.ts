@@ -288,4 +288,10 @@ export const settings = {
     "Health, counters and redacted stderr for user-configured MCP servers.",
   "settings.diagnostics.mcpLogs": "Logs",
   "settings.diagnostics.mcpCalls": "{{calls}} calls · {{errors}} errors",
+  "settings.diagnostics.processesTitle": "Processes",
+  "settings.diagnostics.processesSubtitle":
+    "Live descendants of pult-core. Only processes Pult started appear here; CPU% is measured between snapshots.",
+  "settings.diagnostics.processesEmpty": "No child processes right now.",
+  "settings.diagnostics.processesKill": "Kill",
+  "settings.diagnostics.processesConfirm": "Kill process {{pid}} and its children?",
 } as const;

@@ -174,6 +174,11 @@ impl AcpConn {
             .cloned()
             .collect()
     }
+
+    /// OS pid of the agent process, when it is still running.
+    pub fn pid(&self) -> Option<u32> {
+        self.child.lock().ok().and_then(|child| child.id())
+    }
 }
 
 impl AcpConn {
@@ -611,6 +616,9 @@ impl AcpConn {
             // Already exited: no tree left to kill (and the pid may be reused).
             if matches!(child.try_wait(), Ok(Some(_))) {
                 return;
+            }
+            if let Some(pid) = child.id() {
+                crate::processes::unregister_process(pid);
             }
             #[cfg(windows)]
             {
