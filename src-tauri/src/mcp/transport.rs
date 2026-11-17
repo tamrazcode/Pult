@@ -171,7 +171,7 @@ impl LogRing {
 /// Incremental `text/event-stream` decoder (handles CRLF and multi-line data).
 #[derive(Default)]
 pub(crate) struct SseDecoder {
-    buffer: String,
+    buffer: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -182,8 +182,12 @@ pub(crate) struct SseEvent {
 
 impl SseDecoder {
     pub(crate) fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
-        self.buffer.push_str(&String::from_utf8_lossy(chunk));
-        self.buffer = self.buffer.replace("\r\n", "\n");
+        self.buffer.extend_from_slice(chunk);
+        // SSE framing is ASCII; retain bytes so a multibyte character split
+        // across network chunks is decoded only once the block is complete.
+        if self.buffer.contains(&b'\r') {
+            self.buffer.retain(|byte| *byte != b'\r');
+        }
         // shortcut: a malicious server could stream one endless event; drop the
         // buffer instead of growing without bound. Per-event limits land with
         // the diagnostics manager if this proves too coarse.
@@ -192,8 +196,8 @@ impl SseDecoder {
             return Vec::new();
         }
         let mut events = Vec::new();
-        while let Some(index) = self.buffer.find("\n\n") {
-            let block = self.buffer[..index].to_string();
+        while let Some(index) = self.buffer.windows(2).position(|pair| pair == b"\n\n") {
+            let block = String::from_utf8_lossy(&self.buffer[..index]).to_string();
             self.buffer.drain(..index + 2);
             if let Some(event) = parse_sse_block(&block) {
                 events.push(event);
@@ -246,6 +250,17 @@ mod tests {
         assert!(pending
             .complete(json!({ "jsonrpc": "2.0", "id": id, "result": {} }))
             .is_none());
+    }
+
+    #[test]
+    fn decoder_preserves_multibyte_text_split_across_chunks() {
+        let text = "event: message\ndata: {\"text\":\"привет\"}\n\n".as_bytes();
+        let split = text.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+        let mut decoder = SseDecoder::default();
+        assert!(decoder.push(&text[..split]).is_empty());
+        let events = decoder.push(&text[split..]);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].data.contains("привет"), "{:?}", events[0]);
     }
 
     #[test]

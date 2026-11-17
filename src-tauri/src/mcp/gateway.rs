@@ -129,9 +129,9 @@ pub struct McpGateway {
     /// Bumped by `close_server`; an in-flight connect from an older generation
     /// must not repopulate the cache.
     generations: AsyncMutex<HashMap<String, u64>>,
-    /// Upstream initialize result per server, so repeated downstream
-    /// handshakes do not re-initialize the same upstream session.
-    initialized: AsyncMutex<HashMap<String, (Value, u64)>>,
+    /// Upstream initialize result per server, bound to the exact client Arc and
+    /// its epoch so a replacement transport never inherits it.
+    initialized: AsyncMutex<HashMap<String, (Value, u64, usize)>>,
     initialize_lock: AsyncMutex<()>,
 }
 
@@ -285,19 +285,22 @@ impl McpGateway {
         server_id: &str,
     ) -> Result<(Arc<dyn McpTransport>, Value), String> {
         let _serial = self.initialize_lock.lock().await;
+        // Capture the generation before touching the client cache: a close
+        // between these steps must not let an old client adopt the new state.
+        let generation = self.generation(server_id).await;
         let client = self.client(server_id).await?;
+        let client_id = client_identity(&client);
         let epoch = client.session_epoch();
         let cached = {
             let initialized = self.initialized.lock().await;
             initialized.get(server_id).cloned()
         };
-        if let Some((result, cached_epoch)) = cached {
-            if cached_epoch == epoch {
+        if let Some((result, cached_epoch, cached_client)) = cached {
+            if cached_epoch == epoch && cached_client == client_id {
                 return Ok((client, result));
             }
             self.initialized.lock().await.remove(server_id);
         }
-        let generation = self.generation(server_id).await;
         let reply = client
             .request(json!({
                 "jsonrpc": "2.0",
@@ -324,14 +327,38 @@ impl McpGateway {
         // bumps the generation, then clears this map, so it either waits for
         // this insert or invalidates it afterwards.
         let mut initialized = self.initialized.lock().await;
-        if self.generation(server_id).await != generation || client.session_epoch() != epoch {
+        let current = self.clients.lock().await.get(server_id).cloned();
+        let same_client = current
+            .as_ref()
+            .is_some_and(|current| client_identity(current) == client_id);
+        if self.generation(server_id).await != generation
+            || client.session_epoch() != epoch
+            || !same_client
+        {
             drop(initialized);
-            let _ = client.close().await;
+            self.evict_client_if_same(server_id, client_id).await;
             return Err("MCP session changed during initialization; retry the call".to_string());
         }
-        initialized.insert(server_id.to_string(), (result.clone(), epoch));
+        initialized.insert(server_id.to_string(), (result.clone(), epoch, client_id));
         drop(initialized);
         Ok((client, result))
+    }
+
+    async fn evict_client_if_same(&self, server_id: &str, client_id: usize) {
+        let removed = {
+            let mut clients = self.clients.lock().await;
+            if clients
+                .get(server_id)
+                .is_some_and(|client| client_identity(client) == client_id)
+            {
+                clients.remove(server_id)
+            } else {
+                None
+            }
+        };
+        if let Some(client) = removed {
+            let _ = client.close().await;
+        }
     }
 }
 
@@ -480,6 +507,10 @@ fn rpc_error(id: Value, message: impl Into<String>) -> Value {
     rpc_error_code(id, -32603, message)
 }
 
+fn client_identity(client: &Arc<dyn McpTransport>) -> usize {
+    Arc::as_ptr(client) as *const () as usize
+}
+
 fn rpc_error_code(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({
         "jsonrpc": "2.0",
@@ -597,7 +628,13 @@ mod tests {
         stream.write_all(head.as_bytes()).await.unwrap();
         stream.write_all(body.as_bytes()).await.unwrap();
         let mut response = String::new();
-        stream.read_to_string(&mut response).await.unwrap();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            stream.read_to_string(&mut response),
+        )
+        .await
+        .expect("gateway reply timeout")
+        .unwrap();
         response
     }
 

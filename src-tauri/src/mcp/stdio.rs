@@ -128,9 +128,13 @@ impl StdioTransport {
         let stderr_secrets = config.secret_values.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr);
-            while let Ok(Some((line, _truncated))) =
-                next_line_capped(&mut lines, MAX_LOG_LINE).await
+            while let Ok(Some((line, truncated))) = next_line_capped(&mut lines, MAX_LOG_LINE).await
             {
+                if truncated {
+                    // A partial line could cut a secret in half; omit it.
+                    stderr_logs.push("[stderr line too long; omitted]".to_string());
+                    continue;
+                }
                 stderr_logs.push(redact_values(
                     &super::security::redact(&line),
                     &stderr_secrets,

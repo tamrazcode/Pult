@@ -110,16 +110,26 @@ impl HttpTransport {
         let status = response.status();
         if !status.is_success() {
             let mut body = Vec::new();
+            let mut truncated = false;
             let mut stream = response.bytes_stream();
             while let Some(Ok(chunk)) = stream.next().await {
                 let room = MAX_ERROR_BODY.saturating_sub(body.len());
                 if room == 0 {
+                    truncated = true;
                     break;
                 }
                 body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                if body.len() >= MAX_ERROR_BODY {
+                if body.len() >= MAX_ERROR_BODY && chunk.len() > room {
+                    truncated = true;
                     break;
                 }
+            }
+            if truncated {
+                // Redacting after truncation could expose a secret cut in half.
+                return Err(format!(
+                    "MCP HTTP {} from server (error body too large)",
+                    status.as_u16()
+                ));
             }
             let body = String::from_utf8_lossy(&body).to_string();
             return Err(format!(
