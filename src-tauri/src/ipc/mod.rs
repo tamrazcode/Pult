@@ -2084,6 +2084,154 @@ pub fn orchestrator_steer_task(
         .map_err(PultError::internal)
 }
 
+// ---- user MCP servers -------------------------------------------------------
+
+#[tauri::command]
+pub fn mcp_list_servers(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Result<Vec<crate::mcp::config::CustomMcpServerView>, PultError> {
+    crate::mcp::config::list(runtime.store())
+}
+
+#[tauri::command]
+pub fn mcp_get_server(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<crate::mcp::config::CustomMcpServerView, PultError> {
+    crate::mcp::config::get(runtime.store(), &id)
+}
+
+#[tauri::command]
+pub async fn mcp_create_server(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    input: crate::mcp::config::CustomMcpServerInput,
+) -> Result<crate::mcp::config::CustomMcpServerView, PultError> {
+    let runtime = runtime.inner().clone();
+    let server = crate::mcp::config::create(runtime.store(), input)?;
+    runtime.custom_mcp_changed(&server.id).await;
+    Ok(server)
+}
+
+#[tauri::command]
+pub async fn mcp_update_server(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+    input: crate::mcp::config::CustomMcpServerInput,
+) -> Result<crate::mcp::config::CustomMcpServerView, PultError> {
+    let runtime = runtime.inner().clone();
+    let server = crate::mcp::config::update(runtime.store(), &id, input)?;
+    runtime.custom_mcp_changed(&server.id).await;
+    Ok(server)
+}
+
+#[tauri::command]
+pub async fn mcp_delete_server(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<(), PultError> {
+    let runtime = runtime.inner().clone();
+    crate::mcp::config::delete(runtime.store(), &id)?;
+    runtime.custom_mcp_changed(&id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn mcp_set_server_enabled(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+    enabled: bool,
+) -> Result<crate::mcp::config::CustomMcpServerView, PultError> {
+    let runtime = runtime.inner().clone();
+    let server = crate::mcp::config::set_enabled(runtime.store(), &id, enabled)?;
+    runtime.custom_mcp_changed(&id).await;
+    Ok(server)
+}
+
+#[tauri::command]
+pub async fn mcp_test_connection(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<crate::mcp::probe::ProbeResult, PultError> {
+    let runtime = runtime.inner().clone();
+    let server = runtime.store().get_custom_mcp_server(&id)?;
+    let result = crate::mcp::probe::test_connection(runtime.store(), &server).await;
+    if !result.ok {
+        if let Some(gateway) = runtime.gateway.get() {
+            gateway.drop_client(&id).await;
+        }
+    }
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn mcp_server_logs(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<Vec<String>, PultError> {
+    Ok(match runtime.gateway.get() {
+        Some(gateway) => gateway.logs(&id).await,
+        None => Vec::new(),
+    })
+}
+
+#[tauri::command]
+pub async fn mcp_server_stats(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<crate::mcp::gateway::GatewayStats, PultError> {
+    Ok(match runtime.gateway.get() {
+        Some(gateway) => gateway.stats(&id).await,
+        None => Default::default(),
+    })
+}
+
+#[tauri::command]
+pub async fn mcp_check_all(runtime: tauri::State<'_, Arc<AgentRuntime>>) -> Result<(), PultError> {
+    let runtime = runtime.inner().clone();
+    crate::mcp::manager::check_all(Arc::clone(runtime.store())).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mcp_list_bindings(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    scope_type: String,
+    scope_id: String,
+) -> Result<Vec<crate::store::McpBinding>, PultError> {
+    runtime.store().list_mcp_bindings(&scope_type, &scope_id)
+}
+
+#[tauri::command]
+pub async fn mcp_set_binding(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    scope_type: String,
+    scope_id: String,
+    server_id: String,
+    mode: Option<String>,
+) -> Result<(), PultError> {
+    let runtime = runtime.inner().clone();
+    runtime
+        .store()
+        .set_mcp_binding(&scope_type, &scope_id, &server_id, mode.as_deref())?;
+    runtime.custom_mcp_changed(&server_id).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn mcp_active_for_thread(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    instance_id: String,
+) -> Result<Vec<crate::mcp::config::CustomMcpServerView>, PultError> {
+    let store = runtime.store();
+    let thread = store.get_thread(&thread_id)?;
+    let servers = crate::mcp::resolve::resolve_for_thread(store, &thread, &instance_id)?;
+    servers
+        .iter()
+        .map(|server| crate::mcp::config::view(store, server))
+        .collect()
+}
+
 #[cfg(test)]
 mod external_url_tests {
     use super::validate_external_url;

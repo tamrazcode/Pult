@@ -75,7 +75,9 @@ fn reference_diff(repo: &Path, extra: &[&str]) -> String {
 
 fn run_with_index(repo: &Path, args: &[&str], index: Option<&Path>) -> String {
     let mut cmd = std::process::Command::new("git");
-    cmd.args(args).current_dir(repo).env("GIT_OPTIONAL_LOCKS", "0");
+    cmd.args(args)
+        .current_dir(repo)
+        .env("GIT_OPTIONAL_LOCKS", "0");
     if let Some(idx) = index {
         cmd.env("GIT_INDEX_FILE", idx);
     }
@@ -94,7 +96,10 @@ async fn diff_byte_exact_tracked_only() {
     std::fs::write(fx.path().join("tracked.txt"), "line1\nCHANGED\nline3\n").unwrap();
     let ours = diff(fx.path(), None).await.unwrap();
     let expected = reference_diff(fx.path(), &["HEAD"]);
-    assert_eq!(ours.raw, expected, "diff must match `git diff HEAD` byte-exact");
+    assert_eq!(
+        ours.raw, expected,
+        "diff must match `git diff HEAD` byte-exact"
+    );
     assert_eq!(ours.base, "HEAD");
     assert_eq!(ours.files.len(), 1);
     assert_eq!(ours.files[0].path, "tracked.txt");
@@ -112,9 +117,16 @@ async fn diff_byte_exact_includes_untracked() {
     std::fs::write(deep.join("new.txt"), "brand new\nsecond line\nthird\n").unwrap();
     let ours = diff(fx.path(), None).await.unwrap();
     let expected = reference_diff(fx.path(), &["HEAD"]);
-    assert_eq!(ours.raw, expected, "diff must include untracked files byte-exact");
+    assert_eq!(
+        ours.raw, expected,
+        "diff must include untracked files byte-exact"
+    );
     assert_eq!(ours.files.len(), 2);
-    let new_file = ours.files.iter().find(|f| f.path == "notes/new.txt").unwrap();
+    let new_file = ours
+        .files
+        .iter()
+        .find(|f| f.path == "notes/new.txt")
+        .unwrap();
     assert_eq!(new_file.status, "added");
     assert_eq!(new_file.added, 3);
     assert!(new_file.raw.contains("new file mode 100644"));
@@ -200,7 +212,12 @@ async fn push_to_bare_remote_and_upstream() {
     git_sync(remote.path(), &["init", "-q", "--bare", "-b", "main"]);
     git_sync(
         fx.path(),
-        &["remote", "add", "origin", remote.path().to_string_lossy().as_ref()],
+        &[
+            "remote",
+            "add",
+            "origin",
+            remote.path().to_string_lossy().as_ref(),
+        ],
     );
     std::fs::write(fx.path().join("tracked.txt"), "pushed\n").unwrap();
     let pushed = commit(fx.path(), "to push").await.unwrap();
@@ -306,7 +323,11 @@ async fn diff_summary_matches_diff_counts_and_changes_patch_hash_on_edit() {
     // Stage one edit, leave one unstaged edit, and add one untracked file.
     std::fs::write(fx.path().join("tracked.txt"), "line1\nSTAGED\nline3\n").unwrap();
     git_sync(fx.path(), &["add", "tracked.txt"]);
-    std::fs::write(fx.path().join("sub").join("nested.txt"), "alpha\nUNSTAGED\n").unwrap();
+    std::fs::write(
+        fx.path().join("sub").join("nested.txt"),
+        "alpha\nUNSTAGED\n",
+    )
+    .unwrap();
     std::fs::write(fx.path().join("untracked.txt"), "u1\nu2\n").unwrap();
 
     let full = diff(fx.path(), None).await.unwrap();
@@ -345,9 +366,15 @@ async fn diff_summary_matches_diff_counts_and_changes_patch_hash_on_edit() {
     for s in &summary2.files {
         let prev = hashes.get(&s.path).expect("unexpected path after edit");
         if s.path == "tracked.txt" {
-            assert_ne!(&s.patch_hash, prev, "patch_hash must change on same-size edit");
+            assert_ne!(
+                &s.patch_hash, prev,
+                "patch_hash must change on same-size edit"
+            );
         } else {
-            assert_eq!(&s.patch_hash, prev, "untouched file patch_hash must not change");
+            assert_eq!(
+                &s.patch_hash, prev,
+                "untouched file patch_hash must not change"
+            );
         }
     }
 }
@@ -370,13 +397,21 @@ async fn diff_summary_works_on_no_head_repo() {
     assert_eq!(summary.total_added, 3);
     assert_eq!(summary.total_removed, 0);
 
-    let staged = summary.files.iter().find(|f| f.path == "staged.txt").unwrap();
+    let staged = summary
+        .files
+        .iter()
+        .find(|f| f.path == "staged.txt")
+        .unwrap();
     assert_eq!(staged.added, 2);
     assert_eq!(staged.removed, 0);
     assert_eq!(staged.status, "added");
     assert!(!staged.patch_hash.is_empty());
 
-    let untracked = summary.files.iter().find(|f| f.path == "untracked.txt").unwrap();
+    let untracked = summary
+        .files
+        .iter()
+        .find(|f| f.path == "untracked.txt")
+        .unwrap();
     assert_eq!(untracked.added, 1);
     assert_eq!(untracked.removed, 0);
     assert_eq!(untracked.status, "added");
@@ -431,7 +466,9 @@ async fn diff_file_rejects_absolute_parent_and_outside_paths() {
 #[tokio::test]
 async fn diff_rejects_option_like_base() {
     let fx = fixture_repo().await;
-    let err = diff(fx.path(), Some("--output=pwned.txt")).await.unwrap_err();
+    let err = diff(fx.path(), Some("--output=pwned.txt"))
+        .await
+        .unwrap_err();
     assert_eq!(err_code(&err), "git.invalid_base");
     assert!(!fx.path().join("pwned.txt").exists());
 }
@@ -533,4 +570,3 @@ async fn worktree_remove_preserves_untracked_file_unless_forced() {
     worktree_remove(fx.path(), &name, true).await.unwrap();
     assert!(!wt_path.exists(), "worktree removed when force=true");
 }
-

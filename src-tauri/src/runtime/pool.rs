@@ -64,6 +64,8 @@ pub struct IdlePool {
     terminals: Arc<TerminalRegistry>,
     /// Bearer tokens are revoked the moment their ACP session dies.
     mcp_registry: Option<Arc<crate::orchestrator::McpTokenRegistry>>,
+    /// Gateway tokens issued for user MCP servers, revoked with the session.
+    gateway_tokens: Option<Arc<crate::mcp::gateway::GatewayTokens>>,
 }
 
 impl IdlePool {
@@ -80,6 +82,7 @@ impl IdlePool {
             expired: AtomicU64::new(0),
             terminals,
             mcp_registry: None,
+            gateway_tokens: None,
         }
     }
 
@@ -92,12 +95,21 @@ impl IdlePool {
         self
     }
 
+    /// Revokes user-MCP gateway tokens when their ACP session is evicted.
+    pub fn with_gateway_tokens(mut self, tokens: Arc<crate::mcp::gateway::GatewayTokens>) -> Self {
+        self.gateway_tokens = Some(tokens);
+        self
+    }
+
     /// Kill a warm session and everything it still owns.
     fn kill_idle(&self, entry: IdleConn) {
         entry.conn.kill();
         self.terminals.release_owner(&entry.owner_token);
         if let Some(registry) = &self.mcp_registry {
             registry.revoke(&entry.owner_token);
+        }
+        if let Some(tokens) = &self.gateway_tokens {
+            tokens.revoke_owner(&entry.owner_token);
         }
     }
 
@@ -175,6 +187,12 @@ impl IdlePool {
 
     pub fn invalidate_root(&self, root: &Path) {
         self.remove_matching(|entry| entry.root == root);
+    }
+
+    /// Broad config change (a global MCP server was edited): every warm
+    /// session may be stale, so drop all of them.
+    pub fn invalidate_all(&self) {
+        self.remove_matching(|_| true);
     }
 
     pub fn evict_expired(&self) {

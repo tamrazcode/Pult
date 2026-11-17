@@ -42,7 +42,8 @@ fn spawn_mock(extra: &[(&str, &str)]) -> (Arc<AcpConn>, AcpStreams) {
 }
 
 fn sandbox_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("pult-golden-{tag}-{}", crate::events::now_millis()));
+    let dir =
+        std::env::temp_dir().join(format!("pult-golden-{tag}-{}", crate::events::now_millis()));
     std::fs::create_dir_all(&dir).expect("sandbox dir");
     dir
 }
@@ -71,9 +72,9 @@ async fn answer_client_requests(
                 let _ = conn
                     .respond_client(
                         request_id,
-                        serde_json::to_value(
-                            crate::protocol::types::ReadTextFileResult { content },
-                        )
+                        serde_json::to_value(crate::protocol::types::ReadTextFileResult {
+                            content,
+                        })
                         .map_err(|e| RpcError::new(-32603, e.to_string())),
                     )
                     .await;
@@ -104,7 +105,10 @@ async fn answer_client_requests(
                 let _ = conn
                     .respond_client(
                         request_id,
-                        Err(crate::protocol::jsonrpc::RpcError::new(-32601, "not in driver golden")),
+                        Err(crate::protocol::jsonrpc::RpcError::new(
+                            -32601,
+                            "not in driver golden",
+                        )),
                     )
                     .await;
             }
@@ -205,14 +209,28 @@ async fn golden_happy_path_streams_expected_events() {
             }
         }
     };
-    assert_eq!(stop.stop_reason, crate::protocol::types::StopReason::EndTurn);
+    assert_eq!(
+        stop.stop_reason,
+        crate::protocol::types::StopReason::EndTurn
+    );
     assert!(saw_streamed_event, "at least one streamed event");
 
     let has = |kinds: &[EventKind], f: &dyn Fn(&EventKind) -> bool| kinds.iter().any(f);
-    let thought = has(&kinds, &|k| matches!(k, EventKind::AgentThoughtDelta { .. }));
-    let plan = has(&kinds, &|k| matches!(k, EventKind::Plan { entries, .. } if entries.len() == 3));
-    let tool_read = has(&kinds, &|k| matches!(k, EventKind::ToolCall { kind, .. } if kind == "read"));
-    let tool_update = has(&kinds, &|k| matches!(k, EventKind::ToolCallUpdate { status: Some(s), .. } if s == "completed"));
+    let thought = has(&kinds, &|k| {
+        matches!(k, EventKind::AgentThoughtDelta { .. })
+    });
+    let plan = has(
+        &kinds,
+        &|k| matches!(k, EventKind::Plan { entries, .. } if entries.len() == 3),
+    );
+    let tool_read = has(
+        &kinds,
+        &|k| matches!(k, EventKind::ToolCall { kind, .. } if kind == "read"),
+    );
+    let tool_update = has(
+        &kinds,
+        &|k| matches!(k, EventKind::ToolCallUpdate { status: Some(s), .. } if s == "completed"),
+    );
     let echoed_text: String = kinds
         .iter()
         .filter_map(|k| match k {
@@ -235,8 +253,11 @@ async fn golden_happy_path_streams_expected_events() {
     });
     assert!(commands, "expected available commands; got {kinds:?}");
     assert!(
-        has(&kinds, &|k| matches!(k, EventKind::SessionInfo { title: Some(t) }
-            if t.starts_with("Echo turn"))),
+        has(
+            &kinds,
+            &|k| matches!(k, EventKind::SessionInfo { title: Some(t) }
+            if t.starts_with("Echo turn"))
+        ),
         "expected session_info auto-rename; got {kinds:?}"
     );
     assert!(
@@ -247,7 +268,10 @@ async fn golden_happy_path_streams_expected_events() {
 
     // fs/write_text_file round-trip: the mock asked us to write this file.
     let written = sandbox.join("repo/src/mock-out.txt");
-    assert!(written.exists(), "mock fs write did not land in the sandbox");
+    assert!(
+        written.exists(),
+        "mock fs write did not land in the sandbox"
+    );
 
     conn.kill();
     answer_task.abort();
@@ -302,7 +326,10 @@ async fn golden_first_echo_latency_budget() {
             }
         }
     };
-    assert_eq!(stop.stop_reason, crate::protocol::types::StopReason::EndTurn);
+    assert_eq!(
+        stop.stop_reason,
+        crate::protocol::types::StopReason::EndTurn
+    );
     let first_echo = first_echo.expect("at least one streamed event");
     assert!(
         first_echo < Duration::from_millis(200),
@@ -388,7 +415,9 @@ async fn golden_bad_json_lines_are_skipped() {
     ));
 
     // If the codec died on the garbage line, this handshake would hang/err.
-    conn.initialize().await.expect("initialize survived bad json");
+    conn.initialize()
+        .await
+        .expect("initialize survived bad json");
     let session = conn
         .new_session(&sandbox.to_string_lossy())
         .await
@@ -397,7 +426,10 @@ async fn golden_bad_json_lines_are_skipped() {
         .prompt(&session.session_id, vec![ContentBlock::text("still alive")])
         .await
         .expect("prompt survived bad json");
-    assert_eq!(stop.stop_reason, crate::protocol::types::StopReason::EndTurn);
+    assert_eq!(
+        stop.stop_reason,
+        crate::protocol::types::StopReason::EndTurn
+    );
     let _ = events_rx.try_recv(); // events flowed too
 
     conn.kill();
@@ -437,9 +469,15 @@ async fn golden_crash_mid_turn_surfaces_error() {
             result = conn.prompt(&session.session_id, vec![ContentBlock::text("crash please")]) => break result,
         }
     };
-    assert!(saw_event, "at least one update should arrive before the crash");
     assert!(
-        matches!(result, Err(DriverError::Rpc(_)) | Err(DriverError::HungUp { .. })),
+        saw_event,
+        "at least one update should arrive before the crash"
+    );
+    assert!(
+        matches!(
+            result,
+            Err(DriverError::Rpc(_)) | Err(DriverError::HungUp { .. })
+        ),
         "expected a typed failure, got {result:?}"
     );
 
@@ -481,7 +519,10 @@ async fn golden_hang_never_resolves_and_is_killable() {
 
     // After the kill the pending prompt fails instead of hanging forever.
     let result = prompt_fut.await;
-    assert!(result.is_err(), "prompt should fail once the process is killed");
+    assert!(
+        result.is_err(),
+        "prompt should fail once the process is killed"
+    );
 
     answer_task.abort();
     let _ = std::fs::remove_dir_all(&sandbox);
@@ -530,7 +571,10 @@ async fn golden_image_prompt_round_trips() {
             result = &mut prompt_fut => break result.expect("prompt response"),
         }
     };
-    assert_eq!(stop.stop_reason, crate::protocol::types::StopReason::EndTurn);
+    assert_eq!(
+        stop.stop_reason,
+        crate::protocol::types::StopReason::EndTurn
+    );
     let echoed: String = kinds
         .iter()
         .filter_map(|k| match k {
@@ -562,10 +606,17 @@ async fn golden_config_options_new_session_and_set_config_option() {
     conn.initialize().await.expect("initialize");
     let session = conn.new_session(".").await.expect("new session");
 
-    let ids: Vec<&str> = session.config_options.iter().map(|o| o.id.as_str()).collect();
+    let ids: Vec<&str> = session
+        .config_options
+        .iter()
+        .map(|o| o.id.as_str())
+        .collect();
     assert_eq!(ids, vec!["model", "thought_level", "web_search"]);
     match &session.config_options[0].kind {
-        SessionConfigOptionKind::Select { current_value, options } => {
+        SessionConfigOptionKind::Select {
+            current_value,
+            options,
+        } => {
             assert_eq!(current_value, "mock-fast");
             assert!(matches!(options, SessionConfigSelectOptions::Grouped(g) if g.len() == 2));
         }
@@ -605,7 +656,9 @@ async fn golden_config_options_new_session_and_set_config_option() {
         .expect("search option");
     assert!(matches!(
         search.kind,
-        SessionConfigOptionKind::Boolean { current_value: true }
+        SessionConfigOptionKind::Boolean {
+            current_value: true
+        }
     ));
 
     let bad = conn
@@ -647,10 +700,7 @@ async fn golden_authenticate_failure_keeps_session_locked() {
     if !mock_available() {
         panic!("fixtures/mock-acp-agent.mjs missing");
     }
-    let (conn, _streams) = spawn_mock(&[
-        ("MOCK_AUTH_REQUIRED", "1"),
-        ("MOCK_AUTH_FAIL", "1"),
-    ]);
+    let (conn, _streams) = spawn_mock(&[("MOCK_AUTH_REQUIRED", "1"), ("MOCK_AUTH_FAIL", "1")]);
     conn.initialize().await.expect("initialize");
     let err = conn
         .authenticate("mock-token")

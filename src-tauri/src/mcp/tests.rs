@@ -291,3 +291,107 @@ async fn connecting_reports_a_secret_that_was_deleted() {
         .expect("missing secret must fail before spawning");
     assert!(error.contains("API_TOKEN"), "{error}");
 }
+
+async fn mock_mcp_http(requests: usize) -> u16 {
+    use crate::http1::read_request;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        for _ in 0..requests {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = read_request(&mut stream, 1 << 20).await.unwrap().unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+            let method = body["method"].as_str().unwrap_or_default();
+            let has_id = body.get("id").is_some_and(|id| !id.is_null());
+            let (status, payload) = if !has_id {
+                (202, String::new())
+            } else {
+                let result = if method == "initialize" {
+                    json!({
+                        "protocolVersion": "2025-06-18",
+                        "capabilities": {},
+                        "serverInfo": { "name": "mock", "version": "1.0" }
+                    })
+                } else {
+                    json!({ "tools": [{
+                        "name": "echo",
+                        "description": "Echo text",
+                        "inputSchema": { "type": "object" }
+                    }]})
+                };
+                (
+                    200,
+                    json!({ "jsonrpc": "2.0", "id": body["id"], "result": result }).to_string(),
+                )
+            };
+            let head = format!(
+                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                payload.len()
+            );
+            stream.write_all(head.as_bytes()).await.unwrap();
+            stream.write_all(payload.as_bytes()).await.unwrap();
+        }
+    });
+    port
+}
+
+#[tokio::test]
+async fn probe_initializes_lists_tools_and_records_health() {
+    let port = mock_mcp_http(3).await;
+    let store = Store::open_in_memory().unwrap();
+    let created = config::create(
+        &store,
+        input(json!({
+            "name": "Probe HTTP",
+            "timeoutMs": 5000,
+            "transport": {
+                "kind": "http",
+                "url": format!("http://127.0.0.1:{port}/mcp")
+            }
+        })),
+    )
+    .unwrap();
+    let server = store.get_custom_mcp_server(&created.id).unwrap();
+    let result = super::probe::test_connection(&store, &server).await;
+    assert!(result.ok, "{:?}", result.error);
+    assert_eq!(result.protocol_version.as_deref(), Some("2025-06-18"));
+    assert_eq!(result.server_info.as_ref().unwrap()["name"], "mock");
+    assert_eq!(result.tools.len(), 1);
+    assert_eq!(result.tools[0].name, "echo");
+    assert_eq!(result.tools[0].description, "Echo text");
+
+    let stored = store.get_custom_mcp_server(&created.id).unwrap();
+    assert_eq!(stored.last_status.as_deref(), Some("connected"));
+    assert_eq!(stored.tools_cache.len(), 1);
+    assert!(stored.last_latency_ms.is_some());
+}
+
+#[tokio::test]
+async fn probe_failure_records_an_error_without_panicking() {
+    use tokio::net::TcpListener;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    let store = Store::open_in_memory().unwrap();
+    let created = config::create(
+        &store,
+        input(json!({
+            "name": "Probe down",
+            "timeoutMs": 1000,
+            "transport": {
+                "kind": "http",
+                "url": format!("http://127.0.0.1:{port}/mcp")
+            }
+        })),
+    )
+    .unwrap();
+    let server = store.get_custom_mcp_server(&created.id).unwrap();
+    let result = super::probe::test_connection(&store, &server).await;
+    assert!(!result.ok);
+    assert!(result.error.is_some());
+    let stored = store.get_custom_mcp_server(&created.id).unwrap();
+    assert_eq!(stored.last_status.as_deref(), Some("error"));
+    assert!(stored.last_error.is_some());
+}

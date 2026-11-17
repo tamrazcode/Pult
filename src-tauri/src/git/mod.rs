@@ -124,7 +124,6 @@ pub fn git_err(code: &str, message: impl Into<String>) -> PultError {
     }
 }
 
-
 /// Windows: git/gh are console apps — without this flag every call pops a
 /// console window on top of the user's screen (GUI parent, no console).
 #[cfg(windows)]
@@ -170,7 +169,9 @@ async fn git_run(
 ) -> Result<String, PultError> {
     let mut cmd = tokio::process::Command::new("git");
     hide_console(&mut cmd);
-    cmd.args(args).current_dir(dir).env("GIT_OPTIONAL_LOCKS", "0");
+    cmd.args(args)
+        .current_dir(dir)
+        .env("GIT_OPTIONAL_LOCKS", "0");
     if let Some(idx) = index_file {
         cmd.env("GIT_INDEX_FILE", idx);
     }
@@ -239,7 +240,8 @@ async fn temp_index_for(repo: &Path) -> Result<(PathBuf, bool), PultError> {
             .await
             .map_err(|e| internal(format!("copy scratch index: {e}")))?;
     } else {
-        let owned: Vec<std::ffi::OsString> = ["read-tree", "--empty"].iter().map(Into::into).collect();
+        let owned: Vec<std::ffi::OsString> =
+            ["read-tree", "--empty"].iter().map(Into::into).collect();
         git_run(repo, &owned, Some(&temp)).await?;
     }
     Ok((temp, copied))
@@ -252,25 +254,24 @@ async fn drop_temp_index(temp: &Path) {
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
 fn validate_base(base: Option<&str>) -> Result<Option<String>, PultError> {
-    let Some(base) = base.map(str::trim).filter(|base| !base.is_empty() && *base != "worktree")
+    let Some(base) = base
+        .map(str::trim)
+        .filter(|base| !base.is_empty() && *base != "worktree")
     else {
         return Ok(None);
     };
-    if base.starts_with('-')
-        || base.contains('\0')
-        || base.chars().any(char::is_whitespace)
-    {
-        return Err(git_err("git.invalid_base", format!("invalid diff base: {base}")));
+    if base.starts_with('-') || base.contains('\0') || base.chars().any(char::is_whitespace) {
+        return Err(git_err(
+            "git.invalid_base",
+            format!("invalid diff base: {base}"),
+        ));
     }
     Ok(Some(base.to_string()))
 }
 
 /// (git argument, value reported to the UI). `worktree` keeps the existing
 /// no-HEAD contract of `diff()`.
-async fn effective_base(
-    repo: &Path,
-    base: Option<&str>,
-) -> Result<(String, String), PultError> {
+async fn effective_base(repo: &Path, base: Option<&str>) -> Result<(String, String), PultError> {
     if let Some(base) = validate_base(base)? {
         return Ok((base.clone(), base));
     }
@@ -285,7 +286,12 @@ async fn effective_base(
 }
 
 fn validate_repo_relative_path(repo: &Path, path: &str) -> Result<PathBuf, PultError> {
-    let invalid = || git_err("git.invalid_path", format!("invalid repo-relative path: {path:?}"));
+    let invalid = || {
+        git_err(
+            "git.invalid_path",
+            format!("invalid repo-relative path: {path:?}"),
+        )
+    };
     if path.is_empty() || path.contains('\0') {
         return Err(invalid());
     }
@@ -373,7 +379,11 @@ fn parse_summary(
         let binary = added == "-" || removed == "-";
         counts.insert(
             path.to_string(),
-            (added.parse().unwrap_or(0), removed.parse().unwrap_or(0), binary),
+            (
+                added.parse().unwrap_or(0),
+                removed.parse().unwrap_or(0),
+                binary,
+            ),
         );
     }
 
@@ -417,10 +427,7 @@ fn parse_summary(
 /// Metadata-only changed files (no patch bodies). Runs `git add -A` on a
 /// throwaway index so staged, unstaged and untracked files all appear, then
 /// reads `--numstat` and `--raw` blob SHAs only.
-pub async fn diff_summary(
-    dir: &Path,
-    base: Option<&str>,
-) -> Result<GitDiffSummary, PultError> {
+pub async fn diff_summary(dir: &Path, base: Option<&str>) -> Result<GitDiffSummary, PultError> {
     let repo = resolve_repo(dir).await?;
     let (base_arg, reported_base) = effective_base(&repo, base).await?;
     let (temp, _copied) = temp_index_for(&repo).await?;
@@ -461,11 +468,7 @@ pub async fn diff_summary(
 }
 
 /// One file's byte-exact patch, fetched lazily when its row is expanded.
-pub async fn diff_file(
-    dir: &Path,
-    path: &str,
-    base: Option<&str>,
-) -> Result<DiffFile, PultError> {
+pub async fn diff_file(dir: &Path, path: &str, base: Option<&str>) -> Result<DiffFile, PultError> {
     let repo = resolve_repo(dir).await?;
     let repo_rel = validate_repo_relative_path(&repo, path)?;
     let path_arg = path.to_string();
@@ -525,9 +528,7 @@ async fn diff_with_temp_index(
         // and untracked files both appear, matching diff_summary/diff_file.
         _ => (EMPTY_TREE.to_string(), "worktree".to_string()),
     };
-    let args: Vec<&str> = vec![
-        "diff", "--no-color", "--no-ext-diff", "--no-renames", &base,
-    ];
+    let args: Vec<&str> = vec!["diff", "--no-color", "--no-ext-diff", "--no-renames", &base];
     let raw = git(repo, &args, Some(temp)).await?;
     let files = parse_diff_files(&raw);
     Ok(GitDiff {
@@ -809,7 +810,10 @@ pub async fn commit(dir: &Path, message: &str) -> Result<CommitOutcome, PultErro
         .and_then(|l| l.split_whitespace().next())
         .and_then(|n| n.parse().ok())
         .unwrap_or(0);
-    Ok(CommitOutcome { sha, files_committed })
+    Ok(CommitOutcome {
+        sha,
+        files_committed,
+    })
 }
 
 /// Pushes the current branch; creates upstream via origin when missing.
@@ -817,12 +821,7 @@ pub async fn push(dir: &Path) -> Result<PushOutcome, PultError> {
     let repo = resolve_repo(dir).await?;
     let upstream_ok = git(
         &repo,
-        &[
-            "rev-parse",
-            "--abbrev-ref",
-            "--symbolic-full-name",
-            "@{u}",
-        ],
+        &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
         None,
     )
     .await
@@ -933,7 +932,10 @@ pub async fn worktree_create(repo_dir: &Path, name: &str) -> Result<WorktreeOutc
     let repo = resolve_repo(repo_dir).await?;
     let slug = slugify(name);
     if slug.is_empty() {
-        return Err(git_err("git.bad_name", "worktree name has no usable characters"));
+        return Err(git_err(
+            "git.bad_name",
+            "worktree name has no usable characters",
+        ));
     }
     let seq = TEMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let worktree_name = format!("{slug}-{seq}");
@@ -947,7 +949,12 @@ pub async fn worktree_create(repo_dir: &Path, name: &str) -> Result<WorktreeOutc
     let branch = format!("pult/{worktree_name}");
     let branch_exists = git(
         &repo,
-        &["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")],
+        &[
+            "rev-parse",
+            "--verify",
+            "-q",
+            &format!("refs/heads/{branch}"),
+        ],
         None,
     )
     .await
@@ -956,19 +963,26 @@ pub async fn worktree_create(repo_dir: &Path, name: &str) -> Result<WorktreeOutc
     let args: Vec<String> = if branch_exists {
         vec!["worktree".into(), "add".into(), path_string, branch.clone()]
     } else {
-        vec!["worktree".into(), "add".into(), "-b".into(), branch.clone(), path_string]
+        vec![
+            "worktree".into(),
+            "add".into(),
+            "-b".into(),
+            branch.clone(),
+            path_string,
+        ]
     };
     let owned: Vec<std::ffi::OsString> = args.iter().map(Into::into).collect();
-    git_run(&repo, &owned, None)
-        .await
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("already exists") {
-                git_err("git.worktree_exists", format!("worktree already exists: {worktree_name}"))
-            } else {
-                e
-            }
-        })?;
+    git_run(&repo, &owned, None).await.map_err(|e| {
+        let msg = e.to_string();
+        if msg.contains("already exists") {
+            git_err(
+                "git.worktree_exists",
+                format!("worktree already exists: {worktree_name}"),
+            )
+        } else {
+            e
+        }
+    })?;
     let canonical = path.canonicalize().unwrap_or(path);
     Ok(WorktreeOutcome {
         path: canonical.to_string_lossy().into_owned(),
@@ -984,7 +998,9 @@ async fn ensure_pult_ignored(repo: &Path) -> Result<(), PultError> {
         .await
         .map_err(|e| internal(format!("create .git/info: {e}")))?;
     let exclude = info_dir.join("exclude");
-    let existing = tokio::fs::read_to_string(&exclude).await.unwrap_or_default();
+    let existing = tokio::fs::read_to_string(&exclude)
+        .await
+        .unwrap_or_default();
     if existing.lines().any(|l| l.trim() == ".pult/") {
         return Ok(());
     }
@@ -1014,7 +1030,12 @@ pub struct WorktreeDirtyStatus {
 /// Reads `git status --porcelain -z -uall` inside a worktree. Cheap enough to
 /// run on delete; never mutates the worktree.
 pub async fn worktree_dirty_status(worktree_dir: &Path) -> Result<WorktreeDirtyStatus, PultError> {
-    let raw = git(worktree_dir, &["status", "--porcelain=v1", "-z", "-uall"], None).await?;
+    let raw = git(
+        worktree_dir,
+        &["status", "--porcelain=v1", "-z", "-uall"],
+        None,
+    )
+    .await?;
     let mut chunks = raw.split('\0').filter(|chunk| !chunk.is_empty());
     let mut modified = 0usize;
     let mut untracked = 0usize;
@@ -1050,11 +1071,7 @@ pub async fn worktree_dirty_status(worktree_dir: &Path) -> Result<WorktreeDirtyS
 /// (checkpoints and any commits made inside remain reachable). Without
 /// `force`, a dirty worktree is left untouched and `git.worktree_dirty` is
 /// returned so the caller can ask the user first.
-pub async fn worktree_remove(
-    repo_dir: &Path,
-    name: &str,
-    force: bool,
-) -> Result<(), PultError> {
+pub async fn worktree_remove(repo_dir: &Path, name: &str, force: bool) -> Result<(), PultError> {
     let repo = resolve_repo(repo_dir).await?;
     let path = repo.join(".pult").join("worktrees").join(name);
     if !force && path.exists() {
@@ -1157,7 +1174,11 @@ async fn checkpoint_with_temp_index(
     .to_string();
     git(
         repo,
-        &["update-ref", &format!("refs/pult/checkpoints/{run_id}"), &sha],
+        &[
+            "update-ref",
+            &format!("refs/pult/checkpoints/{run_id}"),
+            &sha,
+        ],
         None,
     )
     .await?;

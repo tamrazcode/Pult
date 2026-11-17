@@ -42,10 +42,7 @@ impl RpcError {
     }
 
     pub fn method_not_found(method: &str) -> Self {
-        Self::new(
-            ERR_METHOD_NOT_FOUND,
-            format!("method not found: {method}"),
-        )
+        Self::new(ERR_METHOD_NOT_FOUND, format!("method not found: {method}"))
     }
 }
 
@@ -76,21 +73,23 @@ pub struct InvalidMessage(pub Value);
 /// Compact diagnostic context for a failed parse (kept small: the raw value
 /// can be huge; the first 400 chars plus the serde error are enough).
 fn jsonrpc_error_context(value: &Value, err: &serde_json::Error) -> Value {
-    let head = serde_json::to_string(value)
-        .unwrap_or_else(|_| "<unserializable>".to_string());
+    let head = serde_json::to_string(value).unwrap_or_else(|_| "<unserializable>".to_string());
     let head = head.chars().take(400).collect::<String>();
     serde_json::json!({ "head": head, "error": err.to_string() })
 }
 
 pub fn parse_incoming(value: Value) -> Result<Incoming, InvalidMessage> {
-    if let Some(method) = value.get("method").and_then(Value::as_str).map(str::to_string) {
+    if let Some(method) = value
+        .get("method")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+    {
         let params = value.get("params").cloned().unwrap_or(Value::Null);
         let id_value = value.get("id").cloned();
         let id = match id_value {
-            Some(id) => Some(
-                serde_json::from_value::<RequestId>(id)
-                    .map_err(|_| InvalidMessage(value))?,
-            ),
+            Some(id) => {
+                Some(serde_json::from_value::<RequestId>(id).map_err(|_| InvalidMessage(value))?)
+            }
             None => None,
         };
         return match id {
@@ -110,8 +109,8 @@ fn parse_response(value: Value) -> Result<Incoming, InvalidMessage> {
     let id: RequestId = serde_json::from_value(id_value)
         .map_err(|e| InvalidMessage(jsonrpc_error_context(&value, &e)))?;
     let result = if let Some(err) = err_value {
-        let err: RpcError =
-            serde_json::from_value(err).map_err(|e| InvalidMessage(jsonrpc_error_context(&value, &e)))?;
+        let err: RpcError = serde_json::from_value(err)
+            .map_err(|e| InvalidMessage(jsonrpc_error_context(&value, &e)))?;
         Err(err)
     } else if let Some(res) = result_value {
         Ok(res)

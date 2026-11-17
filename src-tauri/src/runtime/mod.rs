@@ -310,6 +310,10 @@ pub struct AgentRuntime {
     pub orchestrator: Arc<crate::orchestrator::engine::OrchestratorEngine>,
     /// Bearer tokens for the orchestrator MCP server.
     pub mcp_registry: Arc<crate::orchestrator::McpTokenRegistry>,
+    /// Bearer tokens for user MCP gateway endpoints, per ACP session.
+    pub gateway_tokens: Arc<crate::mcp::gateway::GatewayTokens>,
+    /// Loopback gateway for user MCP servers; set once at boot.
+    pub gateway: std::sync::OnceLock<Arc<crate::mcp::gateway::McpGateway>>,
 }
 
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
@@ -321,6 +325,19 @@ pub(crate) fn clean_verbatim(path: PathBuf) -> PathBuf {
         return PathBuf::from(format!(r"\\{rest}"));
     }
     PathBuf::from(s.replace(r"\\?\", ""))
+}
+
+/// Binary agents run for the stdio MCP bridge (`pult mcp-stdio`).
+fn mcp_stdio_binary() -> String {
+    std::env::var("PULT_MCP_STDIO_BIN")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::current_exe()
+                .ok()
+                .map(|path| path.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "pult-core".to_string())
 }
 
 /// Stable key for workspace-scoped settings (remembered permissions).
@@ -358,6 +375,7 @@ impl AgentRuntime {
             Arc::clone(&store),
         ));
         let mcp_registry = Arc::new(crate::orchestrator::McpTokenRegistry::new());
+        let gateway_tokens = Arc::new(crate::mcp::gateway::GatewayTokens::new());
         Self {
             store,
             sink: Arc::clone(&sink),
@@ -377,9 +395,12 @@ impl AgentRuntime {
                 config_error,
             }),
             pool: crate::runtime::pool::IdlePool::with_terminals(pool_terminals)
-                .with_mcp_registry(Arc::clone(&mcp_registry)),
+                .with_mcp_registry(Arc::clone(&mcp_registry))
+                .with_gateway_tokens(Arc::clone(&gateway_tokens)),
             orchestrator,
             mcp_registry,
+            gateway_tokens,
+            gateway: std::sync::OnceLock::new(),
         }
     }
 
@@ -387,6 +408,16 @@ impl AgentRuntime {
     /// the runtime is behind an `Arc`.
     pub fn attach_orchestrator(self: &Arc<Self>) {
         self.orchestrator.attach(self);
+    }
+
+    /// Drops the upstream connection and every agent token after a custom MCP
+    /// edit. Warm sessions are invalidated because their `session/new` already
+    /// carried the old server list.
+    pub async fn custom_mcp_changed(&self, server_id: &str) {
+        if let Some(gateway) = self.gateway.get() {
+            gateway.close_server(server_id).await;
+        }
+        self.pool.invalidate_all();
     }
 
     /// Spawns and initializes the selected provider in the background so the
@@ -522,6 +553,7 @@ impl AgentRuntime {
     pub fn mcp_servers_for(
         &self,
         thread_id: &str,
+        instance_id: &str,
         owner_token: &str,
         http_capable: bool,
     ) -> (Vec<crate::protocol::types::McpServer>, Option<String>) {
@@ -573,7 +605,57 @@ impl AgentRuntime {
                 }),
             }
         };
-        (vec![entry], Some(token))
+        let mut servers = vec![entry];
+        let Some(gateway) = self.gateway.get() else {
+            return (servers, Some(token));
+        };
+        let thread = match self.store.get_thread(thread_id) {
+            Ok(thread) => thread,
+            Err(error) => {
+                tracing::warn!(target: "pult::mcp", error = %error,
+                    "custom MCP servers skipped: thread lookup failed");
+                return (servers, Some(token));
+            }
+        };
+        let resolved =
+            match crate::mcp::resolve::resolve_for_thread(&self.store, &thread, instance_id) {
+                Ok(resolved) => resolved,
+                Err(error) => {
+                    tracing::warn!(target: "pult::mcp", error = %error,
+                        "custom MCP servers skipped: resolution failed");
+                    return (servers, Some(token));
+                }
+            };
+        let binary = mcp_stdio_binary();
+        for custom in resolved {
+            let endpoint = gateway.endpoint_for(Some(owner_token), &custom.id);
+            let entry = if http_capable {
+                crate::protocol::types::McpServer::Http {
+                    extra: serde_json::json!({
+                        "name": custom.name,
+                        "url": endpoint.url,
+                        "headers": [{
+                            "name": "Authorization",
+                            "value": format!("Bearer {}", endpoint.token)
+                        }]
+                    }),
+                }
+            } else {
+                crate::protocol::types::McpServer::Stdio {
+                    extra: serde_json::json!({
+                        "name": custom.name,
+                        "command": binary,
+                        "args": ["mcp-stdio", "--custom", custom.id],
+                        "env": [
+                            { "name": "PULT_MCP_URL", "value": endpoint.url },
+                            { "name": "PULT_MCP_TOKEN", "value": endpoint.token }
+                        ]
+                    }),
+                }
+            };
+            servers.push(entry);
+        }
+        (servers, Some(token))
     }
 
     /// Agent matrix projection (§4.3): configured instances + capabilities
@@ -2189,6 +2271,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 // The session never opened: its bearer and terminals must die
                 // with the attempt, not linger until app shutdown.
                 runtime.mcp_registry.revoke(&owner_token);
+                runtime.gateway_tokens.revoke_owner(&owner_token);
                 if died {
                     emit_process("crashed", Some(err.to_string()));
                 } else if !auth_required {
@@ -2673,6 +2756,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         conn.kill();
         // The agent process is gone, so its terminals and bearer are dead too.
         runtime.mcp_registry.revoke(&owner_token);
+        runtime.gateway_tokens.revoke_owner(&owner_token);
         // The agent process is gone, so its terminals are unreachable: kill
         // their children instead of leaking orphaned processes.
         terminals.release_owner(&owner_token);
@@ -3151,7 +3235,8 @@ async fn resolve_session(
         .and_then(|caps| caps.get("http"))
         .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
-    let (mcp_servers, mcp_token) = runtime.mcp_servers_for(thread_id, owner_token, http_mcp);
+    let (mcp_servers, mcp_token) =
+        runtime.mcp_servers_for(thread_id, instance_id, owner_token, http_mcp);
     // A SQLite failure is not "no previous session": surface it instead of
     // silently starting fresh.
     let session_ref = runtime.store.get_session_ref(thread_id, instance_id)?;

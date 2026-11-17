@@ -43,11 +43,23 @@ impl Implementation {
 
 /// `$defs/ContentBlock` — text | image | audio | resource_link | resource.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ContentBlock {
-    Text { text: String },
-    Image { data: String, mime_type: String },
-    Audio { data: String, mime_type: String },
+    Text {
+        text: String,
+    },
+    Image {
+        data: String,
+        mime_type: String,
+    },
+    Audio {
+        data: String,
+        mime_type: String,
+    },
     ResourceLink {
         uri: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -146,9 +158,15 @@ pub struct Diff {
 
 /// `$defs/ToolCallContent` — content | diff | terminal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum ToolCallContent {
-    Content { content: ContentBlock },
+    Content {
+        content: ContentBlock,
+    },
     Diff {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -582,8 +600,10 @@ fn deserialize_null_string_map<'de, D>(
 where
     D: serde::Deserializer<'de>,
 {
-    Ok(Option::<std::collections::BTreeMap<String, String>>::deserialize(deserializer)?
-        .unwrap_or_default())
+    Ok(
+        Option::<std::collections::BTreeMap<String, String>>::deserialize(deserializer)?
+            .unwrap_or_default(),
+    )
 }
 
 fn deserialize_null_auth_methods<'de, D>(deserializer: D) -> Result<Vec<AuthMethod>, D::Error>
@@ -691,9 +711,15 @@ pub struct SessionNotification {
     rename_all_fields = "camelCase"
 )]
 pub enum SessionUpdate {
-    UserMessageChunk { content: ContentBlock },
-    AgentMessageChunk { content: ContentBlock },
-    AgentThoughtChunk { content: ContentBlock },
+    UserMessageChunk {
+        content: ContentBlock,
+    },
+    AgentMessageChunk {
+        content: ContentBlock,
+    },
+    AgentThoughtChunk {
+        content: ContentBlock,
+    },
     ToolCall {
         tool_call_id: String,
         title: String,
@@ -735,7 +761,9 @@ pub enum SessionUpdate {
         #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
         meta: Option<Value>,
     },
-    Plan { entries: Vec<PlanEntry> },
+    Plan {
+        entries: Vec<PlanEntry>,
+    },
     AvailableCommandsUpdate {
         #[serde(default)]
         available_commands: Vec<AvailableCommand>,
@@ -864,7 +892,11 @@ pub struct RequestPermissionOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "outcome", rename_all = "snake_case", rename_all_fields = "camelCase")]
+#[serde(
+    tag = "outcome",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum RequestPermissionOutcomeKind {
     Selected { option_id: String },
     Cancelled,
@@ -1031,21 +1063,66 @@ mod tests {
     #[test]
     fn all_14_session_update_variants_parse() {
         let cases: Vec<(Value, &str)> = vec![
-            (json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"u"}}), "user chunk"),
-            (json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a"}}), "agent chunk"),
-            (json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}), "thought chunk"),
-            (json!({"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read","kind":"read","status":"in_progress","locations":[{"path":"/repo/a.rs","line":3}],"rawInput":{"x":1}}), "tool call"),
-            (json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"done"}}]}), "tool update"),
-            (json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","content":[{"type":"diff","path":"/repo/b.rs","oldText":"a","newText":"b"}]}), "tool diff"),
-            (json!({"sessionUpdate":"plan","entries":[{"content":"step","status":"in_progress"}]}), "plan"),
-            (json!({"sessionUpdate":"available_commands_update","availableCommands":[{"name":"mock-echo","description":"Echo"}]}), "commands"),
-            (json!({"sessionUpdate":"current_mode_update","currentModeId":"architect"}), "mode"),
-            (json!({"sessionUpdate":"config_option_update","configOptions":[]}), "config"),
-            (json!({"sessionUpdate":"session_info_update","title":"New title"}), "info"),
-            (json!({"sessionUpdate":"usage_update","used":120,"size":200000,"cost":{"amount":0.01,"currency":"USD"}}), "usage"),
-            (json!({"sessionUpdate":"notice","severity":"info","title":"Hello","content":{"type":"text","text":"x"}}), "notice"),
-            (json!({"sessionUpdate":"compaction_update","compactionId":"c1","status":"completed"}), "compaction"),
-            (json!({"sessionUpdate":"compaction_summary_chunk","compactionId":"c1","content":{"type":"text","text":"sum"}}), "compaction chunk"),
+            (
+                json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"u"}}),
+                "user chunk",
+            ),
+            (
+                json!({"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"a"}}),
+                "agent chunk",
+            ),
+            (
+                json!({"sessionUpdate":"agent_thought_chunk","content":{"type":"text","text":"t"}}),
+                "thought chunk",
+            ),
+            (
+                json!({"sessionUpdate":"tool_call","toolCallId":"t1","title":"Read","kind":"read","status":"in_progress","locations":[{"path":"/repo/a.rs","line":3}],"rawInput":{"x":1}}),
+                "tool call",
+            ),
+            (
+                json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed","content":[{"type":"content","content":{"type":"text","text":"done"}}]}),
+                "tool update",
+            ),
+            (
+                json!({"sessionUpdate":"tool_call_update","toolCallId":"t1","content":[{"type":"diff","path":"/repo/b.rs","oldText":"a","newText":"b"}]}),
+                "tool diff",
+            ),
+            (
+                json!({"sessionUpdate":"plan","entries":[{"content":"step","status":"in_progress"}]}),
+                "plan",
+            ),
+            (
+                json!({"sessionUpdate":"available_commands_update","availableCommands":[{"name":"mock-echo","description":"Echo"}]}),
+                "commands",
+            ),
+            (
+                json!({"sessionUpdate":"current_mode_update","currentModeId":"architect"}),
+                "mode",
+            ),
+            (
+                json!({"sessionUpdate":"config_option_update","configOptions":[]}),
+                "config",
+            ),
+            (
+                json!({"sessionUpdate":"session_info_update","title":"New title"}),
+                "info",
+            ),
+            (
+                json!({"sessionUpdate":"usage_update","used":120,"size":200000,"cost":{"amount":0.01,"currency":"USD"}}),
+                "usage",
+            ),
+            (
+                json!({"sessionUpdate":"notice","severity":"info","title":"Hello","content":{"type":"text","text":"x"}}),
+                "notice",
+            ),
+            (
+                json!({"sessionUpdate":"compaction_update","compactionId":"c1","status":"completed"}),
+                "compaction",
+            ),
+            (
+                json!({"sessionUpdate":"compaction_summary_chunk","compactionId":"c1","content":{"type":"text","text":"sum"}}),
+                "compaction chunk",
+            ),
         ];
         for (v, name) in cases {
             let wrapped = json!({"sessionId": "s1", "update": v});
@@ -1066,7 +1143,7 @@ mod tests {
         assert_eq!(create.output_byte_limit, Some(4096));
         let out: TerminalOutputResult = serde_json::from_value(json!({
             "output": "hi
-", "truncated": false,
+        ", "truncated": false,
             "exitStatus": {"exitCode": 0, "signal": null}
         }))
         .expect("output result");
@@ -1089,7 +1166,10 @@ mod tests {
         }))
         .expect("form elicitation");
         assert_eq!(form.message, "Pick a color");
-        assert_eq!(form.detail["requestedSchema"]["properties"]["color"]["enum"][0], "red");
+        assert_eq!(
+            form.detail["requestedSchema"]["properties"]["color"]["enum"][0],
+            "red"
+        );
         let url: CreateElicitationParams = serde_json::from_value(json!({
             "message": "Sign in", "mode": "url",
             "elicitationId": "e1", "url": "https://example.com/auth", "sessionId": "s1"
@@ -1126,7 +1206,13 @@ mod tests {
 
     #[test]
     fn stop_reason_matches_pinned_schema() {
-        for v in ["end_turn", "max_tokens", "max_turn_requests", "refusal", "cancelled"] {
+        for v in [
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal",
+            "cancelled",
+        ] {
             serde_json::from_value::<StopReason>(json!(v)).unwrap_or_else(|e| panic!("{v}: {e}"));
         }
     }
@@ -1139,7 +1225,10 @@ mod tests {
             },
         };
         let v = serde_json::to_value(&selected).unwrap();
-        assert_eq!(v, json!({"outcome": {"outcome": "selected", "optionId": "allow"}}));
+        assert_eq!(
+            v,
+            json!({"outcome": {"outcome": "selected", "optionId": "allow"}})
+        );
         let cancelled = RequestPermissionOutcome {
             outcome: RequestPermissionOutcomeKind::Cancelled,
         };
@@ -1276,7 +1365,10 @@ mod tests {
             ConfigOptionValue::String("m1".into()),
         ))
         .unwrap();
-        assert_eq!(string, json!({"sessionId":"s1","configId":"model","value":"m1"}));
+        assert_eq!(
+            string,
+            json!({"sessionId":"s1","configId":"model","value":"m1"})
+        );
 
         let boolean = serde_json::to_value(SetConfigOptionParams::new(
             "s1",
@@ -1318,7 +1410,10 @@ mod tests {
         assert!(terminal.is_terminal());
         assert!(!terminal.is_agent());
         assert_eq!(terminal.args, vec!["--login".to_string()]);
-        assert_eq!(terminal.env.get("MOCK_LOGIN").map(String::as_str), Some("1"));
+        assert_eq!(
+            terminal.env.get("MOCK_LOGIN").map(String::as_str),
+            Some("1")
+        );
 
         let nulls: AuthMethod = serde_json::from_value(json!({
             "id":"n","name":"Null","args":null,"env":null,"description":null
@@ -1362,21 +1457,21 @@ mod tests {
     }
 }
 
-    #[test]
-    fn new_session_params_serialize_injected_mcp_servers() {
-        let params = NewSessionParams {
-            cwd: "C:\\work".to_string(),
-            mcp_servers: vec![McpServer::Http {
-                extra: serde_json::json!({
-                    "name": "pult",
-                    "url": "http://127.0.0.1:4321/mcp",
-                    "headers": { "Authorization": "Bearer test" }
-                }),
-            }],
-        };
-        let value = serde_json::to_value(params).unwrap();
-        assert_eq!(value["cwd"], "C:\\work");
-        assert_eq!(value["mcpServers"][0]["type"], "http");
-        assert_eq!(value["mcpServers"][0]["name"], "pult");
-        assert_eq!(value["mcpServers"][0]["url"], "http://127.0.0.1:4321/mcp");
-    }
+#[test]
+fn new_session_params_serialize_injected_mcp_servers() {
+    let params = NewSessionParams {
+        cwd: "C:\\work".to_string(),
+        mcp_servers: vec![McpServer::Http {
+            extra: serde_json::json!({
+                "name": "pult",
+                "url": "http://127.0.0.1:4321/mcp",
+                "headers": { "Authorization": "Bearer test" }
+            }),
+        }],
+    };
+    let value = serde_json::to_value(params).unwrap();
+    assert_eq!(value["cwd"], "C:\\work");
+    assert_eq!(value["mcpServers"][0]["type"], "http");
+    assert_eq!(value["mcpServers"][0]["name"], "pult");
+    assert_eq!(value["mcpServers"][0]["url"], "http://127.0.0.1:4321/mcp");
+}

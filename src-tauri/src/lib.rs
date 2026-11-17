@@ -188,6 +188,32 @@ pub fn run() {
                 Arc::new(app.handle().clone()) as Arc<dyn runtime::EventSink>,
             ));
             runtime.attach_orchestrator();
+            // User MCP gateway: agents get loopback URLs with per-session
+            // tokens; upstream credentials never leave this process.
+            let (gateway_tx, gateway_rx) = std::sync::mpsc::channel();
+            let gateway_store = Arc::clone(runtime.store());
+            let gateway_tokens = Arc::clone(&runtime.gateway_tokens);
+            tauri::async_runtime::spawn(async move {
+                let started = crate::mcp::gateway::McpGateway::start(
+                    Arc::new(crate::mcp::StoreConnector::new(gateway_store)),
+                    gateway_tokens,
+                )
+                .await;
+                let _ = gateway_tx.send(started);
+            });
+            match gateway_rx.recv_timeout(std::time::Duration::from_secs(5)) {
+                Ok(Ok(gateway)) => {
+                    let _ = runtime.gateway.set(gateway);
+                }
+                Ok(Err(error)) => tracing::error!(target: "pult::mcp",
+                    error = %error, "custom MCP gateway did not start; user MCP servers are unavailable"),
+                Err(error) => tracing::error!(target: "pult::mcp",
+                    error = %error, "custom MCP gateway startup timed out"),
+            }
+            let health_store = Arc::clone(runtime.store());
+            tauri::async_runtime::spawn(async move {
+                crate::mcp::manager::check_all(health_store).await;
+            });
             let engine = Arc::clone(&runtime.orchestrator);
             let host = Arc::new(orchestrator::engine::RuntimeHost {
                 engine: Arc::clone(&engine),
@@ -272,6 +298,19 @@ pub fn run() {
             ipc::orchestrator_cancel_all,
             ipc::orchestrator_retry_task,
             ipc::orchestrator_steer_task,
+            ipc::mcp_list_servers,
+            ipc::mcp_get_server,
+            ipc::mcp_create_server,
+            ipc::mcp_update_server,
+            ipc::mcp_delete_server,
+            ipc::mcp_set_server_enabled,
+            ipc::mcp_test_connection,
+            ipc::mcp_server_logs,
+            ipc::mcp_server_stats,
+            ipc::mcp_check_all,
+            ipc::mcp_list_bindings,
+            ipc::mcp_set_binding,
+            ipc::mcp_active_for_thread,
             ipc::providers_instances_save,
             ipc::workspace_files,
             ipc::workspace_tree,

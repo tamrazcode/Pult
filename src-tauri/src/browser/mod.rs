@@ -16,8 +16,8 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::webview::Webview;
+use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
 
 const CHILD_LABEL: &str = "pult-browser";
@@ -72,8 +72,8 @@ impl BrowserState {
             .map_err(|_| browser_err("browser.navigate_failed", "invalid blank url"))?;
         let webview = window
             .add_child(
-                WebviewBuilder::new(CHILD_LABEL, WebviewUrl::External(blank))
-                    .on_page_load(|webview, payload| {
+                WebviewBuilder::new(CHILD_LABEL, WebviewUrl::External(blank)).on_page_load(
+                    |webview, payload| {
                         let event = match payload.event() {
                             PageLoadEvent::Started => "started",
                             PageLoadEvent::Finished => "finished",
@@ -83,7 +83,8 @@ impl BrowserState {
                             "event": event,
                         });
                         let _ = tauri::Emitter::emit(&webview, "browser:navigated", payload);
-                    }),
+                    },
+                ),
                 LogicalPosition::new(bounds.x, bounds.y),
                 LogicalSize::new(bounds.width.max(1.0), bounds.height.max(1.0)),
             )
@@ -92,7 +93,8 @@ impl BrowserState {
         *self
             .webview
             .lock()
-            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))? = Some(webview.clone());
+            .map_err(|_| browser_err("browser.state_failed", "browser state poisoned"))? =
+            Some(webview.clone());
         Ok(webview)
     }
 
@@ -146,8 +148,7 @@ pub async fn browser_set_bounds(
         }
         return Ok(());
     }
-    let webview = state
-        .ensure_webview(&app)?;
+    let webview = state.ensure_webview(&app)?;
     webview
         .set_position(LogicalPosition::new(x, y))
         .map_err(|e| browser_err("browser.bounds_failed", e.to_string()))?;
@@ -186,8 +187,7 @@ pub async fn browser_navigate(
             .file_url(&token, &file)
             .map_err(|e| browser_err("browser.local_file", e))?
     };
-    let webview = state
-        .ensure_webview(&app)?;
+    let webview = state.ensure_webview(&app)?;
     webview
         .navigate(url.clone())
         .map_err(|e| browser_err("browser.navigate_failed", e.to_string()))?;
@@ -593,7 +593,10 @@ mod tests {
     #[test]
     fn mime_and_encoding_cover_assets() {
         assert_eq!(mime_for(Path::new("a.html")), "text/html; charset=utf-8");
-        assert_eq!(mime_for(Path::new("a.mjs")), "text/javascript; charset=utf-8");
+        assert_eq!(
+            mime_for(Path::new("a.mjs")),
+            "text/javascript; charset=utf-8"
+        );
         assert_eq!(mime_for(Path::new("a.woff2")), "font/woff2");
         assert_eq!(encode_path("my file/x.js"), "my%20file/x.js");
         assert_eq!(percent_decode("my%20file/x.js"), "my file/x.js");
@@ -626,11 +629,15 @@ mod tests {
                 .unwrap()
                 .to_string();
             async move {
-                let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap()))
-                    .await
-                    .unwrap();
+                let mut stream =
+                    tokio::net::TcpStream::connect(("127.0.0.1", port.parse::<u16>().unwrap()))
+                        .await
+                        .unwrap();
                 stream
-                    .write_all(format!("GET {request_path} HTTP/1.1\r\nHost: localhost\r\n\r\n").as_bytes())
+                    .write_all(
+                        format!("GET {request_path} HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                            .as_bytes(),
+                    )
                     .await
                     .unwrap();
                 let mut response = Vec::new();

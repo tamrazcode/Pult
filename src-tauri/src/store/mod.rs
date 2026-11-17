@@ -20,6 +20,7 @@ mod tests;
 mod threads;
 pub mod usage;
 
+pub use custom_mcp::McpBinding;
 pub use delegated_tasks::DelegatedTaskUpdate;
 pub use records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
 

@@ -4,6 +4,9 @@
 pub mod config;
 pub mod gateway;
 pub mod http;
+pub mod manager;
+pub mod probe;
+pub mod resolve;
 pub mod secrets;
 pub mod security;
 pub mod sse;

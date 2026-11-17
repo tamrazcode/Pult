@@ -3484,3 +3484,98 @@ async fn provider_switch_emits_context_reset_notice() {
 
     let _ = std::fs::remove_dir_all(&sandbox);
 }
+
+#[tokio::test]
+async fn custom_mcp_servers_follow_the_orchestrator_and_honor_scope() {
+    let (runtime, _sink) = mock_runtime();
+    let store = Arc::clone(runtime.store());
+    runtime.attach_orchestrator();
+    let thread = ThreadRecord {
+        id: "th-mcp".to_string(),
+        project_id: None,
+        title: "MCP".to_string(),
+        status: "draft".to_string(),
+        pinned: false,
+        created_at: 1,
+        updated_at: 1,
+        workspace: None,
+        main_repo: None,
+        worktree_name: None,
+        parent_thread_id: None,
+        parent_run_id: None,
+        depth: 0,
+        lineage_kind: None,
+        child_role: None,
+    };
+    store.create_thread(&thread).unwrap();
+    let input = |value: serde_json::Value| {
+        serde_json::from_value::<crate::mcp::config::CustomMcpServerInput>(value).unwrap()
+    };
+    crate::mcp::config::create(
+        &store,
+        input(serde_json::json!({
+            "name": "Files",
+            "transport": { "kind": "stdio", "command": "npx" }
+        })),
+    )
+    .unwrap();
+    crate::mcp::config::create(
+        &store,
+        input(serde_json::json!({
+            "name": "Claude only",
+            "providerIds": ["claude"],
+            "transport": { "kind": "stdio", "command": "npx" }
+        })),
+    )
+    .unwrap();
+
+    let host = Arc::new(crate::orchestrator::engine::RuntimeHost {
+        engine: Arc::clone(&runtime.orchestrator),
+    });
+    let server =
+        crate::orchestrator::OrchestratorMcpServer::start(host, Arc::clone(&runtime.mcp_registry))
+            .await
+            .unwrap();
+    runtime.orchestrator.set_server(server);
+    let gateway = crate::mcp::gateway::McpGateway::start(
+        Arc::new(crate::mcp::StoreConnector::new(Arc::clone(&store))),
+        Arc::clone(&runtime.gateway_tokens),
+    )
+    .await
+    .unwrap();
+    assert!(runtime.gateway.set(gateway).is_ok());
+
+    let names = |http_capable: bool| {
+        runtime
+            .mcp_servers_for(&thread.id, "mock", "owner-1", http_capable)
+            .0
+            .iter()
+            .map(|server| {
+                serde_json::to_value(server).unwrap()["name"]
+                    .as_str()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect::<Vec<_>>()
+    };
+    // Orchestrator first; the provider-filtered server never enters this
+    // session because the mock instance is not `claude`.
+    assert_eq!(names(false), vec!["pult_orchestrator", "Files"]);
+    assert_eq!(names(true), vec!["pult_orchestrator", "Files"]);
+
+    let stdio = runtime
+        .mcp_servers_for(&thread.id, "mock", "owner-1", false)
+        .0;
+    let custom = serde_json::to_value(&stdio[1]).unwrap();
+    assert_eq!(custom["type"], "stdio");
+    assert_eq!(custom["args"][1], "--custom");
+    let http = runtime
+        .mcp_servers_for(&thread.id, "mock", "owner-1", true)
+        .0;
+    let custom_http = serde_json::to_value(&http[1]).unwrap();
+    assert_eq!(custom_http["type"], "http");
+    assert!(custom_http["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("http://127.0.0.1:"));
+}

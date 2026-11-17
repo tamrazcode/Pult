@@ -271,3 +271,84 @@ fn decode_list(raw: String) -> Vec<String> {
 fn not_found(id: &str) -> PultError {
     PultError::with_code("mcp.not_found", format!("MCP server `{id}` was not found"))
 }
+
+/// Per-project/thread include/exclude override for a server.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct McpBinding {
+    pub server_id: String,
+    pub mode: String,
+}
+
+impl Store {
+    pub fn list_mcp_bindings(
+        &self,
+        scope_type: &str,
+        scope_id: &str,
+    ) -> Result<Vec<McpBinding>, PultError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT server_id, mode FROM mcp_server_bindings
+                     WHERE scope_type = ?1 AND scope_id = ?2 ORDER BY server_id",
+                )
+                .map_err(|e| sql("list mcp bindings", e))?;
+            let rows = stmt
+                .query_map(params![scope_type, scope_id], |row| {
+                    Ok(McpBinding {
+                        server_id: row.get(0)?,
+                        mode: row.get(1)?,
+                    })
+                })
+                .map_err(|e| sql("list mcp bindings", e))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| sql("list mcp bindings row", e))
+        })
+    }
+
+    /// Upserts a binding (`include`/`exclude`); `None` deletes it.
+    pub fn set_mcp_binding(
+        &self,
+        scope_type: &str,
+        scope_id: &str,
+        server_id: &str,
+        mode: Option<&str>,
+    ) -> Result<(), PultError> {
+        if !matches!(scope_type, "project" | "thread") {
+            return Err(PultError::with_code(
+                "mcp.invalid_scope",
+                "MCP bindings only exist for projects and threads",
+            ));
+        }
+        if let Some(mode) = mode {
+            if !matches!(mode, "include" | "exclude") {
+                return Err(PultError::with_code(
+                    "mcp.invalid_binding",
+                    "MCP binding mode must be `include` or `exclude`",
+                ));
+            }
+        }
+        self.with_conn(|conn| {
+            match mode {
+                Some(mode) => conn
+                    .execute(
+                        "INSERT INTO mcp_server_bindings
+                            (scope_type, scope_id, server_id, mode, updated_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5)
+                         ON CONFLICT(scope_type, scope_id, server_id)
+                         DO UPDATE SET mode = excluded.mode, updated_at = excluded.updated_at",
+                        params![scope_type, scope_id, server_id, mode, now_millis()],
+                    )
+                    .map_err(|e| sql("upsert mcp binding", e))?,
+                None => conn
+                    .execute(
+                        "DELETE FROM mcp_server_bindings
+                         WHERE scope_type = ?1 AND scope_id = ?2 AND server_id = ?3",
+                        params![scope_type, scope_id, server_id],
+                    )
+                    .map_err(|e| sql("delete mcp binding", e))?,
+            };
+            Ok(())
+        })
+    }
+}

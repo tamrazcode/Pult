@@ -235,9 +235,7 @@ mod tests {
 
     #[test]
     fn oversized_line_errors() {
-        let mut dec = NdjsonCodec {
-            max_line_len: 8,
-        };
+        let mut dec = NdjsonCodec { max_line_len: 8 };
         let mut buf = BytesMut::from(&b"123456789"[..]);
         assert!(matches!(
             dec.decode(&mut buf),

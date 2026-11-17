@@ -88,7 +88,9 @@ struct ConfigFile {
 pub fn save_instances(home: &Path, specs: &[InstanceSpec]) -> Result<(), PultError> {
     let path = home.join("config.toml");
     let mut table: toml::Table = match std::fs::read_to_string(&path) {
-        Ok(raw) => toml::from_str(&raw).map_err(|e| PultError::store(format!("config.toml parse: {e}")))?,
+        Ok(raw) => {
+            toml::from_str(&raw).map_err(|e| PultError::store(format!("config.toml parse: {e}")))?
+        }
         Err(_) => toml::Table::new(),
     };
     let values = specs
@@ -134,7 +136,13 @@ pub struct DetectedAgent {
 type SuggestedCommand = Option<Vec<String>>;
 
 /// One detection candidate: (cli binary, instance id, display, adapter argv, notes).
-type Candidate = (&'static str, &'static str, &'static str, SuggestedCommand, &'static str);
+type Candidate = (
+    &'static str,
+    &'static str,
+    &'static str,
+    SuggestedCommand,
+    &'static str,
+);
 
 /// Known agent CLIs and their ACP invocation patterns. Detection is a PATH
 /// scan (no version probe — cheap and offline). Every entry carries a
@@ -198,7 +206,11 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
             "dsh",
             "dsh",
             "dsh",
-            Some(vec!["dsh".to_string(), "--profile".to_string(), "acp".to_string()]),
+            Some(vec![
+                "dsh".to_string(),
+                "--profile".to_string(),
+                "acp".to_string(),
+            ]),
             "ACP-native coding agent.",
         ),
     ];
@@ -236,7 +248,9 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
 fn antigravity_server_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     if let Some(path) = antigravity_server_path_in(
-        std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from).as_deref(),
+        std::env::var_os("LOCALAPPDATA")
+            .map(std::path::PathBuf::from)
+            .as_deref(),
         Some(crate::runtime::home_dir_pub().as_path()),
     ) {
         return Some(path);
@@ -347,8 +361,13 @@ mod tests {
                 display_name: "Claude Code".to_string(),
                 driver: "acp".to_string(),
                 command: "npx".to_string(),
-                args: vec!["-y".to_string(), "@zed-industries/claude-code-acp".to_string()],
-                env: [("DEBUG".to_string(), "1".to_string())].into_iter().collect(),
+                args: vec![
+                    "-y".to_string(),
+                    "@zed-industries/claude-code-acp".to_string(),
+                ],
+                env: [("DEBUG".to_string(), "1".to_string())]
+                    .into_iter()
+                    .collect(),
                 enabled: true,
             },
         ];
@@ -386,7 +405,13 @@ mod tests {
         for agent in detect_installed() {
             assert!(matches!(
                 agent.id.as_str(),
-                "claude-code" | "gemini-cli" | "codex" | "opencode" | "dsh" | "antigravity" | "grok"
+                "claude-code"
+                    | "gemini-cli"
+                    | "codex"
+                    | "opencode"
+                    | "dsh"
+                    | "antigravity"
+                    | "grok"
             ));
             assert!(
                 agent.suggested_command.is_some(),
@@ -479,9 +504,16 @@ mod tests {
     #[test]
     fn load_instances_checked_reports_corrupt_toml_without_silent_empty() {
         let home = temp_config_home("corrupt-load");
-        assert_eq!(load_instances_checked(&home).unwrap(), Vec::<InstanceSpec>::new());
+        assert_eq!(
+            load_instances_checked(&home).unwrap(),
+            Vec::<InstanceSpec>::new()
+        );
 
-        std::fs::write(home.join("config.toml"), "[[instances]\nbroken = [unterminated").unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            "[[instances]\nbroken = [unterminated",
+        )
+        .unwrap();
         let err = load_instances_checked(&home).unwrap_err();
         assert!(!err.is_empty());
 
@@ -520,4 +552,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 }
-

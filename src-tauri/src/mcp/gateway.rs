@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tokio::net::{TcpListener, TcpStream};
@@ -47,7 +47,12 @@ pub struct GatewayEndpoint {
 }
 
 pub struct GatewayTokens {
-    tokens: Mutex<HashMap<String, String>>,
+    tokens: Mutex<HashMap<String, TokenEntry>>,
+}
+
+struct TokenEntry {
+    server_id: String,
+    owner: Option<String>,
 }
 
 impl Default for GatewayTokens {
@@ -64,9 +69,20 @@ impl GatewayTokens {
     }
 
     pub fn issue(&self, server_id: &str) -> String {
+        self.issue_for(None, server_id)
+    }
+
+    /// Token bound to one ACP session so it can be revoked with that session.
+    pub fn issue_for(&self, owner: Option<&str>, server_id: &str) -> String {
         let token = random_token();
         if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.insert(token.clone(), server_id.to_string());
+            tokens.insert(
+                token.clone(),
+                TokenEntry {
+                    server_id: server_id.to_string(),
+                    owner: owner.map(str::to_string),
+                },
+            );
         }
         token
     }
@@ -75,7 +91,7 @@ impl GatewayTokens {
         self.tokens
             .lock()
             .ok()
-            .and_then(|tokens| tokens.get(token).cloned())
+            .and_then(|tokens| tokens.get(token).map(|entry| entry.server_id.clone()))
     }
 
     pub fn revoke(&self, token: &str) {
@@ -86,7 +102,13 @@ impl GatewayTokens {
 
     pub fn revoke_server(&self, server_id: &str) {
         if let Ok(mut tokens) = self.tokens.lock() {
-            tokens.retain(|_, value| value != server_id);
+            tokens.retain(|_, entry| entry.server_id != server_id);
+        }
+    }
+
+    pub fn revoke_owner(&self, owner: &str) {
+        if let Ok(mut tokens) = self.tokens.lock() {
+            tokens.retain(|_, entry| entry.owner.as_deref() != Some(owner));
         }
     }
 
@@ -103,22 +125,36 @@ pub struct McpGateway {
     tokens: Arc<GatewayTokens>,
     connector: Arc<dyn GatewayConnector>,
     clients: AsyncMutex<HashMap<String, Arc<dyn McpTransport>>>,
+    stats: AsyncMutex<HashMap<String, GatewayStats>>,
     /// Upstream initialize result per server, so repeated downstream
     /// handshakes do not re-initialize the same upstream session.
     initialized: AsyncMutex<HashMap<String, Value>>,
     initialize_lock: AsyncMutex<()>,
 }
 
+/// Per-server counters shown in Diagnostics.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GatewayStats {
+    pub calls_total: u64,
+    pub errors_total: u64,
+    pub last_latency_ms: Option<u64>,
+}
+
 impl McpGateway {
-    pub async fn start(connector: Arc<dyn GatewayConnector>) -> io::Result<Arc<Self>> {
+    pub async fn start(
+        connector: Arc<dyn GatewayConnector>,
+        tokens: Arc<GatewayTokens>,
+    ) -> io::Result<Arc<Self>> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let port = listener.local_addr()?.port();
         let gateway = Arc::new(Self {
             url: format!("http://127.0.0.1:{port}/mcp"),
             port,
-            tokens: Arc::new(GatewayTokens::new()),
+            tokens,
             connector,
             clients: AsyncMutex::new(HashMap::new()),
+            stats: AsyncMutex::new(HashMap::new()),
             initialized: AsyncMutex::new(HashMap::new()),
             initialize_lock: AsyncMutex::new(()),
         });
@@ -147,20 +183,58 @@ impl McpGateway {
 
     /// Issues a fresh bearer token for one agent session.
     pub fn endpoint(&self, server_id: &str) -> GatewayEndpoint {
+        self.endpoint_for(None, server_id)
+    }
+
+    pub fn endpoint_for(&self, owner: Option<&str>, server_id: &str) -> GatewayEndpoint {
         GatewayEndpoint {
             url: format!("{}/{}", self.url, server_id),
-            token: self.tokens.issue(server_id),
+            token: self.tokens.issue_for(owner, server_id),
         }
     }
 
     /// Drops the cached upstream connection and every token for the server.
     pub async fn close_server(&self, server_id: &str) {
         self.tokens.revoke_server(server_id);
+        self.drop_client(server_id).await;
+    }
+
+    /// Drops just the upstream connection (failure recovery). Agent tokens
+    /// stay valid, so the next call reconnects transparently.
+    pub async fn drop_client(&self, server_id: &str) {
         self.initialized.lock().await.remove(server_id);
         let client = self.clients.lock().await.remove(server_id);
         if let Some(client) = client {
             let _ = client.close().await;
         }
+    }
+
+    pub async fn logs(&self, server_id: &str) -> Vec<String> {
+        self.clients
+            .lock()
+            .await
+            .get(server_id)
+            .map(|client| client.logs())
+            .unwrap_or_default()
+    }
+
+    pub async fn stats(&self, server_id: &str) -> GatewayStats {
+        self.stats
+            .lock()
+            .await
+            .get(server_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    async fn record_call(&self, server_id: &str, started: Instant, failed: bool) {
+        let mut stats = self.stats.lock().await;
+        let entry = stats.entry(server_id.to_string()).or_default();
+        entry.calls_total += 1;
+        if failed {
+            entry.errors_total += 1;
+        }
+        entry.last_latency_ms = Some(started.elapsed().as_millis() as u64);
     }
 
     async fn client(&self, server_id: &str) -> Result<Arc<dyn McpTransport>, String> {
@@ -331,6 +405,7 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
                 Ok(client) => client,
                 Err(error) => return Some(rpc_error(id, error)),
             };
+            let started = Instant::now();
             // The upstream sequence must be initialized before tools.
             if method != "initialize" {
                 if let Err(error) = gateway.ensure_initialized(server_id).await {
@@ -339,6 +414,7 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
             }
             match client.request(request).await {
                 Ok(mut reply) => {
+                    gateway.record_call(server_id, started, false).await;
                     if method == "tools/list" {
                         crate::mcp::security::filter_tool_list(
                             &mut reply,
@@ -351,7 +427,11 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
                     }
                     Some(reply)
                 }
-                Err(error) => Some(rpc_error(id, error)),
+                Err(error) => {
+                    gateway.record_call(server_id, started, true).await;
+                    gateway.drop_client(server_id).await;
+                    Some(rpc_error(id, error))
+                }
             }
         }
     }
@@ -481,13 +561,16 @@ mod tests {
     #[tokio::test]
     async fn proxies_initialize_once_and_requires_a_matching_token() {
         let transport = EchoTransport::new();
-        let gateway = McpGateway::start(Arc::new(EchoConnector {
-            transport: Arc::clone(&transport),
-            policy: GatewayPolicy {
-                allow_tools: Vec::new(),
-                deny_tools: vec!["danger".to_string()],
-            },
-        }))
+        let gateway = McpGateway::start(
+            Arc::new(EchoConnector {
+                transport: Arc::clone(&transport),
+                policy: GatewayPolicy {
+                    allow_tools: Vec::new(),
+                    deny_tools: vec!["danger".to_string()],
+                },
+            }),
+            Arc::new(GatewayTokens::new()),
+        )
         .await
         .unwrap();
         let endpoint = gateway.endpoint("mcp-1");

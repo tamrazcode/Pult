@@ -618,7 +618,10 @@ pub(crate) fn secret_store_key_for(section: &str, id: &str, key: &str) -> String
     format!("mcp:{id}:{section}:{key}")
 }
 
-fn view(store: &Store, server: &CustomMcpServer) -> Result<CustomMcpServerView, PultError> {
+pub(crate) fn view(
+    store: &Store,
+    server: &CustomMcpServer,
+) -> Result<CustomMcpServerView, PultError> {
     let secret_refs = |keys: &[String]| -> Vec<SecretRef> {
         keys.iter()
             .map(|key| {

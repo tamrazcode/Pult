@@ -54,7 +54,9 @@ fn valid_id(id: &str) -> bool {
 }
 
 #[tauri::command]
-pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> Result<PluginList, PultError> {
+pub fn plugins_list(
+    runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>,
+) -> Result<PluginList, PultError> {
     let dir = plugins_dir();
     let state = enabled_map(&runtime);
     let mut seen = std::collections::HashSet::new();
@@ -79,7 +81,12 @@ pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> 
             if entry.file_name().to_str() != Some(id) || !seen.insert(id.to_owned()) {
                 continue;
             }
-            let string = |key: &str| manifest.get(key).and_then(|v| v.as_str()).map(str::to_owned);
+            let string = |key: &str| {
+                manifest
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+            };
             let strings = |key: &str| {
                 manifest
                     .get("contributes")
@@ -97,7 +104,10 @@ pub fn plugins_list(runtime: tauri::State<'_, std::sync::Arc<AgentRuntime>>) -> 
                     })
                     .unwrap_or_default()
             };
-            let enabled = state.get(id).and_then(|value| value.as_bool()).unwrap_or(false);
+            let enabled = state
+                .get(id)
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
             plugins.push(PluginInfo {
                 id: id.to_owned(),
                 name: string("name").unwrap_or_else(|| id.to_owned()),
