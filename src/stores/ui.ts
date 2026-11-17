@@ -251,7 +251,8 @@ export const useUiStore = create<UiState>((set) => ({
   loadInstances: async () => {
     await ensureProcessEventSubscription();
     try {
-      const instances = await providersInstancesList(); // [] outside Tauri
+      const fetched = await providersInstancesList(); // [] outside Tauri
+      const instances = Array.isArray(fetched) ? fetched : [];
       set((s) => ({
         instances,
         selectedInstanceId:

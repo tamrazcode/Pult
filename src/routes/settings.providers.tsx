@@ -219,19 +219,20 @@ function ProvidersSettings() {
       return [];
     }
     const list = await providersInstancesList();
-    setInstances(list);
+    const safe = Array.isArray(list) ? list : [];
+    setInstances(safe);
     setDetected(await providersDetectInstalled());
     // The composer's agent picker reads the ui store — keep it in sync.
     await useUiStore.getState().loadInstances();
     setLoaded(true);
     setSelectedId((sel) =>
-      sel && list.some((i) => i.id === sel)
+      sel && safe.some((i) => i.id === sel)
         ? sel
-        : list.some((i) => i.id === useUiStore.getState().selectedInstanceId)
+        : safe.some((i) => i.id === useUiStore.getState().selectedInstanceId)
           ? useUiStore.getState().selectedInstanceId
-          : (list[0]?.id ?? null),
+          : (safe[0]?.id ?? null),
     );
-    return list;
+    return safe;
   };
 
   useEffect(() => {
@@ -247,21 +248,22 @@ function ProvidersSettings() {
     void (async () => {
       try {
         const list = await providersInstancesList();
-        setInstances(list);
+        const safe = Array.isArray(list) ? list : [];
+        setInstances(safe);
         setDetected(await providersDetectInstalled());
         await useUiStore.getState().loadInstances();
         setLoaded(true);
         setSelectedId((sel) =>
-          sel && list.some((i) => i.id === sel) ? sel : (list[0]?.id ?? null),
+          sel && safe.some((i) => i.id === sel) ? sel : (safe[0]?.id ?? null),
         );
-        const enabled = list.filter((instance) => instance.enabled);
+        const enabled = safe.filter((instance) => instance.enabled);
         if (enabled.length > 0) {
           setChecking(Object.fromEntries(enabled.map((instance) => [instance.id, true])));
-          const results = await preflightInstances(list);
+          const results = await preflightInstances(safe);
           setReports(results);
           setChecking({});
           const refreshed = await providersInstancesList();
-          setInstances(refreshed);
+          setInstances(Array.isArray(refreshed) ? refreshed : []);
           await useUiStore.getState().loadInstances();
         }
       } catch (err) {
