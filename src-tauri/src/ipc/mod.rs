@@ -1976,6 +1976,112 @@ pub fn app_notify(app: tauri::AppHandle, title: String, body: String) -> Result<
         .map_err(|e| PultError::internal(format!("notification failed: {e}")))
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AttachmentStatus {
+    path: String,
+    exists: bool,
+    size: Option<u64>,
+}
+
+static ATTACHMENT_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn attachment_dir() -> Result<std::path::PathBuf, PultError> {
+    let dir = crate::pult_home().join("attachments");
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| PultError::internal(format!("attachments dir: {e}")))?;
+    Ok(dir)
+}
+
+fn attachment_stamp() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+#[tauri::command]
+pub fn attachments_save_image(data: String, mime_type: String) -> Result<String, PultError> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let ext = match mime_type.as_str() {
+        "image/png" => "png",
+        "image/jpeg" | "image/jpg" => "jpg",
+        "image/webp" => "webp",
+        "image/gif" => "gif",
+        _ => {
+            return Err(PultError::with_code(
+                "attachment.mime",
+                "unsupported image type",
+            ))
+        }
+    };
+    let bytes = STANDARD
+        .decode(data.as_bytes())
+        .map_err(|e| PultError::with_code("attachment.decode", format!("{e}")))?;
+    if bytes.is_empty() || bytes.len() > 8_000_000 {
+        return Err(PultError::with_code(
+            "attachment.size",
+            "image is empty or larger than 8 MB",
+        ));
+    }
+    let dir = attachment_dir()?;
+    let seq = ATTACHMENT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("img-{}-{seq}.{ext}", attachment_stamp()));
+    std::fs::write(&path, bytes)
+        .map_err(|e| PultError::internal(format!("attachment write: {e}")))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub fn attachments_save_text(name: String, text: String) -> Result<String, PultError> {
+    if text.len() > 8_000_000 {
+        return Err(PultError::with_code(
+            "attachment.size",
+            "text attachment is larger than 8 MB",
+        ));
+    }
+    let raw = std::path::Path::new(&name)
+        .file_name()
+        .and_then(|part| part.to_str())
+        .unwrap_or("attachment.txt");
+    let safe: String = raw
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '.' | '_' | '-' | ' ') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe = if safe.trim().is_empty() {
+        "attachment.txt".to_string()
+    } else {
+        safe
+    };
+    let dir = attachment_dir()?;
+    let seq = ATTACHMENT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let path = dir.join(format!("{}-{seq}-{safe}", attachment_stamp()));
+    std::fs::write(&path, text)
+        .map_err(|e| PultError::internal(format!("attachment write: {e}")))?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub fn attachments_check_paths(paths: Vec<String>) -> Vec<AttachmentStatus> {
+    paths
+        .into_iter()
+        .map(|path| {
+            let meta = std::fs::metadata(&path).ok();
+            AttachmentStatus {
+                path,
+                exists: meta.is_some(),
+                size: meta.map(|m| m.len()),
+            }
+        })
+        .collect()
+}
+
 #[tauri::command]
 pub async fn read_image_data_url(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,

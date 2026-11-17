@@ -23,6 +23,8 @@ import {
   runsQueueUpdate,
   runsRespondPermission,
   workspaceFiles,
+  attachmentsSaveImage,
+  attachmentsSaveText,
 } from "../../lib/ipc";
 import { isTauri } from "../../lib/tauri";
 import {
@@ -143,6 +145,11 @@ async function fileToTextChip(file: File): Promise<FileChip | null> {
     text: raw.slice(0, MAX_ATTACHMENT_TEXT),
     truncated: raw.length > MAX_ATTACHMENT_TEXT,
   };
+}
+
+/** `@path`, quoted when the path has spaces, so the agent reads it as one ref. */
+function formatFileRef(path: string): string {
+  return /\s/.test(path) ? `@"${path}"` : `@${path}`;
 }
 
 /** Text files travel inside the prompt; the agent sees a name and a fence. */
@@ -331,6 +338,54 @@ export function Composer({ threadId }: { threadId?: string }) {
     void document.fonts?.ready?.then(() => autosize()).catch(() => undefined);
     return () => window.removeEventListener("resize", onResize);
   }, [autosize]);
+
+  const insertTokens = useCallback(
+    (tokens: string[]) => {
+      if (tokens.length === 0) return;
+      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
+      const el = textareaRef.current;
+      const start = el?.selectionStart ?? current.length;
+      const end = el?.selectionEnd ?? current.length;
+      const before = current.slice(0, start);
+      const prefix = before.length > 0 && !/\s/.test(before[before.length - 1]!) ? " " : "";
+      const insertion = `${prefix}${tokens.join(" ")} `;
+      setValue(current.slice(0, start) + insertion + current.slice(end));
+      requestAnimationFrame(() => {
+        const caret = start + insertion.length;
+        textareaRef.current?.setSelectionRange(caret, caret);
+        autosize();
+      });
+    },
+    [autosize, draftKey, setValue],
+  );
+
+  const removeImageChip = (index: number) => {
+    const chip = chips[index];
+    if (chip?.token) {
+      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
+      setValue(
+        current
+          .replace(chip.token, "")
+          .replace(/[ \t]{2,}/g, " ")
+          .trimEnd(),
+      );
+    }
+    setChips((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const removeFileChip = (index: number) => {
+    const chip = fileChips[index];
+    if (chip?.token) {
+      const current = useDraftsStore.getState().byThread[draftKey] ?? "";
+      setValue(
+        current
+          .replace(chip.token, "")
+          .replace(/[ \t]{2,}/g, " ")
+          .trimEnd(),
+      );
+    }
+    setFileChips((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const dispatchRun = useCallback(
     async (
@@ -703,14 +758,48 @@ export function Composer({ threadId }: { threadId?: string }) {
       if (docs.length > 0 && importedDocs.length === 0) {
         setError(t("composer.onlyTextFiles"));
       }
+      const tokens: string[] = [];
       if (importedImages.length > 0) {
-        setChips((prev) => [...prev, ...importedImages]);
+        if (isTauri()) {
+          const withTokens = await Promise.all(
+            importedImages.map(async (chip) => {
+              try {
+                const path = await attachmentsSaveImage(chip.data, chip.mimeType);
+                const token = formatFileRef(path);
+                tokens.push(token);
+                return { ...chip, token };
+              } catch {
+                return chip;
+              }
+            }),
+          );
+          setChips((prev) => [...prev, ...withTokens]);
+        } else {
+          setChips((prev) => [...prev, ...importedImages]);
+        }
       }
       if (importedDocs.length > 0) {
-        setFileChips((prev) => [...prev, ...importedDocs]);
+        if (isTauri()) {
+          const withTokens = await Promise.all(
+            importedDocs.map(async (chip) => {
+              try {
+                const path = await attachmentsSaveText(chip.name, chip.text);
+                const token = formatFileRef(path);
+                tokens.push(token);
+                return { ...chip, token };
+              } catch {
+                return chip;
+              }
+            }),
+          );
+          setFileChips((prev) => [...prev, ...withTokens]);
+        } else {
+          setFileChips((prev) => [...prev, ...importedDocs]);
+        }
       }
+      if (tokens.length > 0) insertTokens(tokens);
     },
-    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, t],
+    [chips.length, fileChips.length, imageCapable, setChips, setFileChips, insertTokens, t],
   );
 
   const handlePaste = useCallback(
@@ -1068,7 +1157,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                     className="h-full w-full cursor-zoom-in object-cover"
                   />
                   <button
-                    onClick={() => setChips((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => removeImageChip(i)}
                     aria-label={t("composer.removeImage")}
                     className="absolute right-0.5 top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-black/70 text-white opacity-0 transition group-hover:opacity-100"
                   >
@@ -1094,7 +1183,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <button
                     type="button"
                     aria-label={t("composer.removeAttachment", { name: file.name })}
-                    onClick={() => setFileChips((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => removeFileChip(i)}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
                     <X size={10} />

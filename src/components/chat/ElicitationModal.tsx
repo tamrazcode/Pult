@@ -124,7 +124,11 @@ function RequiredMark({ required }: { required: boolean }) {
   );
 }
 
-export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
+export function ElicitationModal({
+  request,
+  onSubmit,
+  inline = false,
+}: ElicitationModalProps & { inline?: boolean }) {
   const t = useT();
   const { message, detail } = request;
   const fields = useMemo(() => parseFields(detail), [detail]);
@@ -175,19 +179,17 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
     }
   };
 
-  return (
+  const card = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onSubmit("cancel");
-      }}
+      role="dialog"
+      aria-modal={inline ? undefined : true}
+      aria-label={message}
+      className={
+        inline
+          ? "w-full overflow-hidden rounded-(--radius-md) border border-warning/40 bg-surface shadow-(--shadow-composer)"
+          : "w-full max-w-lg overflow-hidden rounded-2xl border border-border-strong bg-(--surface-raised) shadow-(--shadow-composer)"
+      }
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={message}
-        className="w-full max-w-lg overflow-hidden rounded-2xl border border-border-strong bg-(--surface-raised) shadow-(--shadow-composer)"
-      >
         <div className="bg-warning/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-warning">
           {t("chat.elicitation.request")}
         </div>
@@ -326,6 +328,16 @@ export function ElicitationModal({ request, onSubmit }: ElicitationModalProps) {
           </Button>
         </div>
       </div>
+  );
+  if (inline) return <div className="mx-auto mb-2 w-full max-w-3xl">{card}</div>;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onSubmit("cancel");
+      }}
+    >
+      {card}
     </div>
   );
 }

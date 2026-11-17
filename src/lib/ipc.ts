@@ -216,6 +216,26 @@ export function readImageDataUrl(path: string, threadId?: string): Promise<strin
   return invokeRequired<string>("read_image_data_url", { path, threadId: threadId ?? null });
 }
 
+export interface AttachmentStatus {
+  path: string;
+  exists: boolean;
+  size: number | null;
+}
+
+/** Saves a pasted image under ~/.pult/attachments and returns its path. */
+export function attachmentsSaveImage(data: string, mimeType: string): Promise<string> {
+  return invokeRequired<string>("attachments_save_image", { data, mimeType });
+}
+
+/** Saves a text attachment under ~/.pult/attachments and returns its path. */
+export function attachmentsSaveText(name: string, text: string): Promise<string> {
+  return invokeRequired<string>("attachments_save_text", { name, text });
+}
+
+export function attachmentsCheckPaths(paths: string[]): Promise<AttachmentStatus[]> {
+  return invokeRequired<AttachmentStatus[]>("attachments_check_paths", { paths });
+}
+
 /** Native folder picker; null outside Tauri or when the user cancels. */
 export async function pickFolder(title = "Choose folder"): Promise<string | null> {
   if (!isTauri()) return null;
