@@ -153,6 +153,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     [nativeGroups],
   );
   const runIndexById = useMemo(() => new Map((runs ?? []).map((run) => [run.id, run.idx])), [runs]);
+  const runStartedAtById = useMemo(
+    () => new Map((runs ?? []).map((run) => [run.id, run.startedAt])),
+    [runs],
+  );
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
@@ -332,6 +336,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               subagentGroups={subagentGroups}
               nativeGroupByKey={nativeGroupByKey}
               runIndexById={runIndexById}
+              runStartedAtById={runStartedAtById}
               clampMaxPx={clampMaxPx}
               startedAt={activeRun?.startedAt}
               activeRunId={activeRun?.id}
@@ -405,7 +410,15 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 }
 
 const ChatItemRow = memo(
-  function ChatItemRow({ item, clampMaxPx }: { item: ChatItem; clampMaxPx: number }) {
+  function ChatItemRow({
+    item,
+    clampMaxPx,
+    runStartedAt,
+  }: {
+    item: ChatItem;
+    clampMaxPx: number;
+    runStartedAt?: number;
+  }) {
     switch (item.type) {
       case "user":
         return (
@@ -417,7 +430,14 @@ const ChatItemRow = memo(
           />
         );
       case "assistant":
-        return <TextRow text={item.text} streaming={item.streaming} ts={item.ts} />;
+        return (
+          <TextRow
+            text={item.text}
+            streaming={item.streaming}
+            ts={item.ts}
+            runStartedAt={runStartedAt}
+          />
+        );
       case "trace":
         return <TraceRow optionId={item.optionId} />;
       case "compaction":
@@ -426,7 +446,10 @@ const ChatItemRow = memo(
         return <NoticeRow level={item.level} message={item.message} />;
     }
   },
-  (prev, next) => prev.item === next.item && prev.clampMaxPx === next.clampMaxPx,
+  (prev, next) =>
+    prev.item === next.item &&
+    prev.clampMaxPx === next.clampMaxPx &&
+    prev.runStartedAt === next.runStartedAt,
 );
 
 type TimelineEntry = ReturnType<typeof threadTimelineItems>[number];
@@ -533,6 +556,7 @@ function TimelineRows({
   subagentGroups,
   nativeGroupByKey,
   runIndexById,
+  runStartedAtById,
   clampMaxPx,
   startedAt,
   activeRunId,
@@ -544,6 +568,7 @@ function TimelineRows({
   subagentGroups: SubagentAnchor[];
   nativeGroupByKey: Map<string, NativeGroup>;
   runIndexById: Map<string, number>;
+  runStartedAtById: Map<string, number>;
   clampMaxPx: number;
   startedAt?: number;
   activeRunId?: string;
@@ -644,7 +669,11 @@ function TimelineRows({
           data-history-key={entry.key}
           data-history-user={entry.item.type === "user" ? entry.key : undefined}
         >
-          <ChatItemRow item={entry.item} clampMaxPx={clampMaxPx} />
+          <ChatItemRow
+            item={entry.item}
+            clampMaxPx={clampMaxPx}
+            runStartedAt={runStartedAtById.get(entry.runId)}
+          />
         </div>,
       );
     }
@@ -1039,20 +1068,32 @@ function formatTime(ts: number | undefined): string | null {
   return formatClock(ts);
 }
 
+/** `46s`, `2m 5s`, `1h 3m` — how long after the run started this message landed. */
+export function formatElapsed(startedAt: number, ts: number): string {
+  const seconds = Math.max(0, Math.floor((ts - startedAt) / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 /** Hover row under a message: copy, branch into a new thread, timestamp. */
 function MessageActions({
   text,
   ts,
+  startedAt,
   align,
 }: {
   text: string;
   ts?: number;
+  startedAt?: number;
   align: "left" | "right";
 }) {
   const [copied, setCopied] = useState(false);
   const t = useT();
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
   const time = showTimestamps ? formatTime(ts) : null;
+  const elapsed = time && startedAt !== undefined && ts ? formatElapsed(startedAt, ts) : null;
   const copy = () => {
     void navigator.clipboard
       .writeText(text)
@@ -1105,7 +1146,12 @@ function MessageActions({
       >
         <GitBranch size={12} />
       </button>
-      {time && <span className="px-1 text-xs text-text-tertiary tabular-nums">{time}</span>}
+      {time && (
+        <span className="px-1 text-xs text-text-tertiary tabular-nums">
+          {time}
+          {elapsed ? ` · ${elapsed}` : ""}
+        </span>
+      )}
     </div>
   );
 }
@@ -1222,13 +1268,25 @@ function UserRow({
   );
 }
 
-function TextRow({ text, streaming, ts }: { text: string; streaming: boolean; ts?: number }) {
+function TextRow({
+  text,
+  streaming,
+  ts,
+  runStartedAt,
+}: {
+  text: string;
+  streaming: boolean;
+  ts?: number;
+  runStartedAt?: number;
+}) {
   return (
     <div className="group">
       <div className="md text-base text-text-primary">
         <Markdown text={text} streaming={streaming} />
       </div>
-      {!streaming && <MessageActions text={text} ts={ts} align="left" />}
+      {!streaming && (
+        <MessageActions text={text} ts={ts} startedAt={runStartedAt} align="left" />
+      )}
     </div>
   );
 }
