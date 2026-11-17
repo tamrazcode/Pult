@@ -28,6 +28,8 @@ pub struct ThreadDetail {
     pub desired_mode: Option<String>,
     /// Session config picks for the next run (model, thought level, toggles).
     pub desired_config: crate::runtime::DesiredConfigMap,
+    /// Effective permission ceiling of this thread (child threads inherit).
+    pub permission_mode: String,
 }
 
 /// Monotonic counter so thread ids never collide within the same millisecond.
@@ -403,6 +405,10 @@ pub async fn threads_get(
         // thread must never freeze the WebView.
         cap_ui_event_payloads(&mut events);
         let queue = runtime.store().list_queue(&thread_id)?;
+        let permission_mode = serde_json::to_value(runtime.permission_mode_for(&thread_id))
+            .ok()
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_else(|| "supervised".to_string());
         Ok(ThreadDetail {
             thread,
             runs,
@@ -411,6 +417,7 @@ pub async fn threads_get(
             active_run_id,
             desired_mode,
             desired_config,
+            permission_mode,
         })
     })
     .await
@@ -2171,8 +2178,23 @@ pub async fn read_image_data_url(
 pub fn orchestrator_tasks_list(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
-) -> Result<Vec<crate::store::records::DelegatedTaskRecord>, PultError> {
-    runtime.store().list_delegated_tasks(&thread_id)
+) -> Result<Vec<serde_json::Value>, PultError> {
+    let tasks = runtime.store().list_delegated_tasks(&thread_id)?;
+    Ok(tasks
+        .into_iter()
+        .map(|task| {
+            let queued = runtime
+                .store()
+                .list_queue(&task.child_thread_id)
+                .map(|queue| queue.len())
+                .unwrap_or(0);
+            let mut value = serde_json::to_value(&task).unwrap_or(serde_json::Value::Null);
+            if let Some(object) = value.as_object_mut() {
+                object.insert("queuedCount".to_string(), serde_json::json!(queued));
+            }
+            value
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -2223,10 +2245,11 @@ pub async fn orchestrator_steer_task(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     task_id: String,
     message: String,
+    urgent: Option<bool>,
 ) -> Result<serde_json::Value, PultError> {
     runtime
         .orchestrator
-        .steer_task_admin(&task_id, &message)
+        .steer_task_admin_urgent(&task_id, &message, urgent.unwrap_or(false))
         .map_err(PultError::internal)
 }
 

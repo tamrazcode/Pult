@@ -60,6 +60,8 @@ export interface DelegatedTask {
   startedAt: number;
   finishedAt?: number | null;
   durationMs?: number | null;
+  /** Messages queued for this child (steer without interrupting). */
+  queuedCount?: number;
 }
 
 export interface Run {
@@ -292,6 +294,8 @@ export interface ThreadDetail {
   desiredMode?: string | null;
   /** Config options picked for the next run (persisted per thread). */
   desiredConfig?: Record<string, ConfigOptionValue>;
+  /** Effective permission ceiling of this thread. */
+  permissionMode?: string;
 }
 
 export interface PlanEntry {

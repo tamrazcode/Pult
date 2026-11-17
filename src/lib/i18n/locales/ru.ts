@@ -871,6 +871,7 @@ export const ru: Record<string, string> = {
   "subagents.card.stop": "Остановить",
   "subagents.card.retry": "Повторить",
   "subagents.card.steer": "Уточнить",
+  "subagents.card.interrupt": "Прервать текущий ход",
   "subagents.card.send": "Отправить",
   "subagents.status.running": "Работает",
   "subagents.status.queued": "В очереди",

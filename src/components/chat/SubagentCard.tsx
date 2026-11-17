@@ -35,6 +35,7 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
   const [now, setNow] = useState(() => Date.now());
   const [steerOpen, setSteerOpen] = useState(false);
   const [steerText, setSteerText] = useState("");
+  const [interrupt, setInterrupt] = useState(false);
   const active = isTaskActive(task.status);
   useEffect(() => {
     if (!active) return;
@@ -72,7 +73,7 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
   const sendSteer = () => {
     const message = steerText.trim();
     if (!message) return;
-    void orchestratorSteerTask(task.taskId, message)
+    void orchestratorSteerTask(task.taskId, message, interrupt)
       .then((updated) => {
         useSubagentsStore.getState().upsert(updated);
         setSteerText("");
@@ -111,6 +112,11 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
         {task.role && task.role !== "general" && <span>· {task.role}</span>}
         {task.isolation === "worktree" && <span>· worktree</span>}
         <span>· {elapsed(task.startedAt, task.finishedAt)}</span>
+        {task.queuedCount ? (
+          <span data-queued-count>
+            · {task.queuedCount} {t("subagents.status.queued")}
+          </span>
+        ) : null}
       </div>
 
       {preview && (
@@ -163,25 +169,36 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
       </div>
 
       {steerOpen && (
-        <div className="mt-2 flex items-center gap-1.5">
-          <input
-            value={steerText}
-            onChange={(event) => setSteerText(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") sendSteer();
-              if (event.key === "Escape") setSteerOpen(false);
-            }}
-            placeholder={t("subagents.card.steer")}
-            aria-label={t("subagents.card.steer")}
-            className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
-          />
-          <button
-            type="button"
-            onClick={sendSteer}
-            className="flex h-7 shrink-0 items-center rounded-(--radius-sm) bg-accent px-2 text-xs font-medium text-accent-fg transition hover:brightness-110"
-          >
-            {t("subagents.card.send")}
-          </button>
+        <div className="mt-2 space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <input
+              value={steerText}
+              onChange={(event) => setSteerText(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") sendSteer();
+                if (event.key === "Escape") setSteerOpen(false);
+              }}
+              placeholder={t("subagents.card.steer")}
+              aria-label={t("subagents.card.steer")}
+              className="h-7 min-w-0 flex-1 rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+            />
+            <button
+              type="button"
+              onClick={sendSteer}
+              className="flex h-7 shrink-0 items-center rounded-(--radius-sm) bg-accent px-2 text-xs font-medium text-accent-fg transition hover:brightness-110"
+            >
+              {t("subagents.card.send")}
+            </button>
+          </div>
+          <label className="flex items-center gap-1.5 text-xs text-text-tertiary">
+            <input
+              type="checkbox"
+              checked={interrupt}
+              onChange={(event) => setInterrupt(event.target.checked)}
+              className="size-3 accent-accent"
+            />
+            {t("subagents.card.interrupt")}
+          </label>
         </div>
       )}
     </div>

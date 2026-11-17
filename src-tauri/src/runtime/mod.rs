@@ -3266,6 +3266,11 @@ impl AgentRuntime {
         // Queue auto-dispatch: the oldest queued message starts its own run
         // now that the thread is free (В§6.1 queue semantics).
         self.auto_dispatch_queue(thread_id);
+        // A child may have finished while this parent was busy: deliver the
+        // batched result now that the thread is idle and the queue is empty.
+        if self.active_run_for(thread_id).is_none() {
+            self.orchestrator.wake_parent_if_idle(thread_id);
+        }
         Ok(())
     }
 }

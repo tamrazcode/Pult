@@ -861,6 +861,7 @@ export const fr: Record<string, string> = {
   "subagents.card.stop": "Stop",
   "subagents.card.retry": "Retry",
   "subagents.card.steer": "Steer",
+  "subagents.card.interrupt": "Interrompre le tour en cours",
   "subagents.card.send": "Send",
   "subagents.status.running": "Working",
   "subagents.status.queued": "Queued",

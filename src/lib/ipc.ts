@@ -779,8 +779,12 @@ export function orchestratorRetryTask(taskId: string): Promise<DelegatedTask> {
   return invokeRequired<DelegatedTask>("orchestrator_retry_task", { taskId });
 }
 
-export function orchestratorSteerTask(taskId: string, message: string): Promise<DelegatedTask> {
-  return invokeRequired<DelegatedTask>("orchestrator_steer_task", { taskId, message });
+export function orchestratorSteerTask(
+  taskId: string,
+  message: string,
+  urgent = false,
+): Promise<DelegatedTask> {
+  return invokeRequired<DelegatedTask>("orchestrator_steer_task", { taskId, message, urgent });
 }
 
 /** Stop was pressed: the UI may offer a force-stop escalation. */

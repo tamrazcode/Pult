@@ -856,6 +856,7 @@ export const de: Record<string, string> = {
   "subagents.card.stop": "Stop",
   "subagents.card.retry": "Retry",
   "subagents.card.steer": "Steer",
+  "subagents.card.interrupt": "Aktuellen Zug unterbrechen",
   "subagents.card.send": "Send",
   "subagents.status.running": "Working",
   "subagents.status.queued": "Queued",

@@ -822,6 +822,7 @@ export const zh: Record<string, string> = {
   "subagents.card.stop": "Stop",
   "subagents.card.retry": "Retry",
   "subagents.card.steer": "Steer",
+  "subagents.card.interrupt": "中断当前回合",
   "subagents.card.send": "Send",
   "subagents.status.running": "Working",
   "subagents.status.queued": "Queued",
