@@ -17,6 +17,8 @@ use crate::store::records::{DelegatedTaskRecord, ThreadRecord};
 use crate::store::Store;
 
 const MAX_WAIT: Duration = Duration::from_secs(240);
+const MAX_SUBAGENT_QUEUE_DEPTH: usize = 16;
+const STEER_DEDUP_WINDOW_MS: i64 = 5_000;
 
 pub struct OrchestratorEngine {
     store: Arc<Store>,
@@ -562,12 +564,17 @@ impl OrchestratorEngine {
     fn steer_task(&self, scope: &McpScope, arguments: &Value) -> Result<Value, String> {
         let task_id = string_arg(arguments, "taskId")?;
         let message = string_arg(arguments, "message")?;
-        self.steer_task_impl(Some(&scope.thread_id), &task_id, &message)
+        let mode = arguments.get("mode").and_then(Value::as_str);
+        let urgent = arguments
+            .get("urgent")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        self.steer_task_impl(Some(&scope.thread_id), &task_id, &message, mode, urgent)
     }
 
     /// Manual steer from the subagent card (no MCP scope).
     pub fn steer_task_admin(&self, task_id: &str, message: &str) -> Result<Value, String> {
-        self.steer_task_impl(None, task_id, message)
+        self.steer_task_impl(None, task_id, message, None, false)
     }
 
     fn steer_task_impl(
@@ -575,6 +582,8 @@ impl OrchestratorEngine {
         expected_parent: Option<&str>,
         task_id: &str,
         message: &str,
+        mode: Option<&str>,
+        urgent: bool,
     ) -> Result<Value, String> {
         let task = self
             .store
@@ -601,13 +610,15 @@ impl OrchestratorEngine {
                     // `dispatch` can lose a race with a run that started in
                     // the meantime; `send` queues into it instead of failing.
                     if runtime
-                        .send(
+                        .send_bounded(
                             &child,
                             message,
                             &[],
                             &task.target_instance_id,
                             None,
                             &crate::runtime::DesiredConfigMap::new(),
+                            MAX_SUBAGENT_QUEUE_DEPTH,
+                            STEER_DEDUP_WINDOW_MS,
                         )
                         .is_ok()
                     {
@@ -642,16 +653,25 @@ impl OrchestratorEngine {
                 .attach_delegated_run(&task.id, &run.id)
                 .map_err(|error| error.to_string())?;
         } else {
-            // Running child: `send` queues while a turn is active and starts
-            // one otherwise, so the steer lands in order.
+            // A running child (including waiting_approval/waiting_input) never
+            // gets cancelled by a message: the default is a bounded FIFO queue
+            // delivered on the next turn. `mode: "interrupt"` / urgent is the
+            // explicit opt-in to replace the current turn.
+            if mode == Some("interrupt") || urgent {
+                if let Some(run_id) = task.child_run_id.as_deref() {
+                    let _ = runtime.cancel_for_steer(run_id);
+                }
+            }
             runtime
-                .send(
+                .send_bounded(
                     &child,
                     message,
                     &[],
                     &task.target_instance_id,
                     None,
                     &crate::runtime::DesiredConfigMap::new(),
+                    MAX_SUBAGENT_QUEUE_DEPTH,
+                    STEER_DEDUP_WINDOW_MS,
                 )
                 .map_err(|error| error.to_string())?;
         }
@@ -843,16 +863,24 @@ impl OrchestratorEngine {
         let Some(task) = found else {
             return;
         };
-        // A steer (or any queued follow-up) keeps the task alive: the next
-        // queued run will finish it, so do not close the card on run 1.
+        // A steer (or any queued/follow-up run) keeps the task alive: the next
+        // run will finish it, so do not close the card on run 1. The active-run
+        // check closes the race where auto-dispatch claimed the queue item
+        // before this finalizer looked at it.
+        let follow_up_active = self
+            .runtime()
+            .ok()
+            .and_then(|runtime| runtime.active_run_for(thread_id))
+            .is_some_and(|active| active != run_id);
         if matches!(
             task.status.as_str(),
             "running" | "waiting_approval" | "waiting_input"
-        ) && self
-            .store
-            .list_queue(thread_id)
-            .map(|queue| !queue.is_empty())
-            .unwrap_or(false)
+        ) && (follow_up_active
+            || self
+                .store
+                .list_queue(thread_id)
+                .map(|queue| !queue.is_empty())
+                .unwrap_or(false))
         {
             self.waiters.notify_waiters();
             return;
@@ -960,7 +988,7 @@ impl OrchestratorEngine {
                 text.push_str(&format!(" (error: {error})"));
             }
         }
-        if let Err(error) = runtime.dispatch(&thread, &text, &[], &instance_id) {
+        if let Err(error) = runtime.dispatch_hidden(&thread, &text, &[], &instance_id) {
             tracing::warn!(target: "pult::orchestrator", error = %error,
                 "parent wake-up dispatch failed");
         }

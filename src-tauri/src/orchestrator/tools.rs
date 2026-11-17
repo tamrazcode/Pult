@@ -108,7 +108,16 @@ pub fn tool_specs() -> Value {
                 "required": ["taskId", "message"],
                 "properties": {
                     "taskId": { "type": "string" },
-                    "message": { "type": "string" }
+                    "message": { "type": "string" },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["queue", "interrupt"],
+                        "description": "'queue' (default) never cancels active work and delivers on the next turn; 'interrupt' cancels the current turn first."
+                    },
+                    "urgent": {
+                        "type": "boolean",
+                        "description": "Legacy alias for mode='interrupt'. Ignored if false."
+                    }
                 },
                 "additionalProperties": false
             }

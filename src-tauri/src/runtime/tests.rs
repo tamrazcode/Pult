@@ -379,6 +379,101 @@ async fn steering_the_parent_keeps_children_running() {
 }
 
 #[tokio::test]
+async fn steering_a_running_child_queues_without_cancelling_its_turn() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_HANG", "1")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-root-child-steer"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-root-child-steer").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let parent_run = runtime.dispatch(&root, "coordinate", &[], "mock").unwrap();
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-root".to_string(),
+        thread_id: root.id.clone(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({ "title": "Long child", "task": "hang", "role": "general" }),
+        )
+        .await
+        .expect("delegate_task succeeds");
+    let task_id = started["task"]["taskId"].as_str().unwrap().to_string();
+    let child_thread_id = started["task"]["childThreadId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let child_run_id = started["task"]["childRunId"].as_str().unwrap().to_string();
+    wait_for(Duration::from_secs(10), || {
+        runtime.live_run_registered(&child_run_id)
+    })
+    .await;
+
+    let response = runtime
+        .orchestrator
+        .steer_task_admin(&task_id, "also check docs")
+        .expect("steer succeeds");
+    assert_eq!(response["status"], "running");
+    assert_eq!(
+        runtime.active_run_for(&child_thread_id).as_deref(),
+        Some(child_run_id.as_str()),
+        "a queued steer must not cancel the running turn"
+    );
+    let task = runtime.store().get_delegated_task(&task_id).unwrap();
+    assert_eq!(task.status, "running");
+    let queue = runtime.store().list_queue(&child_thread_id).unwrap();
+    assert_eq!(queue.len(), 1);
+    assert_eq!(queue[0].text, "also check docs");
+
+    runtime.cancel_with_force(&child_run_id, true).ok();
+    if let Some(run_id) = runtime.active_run_for(&root.id) {
+        runtime.cancel_with_force(&run_id, true).ok();
+    }
+}
+
+#[tokio::test]
+async fn hidden_wake_persists_no_user_bubble() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-hidden-wake"))
+        .unwrap();
+    let thread = runtime.store().get_thread("th-hidden-wake").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let run = runtime
+        .dispatch_hidden(&thread, "Subagent finished: ok", &[], "mock")
+        .unwrap();
+    wait_for(Duration::from_secs(10), || {
+        runtime.active_run_for(&thread.id).is_none()
+    })
+    .await;
+    let events = runtime.store().load_events(&run.id).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event.kind, crate::events::EventKind::UserMessage { .. })),
+        "a hidden wake must not persist a user bubble"
+    );
+    assert!(
+        events.iter().any(|event| matches!(
+            event.kind,
+            crate::events::EventKind::AgentMessageDelta { .. }
+        )),
+        "the agent's answer must still be visible"
+    );
+}
+
+#[tokio::test]
 async fn queue_auto_dispatch_failure_keeps_the_message() {
     let (runtime, _sink) = mock_runtime();
     let thread = thread_record("th-queue-fail");

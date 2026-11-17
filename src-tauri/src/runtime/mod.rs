@@ -1274,6 +1274,32 @@ impl AgentRuntime {
         mode: Option<&str>,
         config: &DesiredConfigMap,
     ) -> Result<SendOutcome, crate::PultError> {
+        self.send_bounded(
+            thread,
+            text,
+            images,
+            instance_id,
+            mode,
+            config,
+            usize::MAX,
+            0,
+        )
+    }
+
+    /// `send` with a bounded subagent queue: dedup identical text inside the
+    /// window and refuse to grow past `max_queue_depth`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn send_bounded(
+        self: &Arc<Self>,
+        thread: &ThreadRecord,
+        text: &str,
+        images: &[ImageInput],
+        instance_id: &str,
+        mode: Option<&str>,
+        config: &DesiredConfigMap,
+        max_queue_depth: usize,
+        dedup_window_ms: i64,
+    ) -> Result<SendOutcome, crate::PultError> {
         if self.thread_deleting(&thread.id) {
             return Err(crate::PultError::with_code(
                 "thread.deleting",
@@ -1300,6 +1326,7 @@ impl AgentRuntime {
                 mode.clone(),
                 Some(snapshot.clone()),
                 None,
+                false,
             ) {
                 Ok(run) => {
                     // Persist the picker state only after this message owns the
@@ -1336,6 +1363,24 @@ impl AgentRuntime {
             config_options: snapshot.into_iter().collect(),
             created_at: now_millis(),
         };
+        let pending = self.store.list_queue(&thread.id)?;
+        if dedup_window_ms > 0 {
+            if let Some(existing) = pending.iter().rev().find(|entry| {
+                entry.text == text && item.created_at - entry.created_at <= dedup_window_ms
+            }) {
+                return Ok(SendOutcome {
+                    run: None,
+                    queued: true,
+                    queue_id: Some(existing.id.clone()),
+                });
+            }
+        }
+        if pending.len() >= max_queue_depth {
+            return Err(crate::PultError::with_code(
+                "queue.full",
+                format!("subagent queue is full ({max_queue_depth})"),
+            ));
+        }
         self.store.enqueue_queue_item(&item)?;
         self.emit_queue_updated(&thread.id);
         // The active run may have finished between the check above and this
@@ -1631,7 +1676,19 @@ impl AgentRuntime {
         images: &[ImageInput],
         instance_id: &str,
     ) -> Result<RunRecord, crate::PultError> {
-        self.dispatch_with(thread, text, images, instance_id, None, None, None)
+        self.dispatch_with(thread, text, images, instance_id, None, None, None, false)
+    }
+
+    /// Wake/continuation run: the prompt reaches the agent, but no user bubble
+    /// is persisted, so the transcript shows only the agent's answer.
+    pub fn dispatch_hidden(
+        self: &Arc<Self>,
+        thread: &ThreadRecord,
+        text: &str,
+        images: &[ImageInput],
+        instance_id: &str,
+    ) -> Result<RunRecord, crate::PultError> {
+        self.dispatch_with(thread, text, images, instance_id, None, None, None, true)
     }
 
     /// `dispatch` with optional per-message settings. A queued message carries
@@ -1648,6 +1705,7 @@ impl AgentRuntime {
         mode_override: Option<String>,
         config_override: Option<DesiredConfigMap>,
         claim_queue_id: Option<&str>,
+        hidden: bool,
     ) -> Result<RunRecord, crate::PultError> {
         if self.thread_deleting(&thread.id) {
             return Err(crate::PultError::with_code(
@@ -1726,8 +1784,10 @@ impl AgentRuntime {
                 self.rollback_run(&run.id, &thread.id);
                 return Err(err);
             }
-            if let Err(err) = self.store.append_event(&user_event) {
-                return Err(self.abort_run_start(&run, &thread.id, err));
+            if !hidden {
+                if let Err(err) = self.store.append_event(&user_event) {
+                    return Err(self.abort_run_start(&run, &thread.id, err));
+                }
             }
         }
 
@@ -1744,7 +1804,9 @@ impl AgentRuntime {
         // registers the record so the timeline can select it. Emitted after
         // every fallible step so a failed start never leaves a ghost run.
         self.emit("run:started", &RunStartedPayload { run: run.clone() });
-        self.emit_run_event(&run.id, &user_event);
+        if !hidden {
+            self.emit_run_event(&run.id, &user_event);
+        }
 
         let this = Arc::clone(self);
         let run_id = run.id.clone();
@@ -3237,6 +3299,7 @@ impl AgentRuntime {
                     item.mode.clone(),
                     Some(item.config_options.clone().into_iter().collect()),
                     Some(&item.id),
+                    false,
                 ) {
                     Ok(run) => {
                         // A queued steer becomes the task's new live run.
