@@ -777,6 +777,8 @@ export const de: Record<string, string> = {
   "sidebar.upToDate": "Pult ist aktuell",
   "sidebar.installingUpdate": "Update wird installiert · {{percent}} %",
   "sidebar.installingUpdateIndeterminate": "Update wird installiert…",
+  "sidebar.updateCheckFailed": "Updates konnten nicht geprüft werden: {{detail}}",
+  "sidebar.updateInstallFailed": "Update fehlgeschlagen: {{detail}}",
   "errors.updater.unconfigured": "Der Update-Kanal ist noch nicht konfiguriert.",
   "settings.chat.notifications": "Benachrichtigungen",
   "settings.chat.notificationsDesc":

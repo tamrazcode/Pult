@@ -752,6 +752,8 @@ export const zh: Record<string, string> = {
   "sidebar.upToDate": "Pult 已是最新版本",
   "sidebar.installingUpdate": "正在安装更新 · {{percent}}%",
   "sidebar.installingUpdateIndeterminate": "正在安装更新…",
+  "sidebar.updateCheckFailed": "无法检查更新：{{detail}}",
+  "sidebar.updateInstallFailed": "更新失败：{{detail}}",
   "errors.updater.unconfigured": "更新源尚未配置。",
   "settings.chat.notifications": "通知",
   "settings.chat.notificationsDesc": "当 Pult 在后台且运行结束时显示系统通知。",

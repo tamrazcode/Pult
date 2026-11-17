@@ -421,27 +421,35 @@ export function Sidebar({ width }: { width: number }) {
     void router.navigate({ to: "/chat" });
   };
 
-  const checkAppUpdate = useCallback(() => {
-    if (!isTauri() || updateState === "checking" || updateState === "installing") return;
-    setUpdateState("checking");
-    setUpdateError(null);
-    setUpdateNotice(null);
-    void appUpdateCheck()
-      .then((info) => {
-        if (info) {
-          setAppUpdate(info);
-          setUpdateState("available");
-        } else {
-          setAppUpdate(null);
-          setUpdateState("idle");
-          setUpdateNotice(t("sidebar.upToDate"));
-        }
-      })
-      .catch((err) => {
-        setUpdateState("error");
-        setUpdateError(localizeIpcError(err));
-      });
-  }, [t, updateState]);
+  const checkAppUpdate = useCallback(
+    (manual = true) => {
+      if (!isTauri() || updateState === "checking" || updateState === "installing") return;
+      setUpdateState("checking");
+      setUpdateError(null);
+      setUpdateNotice(null);
+      void appUpdateCheck()
+        .then((info) => {
+          if (info) {
+            setAppUpdate(info);
+            setUpdateState("available");
+          } else {
+            setAppUpdate(null);
+            setUpdateState("idle");
+            setUpdateNotice(t("sidebar.upToDate"));
+          }
+        })
+        .catch((err) => {
+          if (!manual) {
+            // Background checks must not nag: a proxy blip is not a product error.
+            setUpdateState("idle");
+            return;
+          }
+          setUpdateState("error");
+          setUpdateError(t("sidebar.updateCheckFailed", { detail: localizeIpcError(err) }));
+        });
+    },
+    [t, updateState],
+  );
 
   const installAppUpdate = () => {
     if (!isTauri() || updateState === "installing") return;
@@ -458,7 +466,7 @@ export function Sidebar({ width }: { width: number }) {
       })
       .catch((err) => {
         setUpdateState("error");
-        setUpdateError(localizeIpcError(err));
+        setUpdateError(t("sidebar.updateInstallFailed", { detail: localizeIpcError(err) }));
       });
   };
 
@@ -470,7 +478,7 @@ export function Sidebar({ width }: { width: number }) {
   useEffect(() => {
     if (!isTauri()) return;
     const run = () => {
-      if (updateState !== "installing") checkAppUpdate();
+      if (updateState !== "installing") checkAppUpdate(false);
     };
     const initial = window.setTimeout(run, 15_000);
     const timer = window.setInterval(run, 6 * 60 * 60 * 1000);

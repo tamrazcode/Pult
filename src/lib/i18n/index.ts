@@ -141,6 +141,11 @@ export function localizeIpcError(error: unknown, locale?: LocaleId): string {
         ? error.message
         : String(error);
   if (code) {
+    // `internal` carries the real cause in `message`; the translated generic
+    // line hides it and is useless to the person looking at the screen.
+    if (code === "internal" && message.trim() !== "" && message !== "internal") {
+      return message;
+    }
     const key = `errors.${code}`;
     const active = locale ?? useLocaleStore.getState().locale;
     const dictionary = DICTIONARIES[active] ?? en;

@@ -794,6 +794,8 @@ export const ru: Record<string, string> = {
   "sidebar.upToDate": "Pult обновлён",
   "sidebar.installingUpdate": "Установка обновления · {{percent}}%",
   "sidebar.installingUpdateIndeterminate": "Установка обновления…",
+  "sidebar.updateCheckFailed": "Не удалось проверить обновления: {{detail}}",
+  "sidebar.updateInstallFailed": "Не удалось установить обновление: {{detail}}",
   "errors.updater.unconfigured": "Канал обновлений ещё не настроен.",
   "settings.chat.notifications": "Уведомления",
   "settings.chat.notificationsDesc":

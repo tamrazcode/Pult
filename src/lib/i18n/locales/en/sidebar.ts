@@ -74,4 +74,6 @@ export const sidebar = {
   "sidebar.upToDate": "Pult is up to date",
   "sidebar.installingUpdate": "Installing update · {{percent}}%",
   "sidebar.installingUpdateIndeterminate": "Installing update…",
+  "sidebar.updateCheckFailed": "Couldn't check for updates: {{detail}}",
+  "sidebar.updateInstallFailed": "Update failed: {{detail}}",
 } as const;

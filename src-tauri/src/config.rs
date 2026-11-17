@@ -272,7 +272,9 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
 }
 
 /// The standalone Antigravity ACP server (`agy_acp_server`), installed by pult
-/// under `%LOCALAPPDATA%\\pult\\antigravity`, downloaded by T3 Code, or on PATH.
+/// under `%LOCALAPPDATA%\\pult\\antigravity` or on PATH. A copy already fetched
+/// by another tool is adopted into pult's folder once, so the UI never shows a
+/// foreign config path.
 fn antigravity_server_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     if let Some(path) = antigravity_server_path_in(
@@ -286,33 +288,55 @@ fn antigravity_server_path() -> Option<std::path::PathBuf> {
     which("agy_acp_server")
 }
 
-/// Pult's own copy wins; T3 Code's downloaded artifact is reused when the
-/// install folder was wiped by a reinstall, so the provider still appears.
 fn antigravity_server_path_in(
     local_app_data: Option<&Path>,
     home: Option<&Path>,
 ) -> Option<std::path::PathBuf> {
-    if let Some(local) = local_app_data {
-        let candidate = local
-            .join("pult")
-            .join("antigravity")
-            .join("agy_acp_server.exe");
-        if candidate.is_file() {
-            return Some(candidate);
-        }
+    let local = local_app_data?;
+    let pult_dir = local.join("pult").join("antigravity");
+    let pult_server = pult_dir.join("agy_acp_server.exe");
+    if pult_server.is_file() {
+        return Some(pult_server);
     }
-    if let Some(home) = home {
-        let versions = home
-            .join(".t3")
-            .join("tools")
-            .join("antigravity-acp")
-            .join("win32-x64")
-            .join("versions");
-        if let Some(candidate) = newest_antigravity_server(&versions) {
-            return Some(candidate);
+    let source = home.and_then(t3_antigravity_server);
+    if let Some(source) = source {
+        if adopt_antigravity_install(&source, &pult_dir) && pult_server.is_file() {
+            return Some(pult_server);
         }
     }
     None
+}
+
+fn t3_antigravity_server(home: &Path) -> Option<std::path::PathBuf> {
+    let versions = home
+        .join(".t3")
+        .join("tools")
+        .join("antigravity-acp")
+        .join("win32-x64")
+        .join("versions");
+    newest_antigravity_server(&versions)
+}
+
+/// Copies the server and its harness beside it; partial copies stay unused.
+fn adopt_antigravity_install(source: &Path, dest: &Path) -> bool {
+    let Some(parent) = source.parent() else {
+        return false;
+    };
+    if std::fs::create_dir_all(dest).is_err() {
+        return false;
+    }
+    let mut copied = false;
+    for name in [
+        "agy_acp_server.exe",
+        "localharness_external.exe",
+        ".install-complete.json",
+    ] {
+        let from = parent.join(name);
+        if from.is_file() {
+            copied |= std::fs::copy(&from, dest.join(name)).is_ok();
+        }
+    }
+    copied && dest.join("agy_acp_server.exe").is_file()
 }
 
 /// Newest `<sha>/agy_acp_server.exe` under T3's versions folder.
@@ -484,7 +508,7 @@ mod tests {
     }
 
     #[test]
-    fn antigravity_falls_back_to_newest_t3_version() {
+    fn antigravity_adopts_t3_version_into_pult_folder() {
         let root = temp_config_home("antigravity-t3");
         let local = root.join("local");
         let versions = root
@@ -503,10 +527,15 @@ mod tests {
         std::fs::write(&newer, b"newer").unwrap();
         std::fs::create_dir_all(versions.join("empty")).unwrap();
 
+        let adopted = local
+            .join("pult")
+            .join("antigravity")
+            .join("agy_acp_server.exe");
         assert_eq!(
             antigravity_server_path_in(Some(&local), Some(&root.join("home"))),
-            Some(newer)
+            Some(adopted.clone())
         );
+        assert_eq!(std::fs::read(&adopted).unwrap(), b"newer");
         std::fs::remove_dir_all(&root).unwrap();
     }
 

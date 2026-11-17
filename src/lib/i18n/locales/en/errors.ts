@@ -1,5 +1,5 @@
 export const errors = {
-  "errors.internal": "Something went wrong.",
+  "errors.internal": "The operation failed. Open Diagnostics for details.",
   "errors.store": "The local database could not complete this action.",
   "errors.url.empty": "Enter a URL or a file path.",
   "errors.url.invalid_scheme": "Only http(s) links can open in the system browser.",

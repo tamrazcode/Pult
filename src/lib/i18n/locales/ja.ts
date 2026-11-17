@@ -777,6 +777,8 @@ export const ja: Record<string, string> = {
   "sidebar.upToDate": "Pult は最新です",
   "sidebar.installingUpdate": "更新をインストール中 · {{percent}}%",
   "sidebar.installingUpdateIndeterminate": "更新をインストール中…",
+  "sidebar.updateCheckFailed": "アップデートを確認できませんでした: {{detail}}",
+  "sidebar.updateInstallFailed": "アップデートに失敗しました: {{detail}}",
   "errors.updater.unconfigured": "更新フィードがまだ設定されていません。",
   "settings.chat.notifications": "通知",
   "settings.chat.notificationsDesc":

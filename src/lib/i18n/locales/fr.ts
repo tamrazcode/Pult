@@ -782,6 +782,8 @@ export const fr: Record<string, string> = {
   "sidebar.upToDate": "Pult est à jour",
   "sidebar.installingUpdate": "Installation de la mise à jour · {{percent}} %",
   "sidebar.installingUpdateIndeterminate": "Installation de la mise à jour…",
+  "sidebar.updateCheckFailed": "Impossible de vérifier les mises à jour : {{detail}}",
+  "sidebar.updateInstallFailed": "Échec de la mise à jour : {{detail}}",
   "errors.updater.unconfigured": "Le canal de mises à jour n’est pas encore configuré.",
   "settings.chat.notifications": "Notifications",
   "settings.chat.notificationsDesc":
