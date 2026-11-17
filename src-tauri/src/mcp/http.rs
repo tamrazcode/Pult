@@ -43,7 +43,8 @@ impl HttpTransport {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none());
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
         let client = if config.pinned.is_empty() {
             client
         } else {
@@ -157,7 +158,7 @@ impl McpTransport for HttpTransport {
             let deadline = tokio::time::Instant::now() + self.timeout;
             let mut stream = response.bytes_stream();
             let mut raw = Vec::new();
-            let mut events = String::new();
+            let mut events: Vec<u8> = Vec::new();
             loop {
                 let next = tokio::time::timeout_at(deadline, stream.next())
                     .await
@@ -181,15 +182,17 @@ impl McpTransport for HttpTransport {
                     }
                     continue;
                 }
-                events.push_str(&String::from_utf8_lossy(&chunk));
-                if events.contains('\r') {
-                    events = events.replace("\r\n", "\n");
+                // Parse bytes, not chunks: a multibyte UTF-8 character may be
+                // split across two network reads.
+                events.extend_from_slice(&chunk);
+                if events.contains(&b'\r') {
+                    events.retain(|byte| *byte != b'\r');
                 }
                 if events.len() > 2 * super::security::MAX_MESSAGE_BYTES {
                     return Err("MCP event stream exceeded the size limit".to_string());
                 }
-                while let Some(index) = events.find("\n\n") {
-                    let block = events[..index].to_string();
+                while let Some(index) = events.windows(2).position(|pair| pair == b"\n\n") {
+                    let block = String::from_utf8_lossy(&events[..index]).to_string();
                     events.drain(..index + 2);
                     for event in super::transport::parse_sse_events(&block) {
                         let Ok(value) = serde_json::from_str::<Value>(&event.data) else {
@@ -334,6 +337,73 @@ mod tests {
             started.elapsed() < Duration::from_secs(1),
             "SSE reply must not wait for EOF"
         );
+    }
+
+    #[tokio::test]
+    async fn fails_an_oversized_success_body_without_buffering_it_all() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = read_request(&mut stream, 1 << 20).await;
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let blob = vec![b'a'; 2_200_000];
+            let _ = stream.write_all(&blob).await;
+        });
+        let transport = HttpTransport::connect(HttpConfig {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            secret_values: Vec::new(),
+            timeout: Duration::from_secs(10),
+            label: "mock".to_string(),
+        })
+        .unwrap();
+        let error = transport
+            .request(json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }))
+            .await
+            .unwrap_err();
+        assert!(error.contains("exceeds"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn keeps_multibyte_text_split_across_network_chunks() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let _ = read_request(&mut stream, 1 << 20).await;
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":12,\"result\":{\"text\":\"привет\"}}\n\n";
+            let bytes = body.as_bytes();
+            let split = bytes.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+            stream.write_all(&bytes[..split]).await.unwrap();
+            stream.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            stream.write_all(&bytes[split..]).await.unwrap();
+        });
+        let transport = HttpTransport::connect(HttpConfig {
+            url: format!("http://127.0.0.1:{port}/mcp"),
+            headers: BTreeMap::new(),
+            pinned: Vec::new(),
+            secret_values: Vec::new(),
+            timeout: Duration::from_secs(5),
+            label: "mock".to_string(),
+        })
+        .unwrap();
+        let reply = transport
+            .request(json!({ "jsonrpc": "2.0", "id": 12, "method": "tools/call" }))
+            .await
+            .unwrap();
+        assert_eq!(reply["result"]["text"], "привет");
     }
 
     #[tokio::test]

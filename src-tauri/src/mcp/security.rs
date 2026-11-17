@@ -78,8 +78,19 @@ pub async fn validate_url(raw: &str, allow_localhost: bool) -> Result<(), String
 pub fn redact_values(text: &str, values: &[String]) -> String {
     let mut out = text.to_string();
     for value in values {
-        if value.len() >= 4 {
-            out = out.replace(value, "••••");
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        out = out.replace(trimmed, "••••");
+        // A stored `Authorization` header may be echoed bare or with its
+        // scheme; mask the token part too.
+        for prefix in ["Bearer ", "Basic "] {
+            if let Some(rest) = trimmed.strip_prefix(prefix) {
+                if !rest.trim().is_empty() {
+                    out = out.replace(rest.trim(), "••••");
+                }
+            }
         }
     }
     out
@@ -262,8 +273,17 @@ mod tests {
             redact_values(text, &["sk-live-123456".to_string()]),
             "request failed: invalid key •••• for server"
         );
-        // Very short values are not replaced to keep logs readable.
-        assert_eq!(redact_values("code 1 failed", &["1".to_string()]), "code 1 failed");
+        assert_eq!(
+            redact_values(
+                "sent Bearer abc123 and abc123 again",
+                &["Bearer abc123".to_string()]
+            ),
+            "sent •••• and •••• again"
+        );
+        assert_eq!(
+            redact_values("code 1 failed", &["1".to_string()]),
+            "code •••• failed"
+        );
     }
 
     #[test]

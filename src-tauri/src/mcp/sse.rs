@@ -42,7 +42,8 @@ impl SseTransport {
             let _ = rustls::crypto::ring::default_provider().install_default();
         });
         let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none());
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy();
         let client = if config.pinned.is_empty() {
             client
         } else {
@@ -85,10 +86,19 @@ impl SseTransport {
         .abort_handle();
         match tokio::time::timeout(config.timeout, ready_rx).await {
             Ok(Ok(Ok(()))) => {}
-            Ok(Ok(Err(error))) => return Err(error),
-            Ok(Err(_)) => return Err("SSE stream closed before the endpoint arrived".to_string()),
+            Ok(Ok(Err(error))) => {
+                closed.store(true, Ordering::Relaxed);
+                task.abort();
+                return Err(error);
+            }
+            Ok(Err(_)) => {
+                closed.store(true, Ordering::Relaxed);
+                task.abort();
+                return Err("SSE stream closed before the endpoint arrived".to_string());
+            }
             Err(_) => {
                 closed.store(true, Ordering::Relaxed);
+                task.abort();
                 return Err(format!(
                     "SSE MCP server did not announce an endpoint within {} ms",
                     config.timeout.as_millis()
@@ -349,7 +359,10 @@ mod tests {
         assert_eq!(reply["result"]["ok"], true);
         transport.close().await.unwrap();
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(transport.task.is_finished(), "close must abort the SSE task");
+        assert!(
+            transport.task.is_finished(),
+            "close must abort the SSE task"
+        );
     }
 
     #[test]
@@ -369,7 +382,10 @@ mod tests {
         assert!(same_origin("https://host/sse", "https://host/messages"));
         assert!(!same_origin("https://host/sse", "https://other/messages"));
         assert!(!same_origin("https://host/sse", "http://host/messages"));
-        assert!(!same_origin("https://host/sse", "http://127.0.0.1/messages"));
+        assert!(!same_origin(
+            "https://host/sse",
+            "http://127.0.0.1/messages"
+        ));
         assert!(!same_origin("https://host/sse", "http://169.254.169.254/"));
     }
 }

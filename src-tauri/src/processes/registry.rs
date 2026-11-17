@@ -69,12 +69,7 @@ impl ProcessRegistry {
 
     pub fn register(&self, pid: u32, mut meta: ProcessMeta) {
         if meta.started_at.is_none() {
-            meta.started_at = Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs())
-                    .unwrap_or(0),
-            );
+            meta.started_at = Some(process_start_time(pid));
         }
         if let Ok(mut entries) = self.entries.lock() {
             entries.insert(pid, meta);
@@ -108,6 +103,16 @@ impl ProcessRegistry {
 }
 
 static GLOBAL: OnceLock<ProcessRegistry> = OnceLock::new();
+
+fn process_start_time(pid: u32) -> u64 {
+    let mut system = sysinfo::System::new();
+    let targets = [sysinfo::Pid::from_u32(pid)];
+    system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&targets), false);
+    system
+        .process(targets[0])
+        .map(|process| process.start_time())
+        .unwrap_or(0)
+}
 
 pub(crate) fn global() -> &'static ProcessRegistry {
     GLOBAL.get_or_init(ProcessRegistry::new)

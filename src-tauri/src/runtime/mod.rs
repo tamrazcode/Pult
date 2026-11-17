@@ -2168,15 +2168,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     };
     // Warm process from a previous turn of this thread: skip spawn, initialize,
     // and session/new|load; re-send only the settings that changed.
-    let pooled = runtime
-        .pool
-        .take_matching_generation(
-            &thread_id,
-            &instance_id,
-            &root,
-            &spawn_sig,
-            runtime.mcp_generation.load(std::sync::atomic::Ordering::Relaxed),
-        );
+    let pooled = runtime.pool.take_matching_generation(
+        &thread_id,
+        &instance_id,
+        &root,
+        &spawn_sig,
+        runtime
+            .mcp_generation
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
 
     let conn: Arc<AcpConn>;
     let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
@@ -2200,6 +2200,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
 
     if let Some(entry) = pooled {
         timing.pooled = true;
+        let entry_mcp_generation = entry.mcp_generation;
         let crate::runtime::pool::IdleConn {
             conn: pooled_conn,
             events_rx: mut pooled_events,
@@ -2219,9 +2220,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         owner_token = pooled_owner;
         applied_config = pooled_config;
         mcp_token = pooled_token;
-        session_mcp_generation = runtime
-            .mcp_generation
-            .load(std::sync::atomic::Ordering::Relaxed);
+        session_mcp_generation = entry_mcp_generation;
         // A parked session already got the instructions on its first prompt.
         session_context_ready = true;
         session_has_orchestrator = mcp_token.is_some();

@@ -85,7 +85,7 @@ fn build_node(
     // recorded; otherwise the OS reused the PID for another process.
     let meta = global().get(pid).filter(|meta| {
         meta.started_at
-            .is_none_or(|started| started.abs_diff(process.start_time()) <= 2)
+            .is_some_and(|started| started == process.start_time())
     });
     let role = if pid == std::process::id() {
         "core".to_string()

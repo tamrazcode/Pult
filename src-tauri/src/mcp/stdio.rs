@@ -114,7 +114,7 @@ impl StdioTransport {
                     }
                     Err(_) => reader_logs.push(format!(
                         "stdout: {}",
-                        redact_values(line, &reader_secrets)
+                        redact_values(&super::security::redact(line), &reader_secrets)
                     )),
                 }
             }
@@ -128,9 +128,13 @@ impl StdioTransport {
         let stderr_secrets = config.secret_values.clone();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr);
-            while let Ok(Some((line, _truncated))) = next_line_capped(&mut lines, MAX_LOG_LINE).await
+            while let Ok(Some((line, _truncated))) =
+                next_line_capped(&mut lines, MAX_LOG_LINE).await
             {
-                stderr_logs.push(redact_values(&line, &stderr_secrets));
+                stderr_logs.push(redact_values(
+                    &super::security::redact(&line),
+                    &stderr_secrets,
+                ));
             }
         });
 
@@ -222,7 +226,10 @@ async fn next_line_capped<R: AsyncBufRead + Unpin>(
             return if out.is_empty() && !truncated {
                 Ok(None)
             } else {
-                Ok(Some((String::from_utf8_lossy(&out).into_owned(), truncated)))
+                Ok(Some((
+                    String::from_utf8_lossy(&out).into_owned(),
+                    truncated,
+                )))
             };
         }
         let newline = buffer.iter().position(|byte| *byte == b'\n');
@@ -237,7 +244,10 @@ async fn next_line_capped<R: AsyncBufRead + Unpin>(
         }
         reader.consume(used);
         if newline.is_some() {
-            return Ok(Some((String::from_utf8_lossy(&out).into_owned(), truncated)));
+            return Ok(Some((
+                String::from_utf8_lossy(&out).into_owned(),
+                truncated,
+            )));
         }
     }
 }
@@ -332,7 +342,8 @@ while ($null -ne ($line = [Console]::In.ReadLine())) {
     }
 
     #[tokio::test]
-    async fn unknown_command_fails_loudly() {        let error = StdioTransport::spawn(StdioConfig {
+    async fn unknown_command_fails_loudly() {
+        let error = StdioTransport::spawn(StdioConfig {
             command: "pult-definitely-missing-binary".to_string(),
             args: Vec::new(),
             cwd: None,

@@ -214,12 +214,7 @@ impl McpGateway {
     }
 
     async fn generation(&self, server_id: &str) -> u64 {
-        *self
-            .generations
-            .lock()
-            .await
-            .get(server_id)
-            .unwrap_or(&0)
+        *self.generations.lock().await.get(server_id).unwrap_or(&0)
     }
 
     /// Drops just the upstream connection (failure recovery). Agent tokens
@@ -292,7 +287,11 @@ impl McpGateway {
         let _serial = self.initialize_lock.lock().await;
         let client = self.client(server_id).await?;
         let epoch = client.session_epoch();
-        if let Some((result, cached_epoch)) = self.initialized.lock().await.get(server_id).cloned() {
+        let cached = {
+            let initialized = self.initialized.lock().await;
+            initialized.get(server_id).cloned()
+        };
+        if let Some((result, cached_epoch)) = cached {
             if cached_epoch == epoch {
                 return Ok((client, result));
             }
@@ -321,16 +320,17 @@ impl McpGateway {
         client
             .notify(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
             .await?;
-        // A config edit or SSE reconnect during the handshake makes this result
-        // stale; never cache it for the next caller.
+        // Hold `initialized` across the check and the insert: `close_server`
+        // bumps the generation, then clears this map, so it either waits for
+        // this insert or invalidates it afterwards.
+        let mut initialized = self.initialized.lock().await;
         if self.generation(server_id).await != generation || client.session_epoch() != epoch {
+            drop(initialized);
             let _ = client.close().await;
             return Err("MCP session changed during initialization; retry the call".to_string());
         }
-        self.initialized
-            .lock()
-            .await
-            .insert(server_id.to_string(), (result.clone(), epoch));
+        initialized.insert(server_id.to_string(), (result.clone(), epoch));
+        drop(initialized);
         Ok((client, result))
     }
 }
@@ -501,17 +501,27 @@ mod tests {
 
     struct EchoTransport {
         initialized: Mutex<u32>,
+        epoch: std::sync::atomic::AtomicU64,
     }
 
     impl EchoTransport {
         fn new() -> Arc<Self> {
             Arc::new(Self {
                 initialized: Mutex::new(0),
+                epoch: std::sync::atomic::AtomicU64::new(0),
             })
+        }
+
+        fn bump_epoch(&self) {
+            self.epoch
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
     impl McpTransport for EchoTransport {
+        fn session_epoch(&self) -> u64 {
+            self.epoch.load(std::sync::atomic::Ordering::Relaxed)
+        }
         fn request<'a>(&'a self, request: Value) -> TransportFuture<'a, Value> {
             Box::pin(async move {
                 let method = request["method"].as_str().unwrap_or("");
@@ -623,6 +633,21 @@ mod tests {
         .await;
         assert!(second.contains("\"name\":\"echo\""), "{second}");
         assert_eq!(*transport.initialized.lock().unwrap(), 1);
+
+        // A reconnect bumps the upstream epoch: the next call must re-run the
+        // handshake instead of using the cached initialize result.
+        transport.bump_epoch();
+        let after_reconnect = post(
+            &endpoint.url,
+            &endpoint.token,
+            json!({ "jsonrpc": "2.0", "id": 30, "method": "tools/list" }),
+        )
+        .await;
+        assert!(
+            after_reconnect.contains("\"name\":\"ok\""),
+            "{after_reconnect}"
+        );
+        assert_eq!(*transport.initialized.lock().unwrap(), 2);
 
         let tools = post(
             &endpoint.url,
