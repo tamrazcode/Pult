@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
@@ -119,6 +119,9 @@ impl GatewayTokens {
     }
 }
 
+/// Cached initialize result, its epoch and the client it belongs to.
+type Initialized = HashMap<String, (Value, u64, Weak<dyn McpTransport>)>;
+
 pub struct McpGateway {
     url: String,
     port: u16,
@@ -129,9 +132,9 @@ pub struct McpGateway {
     /// Bumped by `close_server`; an in-flight connect from an older generation
     /// must not repopulate the cache.
     generations: AsyncMutex<HashMap<String, u64>>,
-    /// Upstream initialize result per server, bound to the exact client Arc and
+    /// Upstream initialize result per server, bound to the exact client and
     /// its epoch so a replacement transport never inherits it.
-    initialized: AsyncMutex<HashMap<String, (Value, u64, usize)>>,
+    initialized: AsyncMutex<Initialized>,
     initialize_lock: AsyncMutex<()>,
 }
 
@@ -289,14 +292,14 @@ impl McpGateway {
         // between these steps must not let an old client adopt the new state.
         let generation = self.generation(server_id).await;
         let client = self.client(server_id).await?;
-        let client_id = client_identity(&client);
+        let client_ref = Arc::downgrade(&client);
         let epoch = client.session_epoch();
         let cached = {
             let initialized = self.initialized.lock().await;
             initialized.get(server_id).cloned()
         };
         if let Some((result, cached_epoch, cached_client)) = cached {
-            if cached_epoch == epoch && cached_client == client_id {
+            if cached_epoch == epoch && Weak::ptr_eq(&cached_client, &client_ref) {
                 return Ok((client, result));
             }
             self.initialized.lock().await.remove(server_id);
@@ -330,34 +333,46 @@ impl McpGateway {
         let current = self.clients.lock().await.get(server_id).cloned();
         let same_client = current
             .as_ref()
-            .is_some_and(|current| client_identity(current) == client_id);
+            .is_some_and(|current| Arc::ptr_eq(current, &client));
         if self.generation(server_id).await != generation
             || client.session_epoch() != epoch
             || !same_client
         {
             drop(initialized);
-            self.evict_client_if_same(server_id, client_id).await;
+            self.evict_client_if_same(server_id, &client).await;
             return Err("MCP session changed during initialization; retry the call".to_string());
         }
-        initialized.insert(server_id.to_string(), (result.clone(), epoch, client_id));
+        initialized.insert(server_id.to_string(), (result.clone(), epoch, client_ref));
         drop(initialized);
         Ok((client, result))
     }
 
-    async fn evict_client_if_same(&self, server_id: &str, client_id: usize) {
+    async fn evict_client_if_same(&self, server_id: &str, client: &Arc<dyn McpTransport>) {
         let removed = {
             let mut clients = self.clients.lock().await;
             if clients
                 .get(server_id)
-                .is_some_and(|client| client_identity(client) == client_id)
+                .is_some_and(|current| Arc::ptr_eq(current, client))
             {
                 clients.remove(server_id)
             } else {
                 None
             }
         };
-        if let Some(client) = removed {
-            let _ = client.close().await;
+        if let Some(removed) = removed {
+            let mut initialized = self.initialized.lock().await;
+            let stale_init = initialized
+                .get(server_id)
+                .is_some_and(|(_, _, owner)| {
+                    owner
+                        .upgrade()
+                        .is_some_and(|owner| Arc::ptr_eq(&owner, client))
+                });
+            if stale_init {
+                initialized.remove(server_id);
+            }
+            drop(initialized);
+            let _ = removed.close().await;
         }
     }
 }
@@ -505,10 +520,6 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
 
 fn rpc_error(id: Value, message: impl Into<String>) -> Value {
     rpc_error_code(id, -32603, message)
-}
-
-fn client_identity(client: &Arc<dyn McpTransport>) -> usize {
-    Arc::as_ptr(client) as *const () as usize
 }
 
 fn rpc_error_code(id: Value, code: i64, message: impl Into<String>) -> Value {

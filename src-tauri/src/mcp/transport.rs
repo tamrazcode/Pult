@@ -183,11 +183,6 @@ pub(crate) struct SseEvent {
 impl SseDecoder {
     pub(crate) fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         self.buffer.extend_from_slice(chunk);
-        // SSE framing is ASCII; retain bytes so a multibyte character split
-        // across network chunks is decoded only once the block is complete.
-        if self.buffer.contains(&b'\r') {
-            self.buffer.retain(|byte| *byte != b'\r');
-        }
         // shortcut: a malicious server could stream one endless event; drop the
         // buffer instead of growing without bound. Per-event limits land with
         // the diagnostics manager if this proves too coarse.
@@ -196,15 +191,36 @@ impl SseDecoder {
             return Vec::new();
         }
         let mut events = Vec::new();
-        while let Some(index) = self.buffer.windows(2).position(|pair| pair == b"\n\n") {
-            let block = String::from_utf8_lossy(&self.buffer[..index]).to_string();
-            self.buffer.drain(..index + 2);
+        while let Some((index, boundary_len)) = sse_boundary(&self.buffer) {
+            // CRLF, LF and bare-CR line endings are all valid SSE; normalize
+            // the completed block before parsing its fields.
+            let block = String::from_utf8_lossy(&self.buffer[..index])
+                .replace("\r\n", "\n")
+                .replace('\r', "\n");
+            self.buffer.drain(..index + boundary_len);
             if let Some(event) = parse_sse_block(&block) {
                 events.push(event);
             }
         }
         events
     }
+}
+
+/// Finds the earliest blank-line delimiter in any SSE line-ending style.
+fn sse_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    let mut best: Option<(usize, usize)> = None;
+    for (pattern, len) in [
+        (b"\r\n\r\n".as_slice(), 4usize),
+        (b"\n\n".as_slice(), 2),
+        (b"\r\r".as_slice(), 2),
+    ] {
+        if let Some(index) = buffer.windows(len).position(|window| window == pattern) {
+            if best.is_none_or(|(current, _)| index < current) {
+                best = Some((index, len));
+            }
+        }
+    }
+    best
 }
 
 fn parse_sse_block(block: &str) -> Option<SseEvent> {
@@ -261,6 +277,16 @@ mod tests {
         let events = decoder.push(&text[split..]);
         assert_eq!(events.len(), 1);
         assert!(events[0].data.contains("привет"), "{:?}", events[0]);
+    }
+
+    #[test]
+    fn decoder_accepts_crlf_and_bare_cr_delimiters() {
+        let mut decoder = SseDecoder::default();
+        let crlf = decoder.push(b"data: {\"a\":1}\r\n\r\n");
+        assert_eq!(crlf.len(), 1);
+        let bare_cr = decoder.push(b"data: {\"b\":2}\r\r");
+        assert_eq!(bare_cr.len(), 1);
+        assert_eq!(bare_cr[0].data, "{\"b\":2}");
     }
 
     #[test]

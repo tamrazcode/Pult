@@ -112,16 +112,26 @@ impl HttpTransport {
             let mut body = Vec::new();
             let mut truncated = false;
             let mut stream = response.bytes_stream();
-            while let Some(Ok(chunk)) = stream.next().await {
-                let room = MAX_ERROR_BODY.saturating_sub(body.len());
-                if room == 0 {
-                    truncated = true;
-                    break;
-                }
-                body.extend_from_slice(&chunk[..chunk.len().min(room)]);
-                if body.len() >= MAX_ERROR_BODY && chunk.len() > room {
-                    truncated = true;
-                    break;
+            loop {
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        let room = MAX_ERROR_BODY.saturating_sub(body.len());
+                        if room == 0 {
+                            truncated = true;
+                            break;
+                        }
+                        body.extend_from_slice(&chunk[..chunk.len().min(room)]);
+                        if body.len() >= MAX_ERROR_BODY && chunk.len() > room {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    Some(Err(_)) => {
+                        // A partial body could cut a secret in half.
+                        truncated = true;
+                        break;
+                    }
+                    None => break,
                 }
             }
             if truncated {
