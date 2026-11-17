@@ -212,7 +212,7 @@ function McpSettings() {
 
         <section className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
           {error && <p className="mb-3 text-xs text-danger">{error}</p>}
-          {!selected && !loading && (
+          {!selected && !loading && servers.length > 0 && (
             <p className="text-sm text-text-tertiary">{t("settings.mcp.selectHint")}</p>
           )}
           {selected && (
