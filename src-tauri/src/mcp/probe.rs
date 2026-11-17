@@ -67,12 +67,10 @@ fn redact_error(store: &Store, server: &CustomMcpServer, error: &str) -> String 
             secret_env_keys, ..
         } => vec![("env", secret_env_keys)],
         super::config::TransportConfig::Http {
-            secret_header_keys,
-            ..
+            secret_header_keys, ..
         }
         | super::config::TransportConfig::Sse {
-            secret_header_keys,
-            ..
+            secret_header_keys, ..
         } => vec![("header", secret_header_keys)],
     };
     for (section, keys) in keys {
@@ -86,7 +84,8 @@ fn redact_error(store: &Store, server: &CustomMcpServer, error: &str) -> String 
     super::security::redact_values(&super::security::redact(error), &values)
 }
 
-async fn probe(store: &Store, server: &CustomMcpServer) -> ProbeResult {    let failed = |error: String, latency_ms: u64| ProbeResult {
+async fn probe(store: &Store, server: &CustomMcpServer) -> ProbeResult {
+    let failed = |error: String, latency_ms: u64| ProbeResult {
         ok: false,
         server_info: None,
         protocol_version: None,

@@ -54,10 +54,7 @@ impl Store {
         })
     }
 
-    pub fn set_provider_model_prefs(
-        &self,
-        prefs: &ProviderModelPrefs,
-    ) -> Result<(), PultError> {
+    pub fn set_provider_model_prefs(&self, prefs: &ProviderModelPrefs) -> Result<(), PultError> {
         let updated_at = now_millis();
         self.with_conn(|conn| {
             conn.execute(

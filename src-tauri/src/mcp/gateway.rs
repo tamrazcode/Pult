@@ -361,13 +361,11 @@ impl McpGateway {
         };
         if let Some(removed) = removed {
             let mut initialized = self.initialized.lock().await;
-            let stale_init = initialized
-                .get(server_id)
-                .is_some_and(|(_, _, owner)| {
-                    owner
-                        .upgrade()
-                        .is_some_and(|owner| Arc::ptr_eq(&owner, client))
-                });
+            let stale_init = initialized.get(server_id).is_some_and(|(_, _, owner)| {
+                owner
+                    .upgrade()
+                    .is_some_and(|owner| Arc::ptr_eq(&owner, client))
+            });
             if stale_init {
                 initialized.remove(server_id);
             }
