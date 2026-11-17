@@ -45,16 +45,18 @@ test("process tree collapses and kills a registered child", async ({ page }) => 
   await expect(page.locator('[role="treeitem"]').nth(1)).toContainText("Codex");
 
   await page.getByRole("button", { name: "Kill" }).click();
-  const calls = await page.evaluate(
-    () =>
-      (window as unknown as { __PULT_INVOKES__: Array<Record<string, unknown>> })
-        .__PULT_INVOKES__,
-  );
-  expect(
-    calls.some(
-      (call) =>
-        call.cmd === "diagnostics_kill_process" &&
-        (call.args as { pid?: number }).pid === 200,
-    ),
-  ).toBe(true);
+  await expect
+    .poll(async () => {
+      const calls = await page.evaluate(
+        () =>
+          (window as unknown as { __PULT_INVOKES__: Array<Record<string, unknown>> })
+            .__PULT_INVOKES__,
+      );
+      return calls.some(
+        (call) =>
+          call.cmd === "diagnostics_kill_process" &&
+          (call.args as { pid?: number }).pid === 200,
+      );
+    })
+    .toBe(true);
 });

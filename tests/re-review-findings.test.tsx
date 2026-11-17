@@ -124,6 +124,8 @@ const codexInstance: InstanceInfo = {
   authMethods: [],
 };
 
+const realLoadInstances = useUiStore.getState().loadInstances;
+
 describe("Re-review verification and new findings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,6 +149,11 @@ describe("Re-review verification and new findings", () => {
       authHint: null,
       configOptions: [],
       authMethods: [],
+    });
+    useUiStore.setState({
+      instances: [],
+      selectedInstanceId: null,
+      loadInstances: realLoadInstances,
     });
     vi.spyOn(useUiStore.getState(), "loadInstances").mockResolvedValue(undefined);
     useSettingsStore.setState({
@@ -177,6 +184,10 @@ describe("Re-review verification and new findings", () => {
 
     const homeInput = (await screen.findByLabelText("Home path")) as HTMLInputElement;
     const shadowInput = screen.getByLabelText("Shadow home path") as HTMLInputElement;
+    // Wait for envDraft mount and background preflight refresh to settle before editing
+    await screen.findByDisplayValue("CUSTOM_VAR");
+    await waitFor(() => expect(mocks.providersInstancesList).toHaveBeenCalledTimes(2));
+
     expect(homeInput.value).toBe("C:\\Users\\me\\.claude");
     expect(shadowInput.value).toBe("C:\\Users\\me\\.claude-shadow");
 
@@ -213,6 +224,8 @@ describe("Re-review verification and new findings", () => {
   it("unrelated enabled toggle preserves homePath, shadowHomePath, and secretEnvKeys", async () => {
     render(<ProvidersSettings />);
     const toggleBtn = await screen.findByRole("switch", { name: /Disable Claude Code/i });
+    await screen.findByDisplayValue("CUSTOM_VAR");
+    await waitFor(() => expect(mocks.providersInstancesList).toHaveBeenCalledTimes(2));
     fireEvent.click(toggleBtn);
 
     await waitFor(() => expect(mocks.providersInstancesSave).toHaveBeenCalledTimes(1));
@@ -276,9 +289,10 @@ describe("Re-review verification and new findings", () => {
     );
 
     render(<ProvidersSettings />);
-    const apiKeyInput = (await screen.findByPlaceholderText("••••1234")) as HTMLInputElement;
-    const envVarInput = screen.getByDisplayValue("CUSTOM_VAR") as HTMLInputElement;
+    const envVarInput = (await screen.findByDisplayValue("CUSTOM_VAR")) as HTMLInputElement;
     expect(envVarInput).toBeInTheDocument();
+    const claudeAccount = screen.getByText("Claude account").parentElement!;
+    const apiKeyInput = within(claudeAccount).getByPlaceholderText("••••1234") as HTMLInputElement;
 
     // User types a new API key and edits envDraft before initial preflight finishes.
     fireEvent.change(apiKeyInput, { target: { value: "sk-ant-unsaved-draft" } });

@@ -46,7 +46,11 @@ test("MCP settings lists a server, masks secrets and probes tools", async ({ pag
   await page.getByRole("button", { name: "Test connection" }).click();
   await expect(page.getByText("Connected in 12 ms · 1 tools")).toBeVisible();
   await expect(page.getByText("Echo text")).toBeVisible();
+  // Wait for post-probe load() to finish so setServers doesn't reset the modal after Edit opens.
+  await expect(page.getByRole("button", { name: "Test connection" })).toBeEnabled();
 
   await page.getByRole("button", { name: "Edit" }).click();
-  await expect(page.getByPlaceholder("••••3456")).toBeVisible();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByPlaceholder("••••3456")).toBeVisible();
 });

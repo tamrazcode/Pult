@@ -77,6 +77,24 @@ interface EnvRow {
   masked?: string | null;
 }
 
+/** Draft rows for one provider: plain env plus vault-backed secret names. */
+function envRows(instance: InstanceInfo): EnvRow[] {
+  return [
+    ...Object.entries(instance.env).map(([key, value]) => ({
+      key,
+      value,
+      secret: false,
+    })),
+    ...(instance.secretEnv ?? []).map((secret) => ({
+      key: secret.key,
+      value: "",
+      secret: true,
+      hasValue: secret.hasValue,
+      masked: secret.masked,
+    })),
+  ];
+}
+
 function relativeTime(at: number): string {
   const seconds = Math.max(0, Math.round((Date.now() - at) / 1000));
   if (seconds < 60) return translate("settings.providers.justNow");
@@ -195,10 +213,10 @@ function ProvidersSettings() {
   const [authAttempted, setAuthAttempted] = useState<Record<string, boolean>>({});
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  const reload = async () => {
+  const reload = async (): Promise<InstanceInfo[]> => {
     if (!isTauri()) {
       setLoaded(true);
-      return;
+      return [];
     }
     const list = await providersInstancesList();
     setInstances(list);
@@ -213,6 +231,7 @@ function ProvidersSettings() {
           ? useUiStore.getState().selectedInstanceId
           : (list[0]?.id ?? null),
     );
+    return list;
   };
 
   useEffect(() => {
@@ -243,6 +262,7 @@ function ProvidersSettings() {
           setChecking({});
           const refreshed = await providersInstancesList();
           setInstances(refreshed);
+          await useUiStore.getState().loadInstances();
         }
       } catch (err) {
         setSaveError(localizeIpcError(err));
@@ -261,24 +281,7 @@ function ProvidersSettings() {
   selectedSnapshot.current = selected;
   useEffect(() => {
     const current = selectedSnapshot.current;
-    setEnvDraft(
-      current
-        ? [
-            ...Object.entries(current.env).map(([key, value]) => ({
-              key,
-              value,
-              secret: false,
-            })),
-            ...(current.secretEnv ?? []).map((secret) => ({
-              key: secret.key,
-              value: "",
-              secret: true,
-              hasValue: secret.hasValue,
-              masked: secret.masked,
-            })),
-          ]
-        : [],
-    );
+    setEnvDraft(current ? envRows(current) : []);
     setApiKeyDraft("");
   }, [selectedId]);
   useEffect(() => {
@@ -303,9 +306,12 @@ function ProvidersSettings() {
       }
     }
     setSaveError(null);
-    void saveSpecs(specList(instances, selected.id, { env, secretEnvKeys })).catch((err) =>
-      setSaveError(localizeIpcError(err)),
-    );
+    void saveSpecs(specList(instances, selected.id, { env, secretEnvKeys }))
+      .then((list) => {
+        const refreshed = list.find((instance) => instance.id === selected.id);
+        if (refreshed) setEnvDraft(envRows(refreshed));
+      })
+      .catch((err) => setSaveError(localizeIpcError(err)));
   };
 
   const isClaude = selected
@@ -321,7 +327,7 @@ function ProvidersSettings() {
     }
     setSaveError(null);
     try {
-      await saveSpecs(
+      const list = await saveSpecs(
         specList(instances, selected.id, {
           env: { ...selected.env, ANTHROPIC_API_KEY: key },
           secretEnvKeys: Array.from(
@@ -332,6 +338,9 @@ function ProvidersSettings() {
           ),
         }),
       );
+      const refreshed = list.find((instance) => instance.id === selected.id);
+      if (refreshed) setEnvDraft(envRows(refreshed));
+      setApiKeyDraft("");
       await check(selected.id);
     } catch (err) {
       setSaveError(localizeIpcError(err));
@@ -368,9 +377,9 @@ function ProvidersSettings() {
     setModelOrder(selected.id, ids);
   };
 
-  const saveSpecs = async (specs: InstanceSpec[]) => {
+  const saveSpecs = async (specs: InstanceSpec[]): Promise<InstanceInfo[]> => {
     await providersInstancesSave(specs);
-    await reload();
+    return reload();
   };
 
   const toggle = (info: InstanceInfo) => {
@@ -1045,9 +1054,10 @@ function ProvidersSettings() {
           instances={instances}
           onClose={() => setAdding(false)}
           onAdded={(id) => {
-            setSelectedId(id);
-            setDetailOpen(true);
-            void reload();
+            void reload().then(() => {
+              setSelectedId(id);
+              setDetailOpen(true);
+            });
           }}
         />
       )}

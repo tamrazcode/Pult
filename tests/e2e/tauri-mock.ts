@@ -7,6 +7,8 @@ export interface TauriFixtures {
   processTree?: unknown[];
   projects?: unknown[];
   threads?: unknown[];
+  /** Payload of threads_get (thread + runs + transcript). */
+  threadDetail?: unknown;
 }
 
 /**
@@ -20,6 +22,21 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
       invokes;
     let nextCallback = 0;
     const callbacks = new Map<number, (...args: unknown[]) => void>();
+    const listeners = new Map<string, Set<number>>();
+    // Automation hooks: emit a Tauri event and inspect live subscriptions.
+    Object.assign(window, {
+      __PULT_EMIT__(event: string, payload: unknown) {
+        let delivered = 0;
+        for (const id of listeners.get(event) ?? []) {
+          callbacks.get(id)?.({ event, id, payload });
+          delivered += 1;
+        }
+        return delivered;
+      },
+      __PULT_LISTENERS__(event: string) {
+        return listeners.get(event)?.size ?? 0;
+      },
+    });
     const preflight = (instanceId: string) => ({
       instanceId,
       agentName: "E2E agent",
@@ -72,6 +89,10 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
             return Promise.resolve(data.projects ?? []);
           case "threads_list":
             return Promise.resolve(data.threads ?? []);
+          case "threads_get":
+            return Promise.resolve(data.threadDetail ?? null);
+          case "orchestrator_tasks_list":
+            return Promise.resolve([]);
           case "mcp_list_servers":
             return Promise.resolve(data.mcpServers ?? []);
           case "mcp_test_connection":
@@ -102,10 +123,28 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
             return Promise.resolve(data.processTree ?? []);
           case "diagnostics_kill_process":
             return Promise.resolve(null);
-          case "plugin:event|listen":
-            return Promise.resolve(1);
-          case "plugin:event|unlisten":
+          case "plugin:event|listen": {
+            const event = String(args.event ?? "");
+            const handler = Number(args.handler);
+            if (!listeners.has(event)) listeners.set(event, new Set());
+            listeners.get(event)!.add(handler);
+            return Promise.resolve(handler);
+          }
+          case "plugin:event|unlisten": {
+            const event = String(args.event ?? "");
+            listeners.get(event)?.delete(Number(args.eventId));
             return Promise.resolve(null);
+          }
+          case "providers_model_prefs_list":
+            return Promise.resolve([]);
+          case "git_status":
+          case "git_diff_summary":
+            return Promise.reject({
+              code: "git.not_a_repo",
+              message: "Not a git repository",
+            });
+          case "git_gh_available":
+            return Promise.resolve(false);
           case "app_version":
             return Promise.resolve("e2e");
           default:
@@ -115,5 +154,16 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
     };
     (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ =
       internals;
+    (
+      window as unknown as {
+        __TAURI_EVENT_PLUGIN_INTERNALS__: {
+          unregisterListener: (event: string, eventId: number) => void;
+        };
+      }
+    ).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+      unregisterListener(event: string, eventId: number) {
+        listeners.get(event)?.delete(eventId);
+      },
+    };
   }, fixtures);
 }
