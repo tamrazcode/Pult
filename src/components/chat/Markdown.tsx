@@ -221,14 +221,25 @@ function CopyButton({ text }: { text: string }) {
 export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [html, setHtml] = useState<string | null>(null);
   const lastHighlightAt = useRef(0);
+  const lastHighlighted = useRef<string | null>(null);
   const plainOnly = useContext(PlainCodeContext);
   const label = LANGUAGE_ALIASES[(lang ?? "").toLowerCase()] ?? (lang ?? "").toLowerCase();
   const canHighlight = label !== "" && HIGHLIGHT_LANGS.has(label);
+  const blockKey = `${label}\u0000${code}`;
 
   // While a fence is still open (or text is settling) keep the plain fallback:
   // Shiki only runs for completed blocks, then at most once per 150ms.
   useEffect(() => {
-    if (!canHighlight || plainOnly) return;
+    if (!canHighlight) {
+      // A supported block can become plain (language edited): drop stale HTML.
+      lastHighlighted.current = null;
+      setHtml(null);
+      return;
+    }
+    if (plainOnly) return;
+    // A closed block keeps its HTML when a later fence opens and closes, or
+    // when the finished message re-renders: only new (lang, code) re-highlights.
+    if (lastHighlighted.current === blockKey) return;
     let cancelled = false;
     const delay = Math.max(0, STREAM_DEBOUNCE_MS - (Date.now() - lastHighlightAt.current));
     const timer = window.setTimeout(() => {
@@ -240,20 +251,25 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
           try {
             setHtml(highlighter.codeToHtml(code, { lang: label, theme: SHIKI_THEME }));
             lastHighlightAt.current = Date.now();
+            lastHighlighted.current = blockKey;
           } catch {
+            lastHighlighted.current = null;
             setHtml(null);
           }
         })
         .catch(() => {
           // Highlighting is best-effort: keep the plain-text fallback.
-          if (!cancelled) setHtml(null);
+          if (!cancelled) {
+            lastHighlighted.current = null;
+            setHtml(null);
+          }
         });
     }, delay);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [code, canHighlight, label, plainOnly]);
+  }, [code, canHighlight, label, plainOnly, blockKey]);
 
   const header = (
     <div className="md-code-header">
@@ -500,6 +516,23 @@ const COMPONENTS: Components = {
   },
 };
 
+const MarkdownBody = memo(function MarkdownBody({ text, plain }: { text: string; plain: boolean }) {
+  return (
+    <PlainCodeContext.Provider value={plain}>
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={COMPONENTS}
+        urlTransform={(url) =>
+          /^(javascript|data|vbscript):/i.test(url.replace(/\s+/g, "")) ? "" : url
+        }
+      >
+        {text}
+      </ReactMarkdown>
+    </PlainCodeContext.Provider>
+  );
+});
+
 export function Markdown({
   text,
   className,
@@ -537,20 +570,11 @@ export function Markdown({
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  // react-markdown re-parses on every render, so the throttled text is passed
+  // to a memoized body: token updates that only move `text` render nothing.
   return (
     <div className={className === undefined ? "md" : `md ${className}`}>
-      <PlainCodeContext.Provider value={streaming && hasOpenFence(rendered)}>
-        <ReactMarkdown
-          remarkPlugins={REMARK_PLUGINS}
-          rehypePlugins={REHYPE_PLUGINS}
-          components={COMPONENTS}
-          urlTransform={(url) =>
-            /^(javascript|data|vbscript):/i.test(url.replace(/\s+/g, "")) ? "" : url
-          }
-        >
-          {rendered}
-        </ReactMarkdown>
-      </PlainCodeContext.Provider>
+      <MarkdownBody text={rendered} plain={streaming && hasOpenFence(rendered)} />
     </div>
   );
 }
