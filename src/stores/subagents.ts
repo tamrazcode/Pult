@@ -78,8 +78,15 @@ export function useThreadSubagents(threadId: string | undefined): DelegatedTask[
   const order = useSubagentsStore((state) => state.order);
   return useMemo(() => {
     if (!threadId) return [];
+    const seen = new Set<string>();
     return order
       .map((id) => tasks[id])
-      .filter((task): task is DelegatedTask => Boolean(task) && task.parentThreadId === threadId);
+      .filter((task): task is DelegatedTask => {
+        if (!task || task.parentThreadId !== threadId) return false;
+        if (seen.has(task.taskId) || seen.has(task.childThreadId)) return false;
+        seen.add(task.taskId);
+        seen.add(task.childThreadId);
+        return true;
+      });
   }, [tasks, order, threadId]);
 }
