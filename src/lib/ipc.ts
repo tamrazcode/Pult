@@ -849,3 +849,7 @@ export function diagnosticsProcessTree(): Promise<ProcessNode[]> {
 export function diagnosticsKillProcess(pid: number): Promise<void> {
   return invokeRequired<void>("diagnostics_kill_process", { pid });
 }
+
+export function mcpReconnectServer(id: string): Promise<McpProbeResult> {
+  return invokeRequired<McpProbeResult>("mcp_reconnect_server", { id });
+}

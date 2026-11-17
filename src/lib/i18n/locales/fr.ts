@@ -933,4 +933,5 @@ export const fr: Record<string, string> = {
   "settings.diagnostics.processesKill": "Kill",
   "settings.diagnostics.processesConfirm": "Kill process {{pid}} and its children?",
   "settings.mcp.testsSaved": "Tests the saved configuration; save edits first.",
+  "settings.diagnostics.mcpReconnect": "Reconnect",
 };

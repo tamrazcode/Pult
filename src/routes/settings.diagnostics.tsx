@@ -6,6 +6,7 @@ import {
   diagnosticsKillProcess,
   diagnosticsProcessTree,
   mcpListServers,
+  mcpReconnectServer,
   mcpServerLogs,
   mcpServerStats,
   providersInstancesList,
@@ -123,6 +124,8 @@ function McpDiagnostics() {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [logs, setLogs] = useState<Record<string, string[]>>({});
   const [stats, setStats] = useState<Record<string, McpServerStats>>({});
+  const [reconnecting, setReconnecting] = useState<string | null>(null);
+  const [reconnectError, setReconnectError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -138,6 +141,20 @@ function McpDiagnostics() {
       setStats((current) => ({ ...current, [id]: counters }));
     } catch {
       setLogs((current) => ({ ...current, [id]: [] }));
+    }
+  };
+
+  const reconnect = async (id: string) => {
+    setReconnecting(id);
+    setReconnectError(null);
+    try {
+      const result = await mcpReconnectServer(id);
+      if (!result.ok) setReconnectError(result.error ?? "reconnect failed");
+      await grab(id);
+    } catch (err) {
+      setReconnectError(localizeIpcError(err));
+    } finally {
+      setReconnecting(null);
     }
   };
 
@@ -175,7 +192,21 @@ function McpDiagnostics() {
                 >
                   <RefreshCw size={11} /> {t("settings.diagnostics.mcpLogs")}
                 </button>
+                <button
+                  onClick={() => void reconnect(server.id)}
+                  disabled={reconnecting === server.id}
+                  className="flex h-7 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-2 text-xs text-text-secondary transition hover:bg-hover disabled:opacity-50"
+                >
+                  <RefreshCw
+                    size={11}
+                    className={reconnecting === server.id ? "animate-spin" : ""}
+                  />
+                  {t("settings.diagnostics.mcpReconnect")}
+                </button>
               </div>
+              {reconnectError && (
+                <p className="mt-1 font-mono text-xs text-danger">{reconnectError}</p>
+              )}
               {server.lastError && (
                 <p className="mt-1 font-mono text-xs text-danger">{server.lastError}</p>
               )}

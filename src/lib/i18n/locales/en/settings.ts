@@ -288,6 +288,7 @@ export const settings = {
   "settings.diagnostics.mcpSubtitle":
     "Health, counters and redacted stderr for user-configured MCP servers.",
   "settings.diagnostics.mcpLogs": "Logs",
+  "settings.diagnostics.mcpReconnect": "Reconnect",
   "settings.diagnostics.mcpCalls": "{{calls}} calls · {{errors}} errors",
   "settings.diagnostics.processesTitle": "Processes",
   "settings.diagnostics.processesSubtitle":

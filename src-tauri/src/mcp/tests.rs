@@ -493,5 +493,16 @@ async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
     )
     .await;
     assert!(blocked.contains("-32602"), "{blocked}");
+
+    // Diagnostics Reconnect drops the cached transport but keeps the token;
+    // the next call must connect and handshake again.
+    gateway.drop_client(&created.id).await;
+    let reconnected = post(
+        &endpoint.url,
+        &endpoint.token,
+        json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/list" }),
+    )
+    .await;
+    assert!(reconnected.contains("\"name\":\"echo\""), "{reconnected}");
     gateway.close_server(&created.id).await;
 }

@@ -306,6 +306,7 @@ pub fn run() {
             ipc::mcp_delete_server,
             ipc::mcp_set_server_enabled,
             ipc::mcp_test_connection,
+            ipc::mcp_reconnect_server,
             ipc::mcp_server_logs,
             ipc::mcp_server_stats,
             ipc::mcp_check_all,

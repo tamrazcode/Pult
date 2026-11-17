@@ -2173,6 +2173,27 @@ pub async fn mcp_test_connection(
     Ok(result)
 }
 
+/// Drops the cached upstream (tokens stay valid for live sessions) and probes
+/// a fresh connection, so Diagnostics can recover a crashed server.
+#[tauri::command]
+pub async fn mcp_reconnect_server(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    id: String,
+) -> Result<crate::mcp::probe::ProbeResult, PultError> {
+    let runtime = runtime.inner().clone();
+    let server = runtime.store().get_custom_mcp_server(&id)?;
+    if let Some(gateway) = runtime.gateway.get() {
+        gateway.drop_client(&id).await;
+    }
+    let result = crate::mcp::probe::test_connection(runtime.store(), &server).await;
+    if !result.ok {
+        if let Some(gateway) = runtime.gateway.get() {
+            gateway.drop_client(&id).await;
+        }
+    }
+    Ok(result)
+}
+
 #[tauri::command]
 pub async fn mcp_server_logs(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
