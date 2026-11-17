@@ -104,7 +104,7 @@ impl HttpTransport {
                 if body.trim().is_empty() {
                     String::new()
                 } else {
-                    format!(": {}", body.trim())
+                    format!(": {}", super::security::redact(body.trim()))
                 }
             ));
         }
@@ -123,7 +123,7 @@ impl McpTransport for HttpTransport {
                 .and_then(|value| value.to_str().ok())
                 .map(|value| value.contains("text/event-stream"))
                 .unwrap_or(false);
-            let body = tokio::time::timeout(self.timeout, response.text())
+            let body = tokio::time::timeout(self.timeout, response.bytes())
                 .await
                 .map_err(|_| {
                     format!(
@@ -132,6 +132,13 @@ impl McpTransport for HttpTransport {
                     )
                 })?
                 .map_err(|e| format!("read MCP response: {e}"))?;
+            if body.len() > super::security::MAX_MESSAGE_BYTES {
+                return Err(format!(
+                    "MCP response exceeds {} bytes",
+                    super::security::MAX_MESSAGE_BYTES
+                ));
+            }
+            let body = String::from_utf8_lossy(&body).into_owned();
             if is_sse {
                 for event in parse_sse_events(&body) {
                     let Ok(value) = serde_json::from_str::<Value>(&event.data) else {

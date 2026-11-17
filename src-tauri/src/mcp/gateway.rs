@@ -21,9 +21,22 @@ const MAX_BODY: usize = 2 * 1024 * 1024;
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
+/// Per-server tool policy enforced by the gateway itself, so an upstream or an
+/// agent cannot bypass it.
+#[derive(Debug, Clone, Default)]
+pub struct GatewayPolicy {
+    pub allow_tools: Vec<String>,
+    pub deny_tools: Vec<String>,
+}
+
 /// Opens the real upstream transport for a configured server.
 pub trait GatewayConnector: Send + Sync {
     fn connect<'a>(&'a self, server_id: &'a str) -> TransportFuture<'a, Arc<dyn McpTransport>>;
+
+    /// Current allow/deny lists; a missing row denies everything.
+    fn policy(&self, _server_id: &str) -> GatewayPolicy {
+        GatewayPolicy::default()
+    }
 }
 
 /// One agent-facing endpoint: URL plus the bearer it must send.
@@ -278,18 +291,42 @@ async fn serve(mut stream: TcpStream, gateway: Arc<McpGateway>) -> io::Result<()
 
 async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) -> Option<Value> {
     let id = request.get("id").cloned();
-    let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+    let method = request
+        .get("method")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
     if method == "notifications/initialized" || method.starts_with("notifications/") {
         return None;
     }
     let id = id.filter(|id| !id.is_null())?;
-    match method {
+    match method.as_str() {
         "initialize" => match gateway.ensure_initialized(server_id).await {
             Ok((_, result)) => Some(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
             Err(error) => Some(rpc_error(id, error)),
         },
         "ping" => Some(json!({ "jsonrpc": "2.0", "id": id, "result": {} })),
         _ => {
+            let policy = gateway.connector.policy(server_id);
+            if method == "tools/call" {
+                let tool = request
+                    .get("params")
+                    .and_then(|params| params.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if !crate::mcp::security::tool_allowed(
+                    &tool,
+                    &policy.allow_tools,
+                    &policy.deny_tools,
+                ) {
+                    return Some(rpc_error_code(
+                        id,
+                        -32602,
+                        format!("MCP tool `{tool}` is blocked by this server's policy"),
+                    ));
+                }
+            }
             let client = match gateway.client(server_id).await {
                 Ok(client) => client,
                 Err(error) => return Some(rpc_error(id, error)),
@@ -301,7 +338,19 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
                 }
             }
             match client.request(request).await {
-                Ok(reply) => Some(reply),
+                Ok(mut reply) => {
+                    if method == "tools/list" {
+                        crate::mcp::security::filter_tool_list(
+                            &mut reply,
+                            &policy.allow_tools,
+                            &policy.deny_tools,
+                        );
+                    }
+                    if method == "tools/call" {
+                        crate::mcp::security::mark_untrusted(&mut reply);
+                    }
+                    Some(reply)
+                }
                 Err(error) => Some(rpc_error(id, error)),
             }
         }
@@ -309,10 +358,14 @@ async fn handle_rpc(gateway: &Arc<McpGateway>, server_id: &str, request: Value) 
 }
 
 fn rpc_error(id: Value, message: impl Into<String>) -> Value {
+    rpc_error_code(id, -32603, message)
+}
+
+fn rpc_error_code(id: Value, code: i64, message: impl Into<String>) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id,
-        "error": { "code": -32603, "message": message.into() }
+        "error": { "code": code, "message": message.into() }
     })
 }
 
@@ -361,6 +414,15 @@ mod tests {
                         }
                     }));
                 }
+                if method == "tools/list" {
+                    return Ok(json!({
+                        "jsonrpc": "2.0", "id": id,
+                        "result": { "tools": [
+                            { "name": "ok", "inputSchema": { "type": "object" } },
+                            { "name": "danger", "inputSchema": { "type": "object" } }
+                        ]}
+                    }));
+                }
                 Ok(json!({
                     "jsonrpc": "2.0",
                     "id": id,
@@ -380,6 +442,7 @@ mod tests {
 
     struct EchoConnector {
         transport: Arc<EchoTransport>,
+        policy: GatewayPolicy,
     }
 
     impl GatewayConnector for EchoConnector {
@@ -389,6 +452,10 @@ mod tests {
         ) -> TransportFuture<'a, Arc<dyn McpTransport>> {
             let transport = Arc::clone(&self.transport) as Arc<dyn McpTransport>;
             Box::pin(async move { Ok(transport) })
+        }
+
+        fn policy(&self, _server_id: &str) -> GatewayPolicy {
+            self.policy.clone()
         }
     }
 
@@ -416,6 +483,10 @@ mod tests {
         let transport = EchoTransport::new();
         let gateway = McpGateway::start(Arc::new(EchoConnector {
             transport: Arc::clone(&transport),
+            policy: GatewayPolicy {
+                allow_tools: Vec::new(),
+                deny_tools: vec!["danger".to_string()],
+            },
         }))
         .await
         .unwrap();
@@ -443,12 +514,36 @@ mod tests {
             json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/list" }),
         )
         .await;
-        assert!(tools.contains("\"method\":\"tools/list\""), "{tools}");
+        assert!(tools.contains("\"name\":\"ok\""), "{tools}");
+        assert!(!tools.contains("\"name\":\"danger\""), "{tools}");
+
+        let blocked = post(
+            &endpoint.url,
+            &endpoint.token,
+            json!({
+                "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+                "params": { "name": "danger", "arguments": {} }
+            }),
+        )
+        .await;
+        assert!(blocked.contains("-32602"), "{blocked}");
+        assert!(!blocked.contains("\"result\""), "{blocked}");
+
+        let allowed = post(
+            &endpoint.url,
+            &endpoint.token,
+            json!({
+                "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                "params": { "name": "ok", "arguments": {} }
+            }),
+        )
+        .await;
+        assert!(allowed.contains("pult/untrusted"), "{allowed}");
 
         let unauthorized = post(
             &endpoint.url,
             "nope",
-            json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/list" }),
+            json!({ "jsonrpc": "2.0", "id": 6, "method": "tools/list" }),
         )
         .await;
         assert!(unauthorized.starts_with("HTTP/1.1 401"), "{unauthorized}");

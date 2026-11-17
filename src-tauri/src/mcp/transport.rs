@@ -179,6 +179,13 @@ impl SseDecoder {
     pub(crate) fn push(&mut self, chunk: &[u8]) -> Vec<SseEvent> {
         self.buffer.push_str(&String::from_utf8_lossy(chunk));
         self.buffer = self.buffer.replace("\r\n", "\n");
+        // shortcut: a malicious server could stream one endless event; drop the
+        // buffer instead of growing without bound. Per-event limits land with
+        // the diagnostics manager if this proves too coarse.
+        if self.buffer.len() > 4 * 1024 * 1024 {
+            self.buffer.clear();
+            return Vec::new();
+        }
         let mut events = Vec::new();
         while let Some(index) = self.buffer.find("\n\n") {
             let block = self.buffer[..index].to_string();

@@ -5,6 +5,7 @@ pub mod config;
 pub mod gateway;
 pub mod http;
 pub mod secrets;
+pub mod security;
 pub mod sse;
 pub mod stdio;
 pub mod transport;
@@ -19,7 +20,7 @@ use std::time::Duration;
 use crate::store::Store;
 
 use self::config::{CustomMcpServer, TransportConfig};
-use self::gateway::GatewayConnector;
+use self::gateway::{GatewayConnector, GatewayPolicy};
 use self::transport::{McpTransport, TransportFuture};
 
 /// Builds the real upstream transport for one stored server, resolving secret
@@ -61,6 +62,7 @@ pub(crate) async fn connect_custom(
             headers,
             secret_header_keys,
         } => {
+            security::validate_url(url, server.allow_localhost).await?;
             let headers = resolve_headers(store, server, headers, secret_header_keys)?;
             http::HttpTransport::connect(http::HttpConfig {
                 url: url.clone(),
@@ -75,6 +77,7 @@ pub(crate) async fn connect_custom(
             headers,
             secret_header_keys,
         } => {
+            security::validate_url(url, server.allow_localhost).await?;
             let headers = resolve_headers(store, server, headers, secret_header_keys)?;
             sse::SseTransport::connect(sse::SseConfig {
                 url: url.clone(),
@@ -129,5 +132,19 @@ impl GatewayConnector for StoreConnector {
             }
             connect_custom(&self.store, &server).await
         })
+    }
+
+    fn policy(&self, server_id: &str) -> GatewayPolicy {
+        match self.store.get_custom_mcp_server(server_id) {
+            Ok(server) => GatewayPolicy {
+                allow_tools: server.allow_tools,
+                deny_tools: server.deny_tools,
+            },
+            // A row vanished between connect and call: permit nothing.
+            Err(_) => GatewayPolicy {
+                allow_tools: Vec::new(),
+                deny_tools: vec!["*".to_string()],
+            },
+        }
     }
 }

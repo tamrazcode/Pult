@@ -89,6 +89,10 @@ impl StdioTransport {
                 if line.is_empty() {
                     continue;
                 }
+                if line.len() > super::security::MAX_MESSAGE_BYTES {
+                    reader_logs.push("dropped an oversized MCP message".to_string());
+                    continue;
+                }
                 match serde_json::from_str::<Value>(line) {
                     Ok(value) => {
                         if value.get("id").is_some() {
@@ -105,7 +109,7 @@ impl StdioTransport {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(line)) = lines.next_line().await {
-                stderr_logs.push(line);
+                stderr_logs.push(super::security::redact(&line));
             }
         });
 
