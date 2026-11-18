@@ -191,7 +191,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       // The reader may have scrolled up while the frame was pending.
       if (!isAtBottomRef.current) return;
       const container = scrollRef.current;
-      // scrollHeight includes the pb-6 gap, so the composer gap stays constant.
+      // scrollHeight includes the pb-7 gap, so the composer gap stays constant.
       if (container) container.scrollTop = container.scrollHeight;
     });
   }, []);
@@ -262,7 +262,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     return (
       <div className="relative flex min-h-0 flex-1">
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-7">
             {pendingUser && (
               <UserRow
                 text={pendingUser.text}
@@ -350,7 +350,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         onScroll={trackActiveTick}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-7">
           {hiddenCount > 0 && (
             <button
               onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}

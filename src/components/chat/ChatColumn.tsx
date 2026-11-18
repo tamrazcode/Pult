@@ -5,7 +5,8 @@ import { NewChatEmptyState } from "./NewChatEmptyState";
 import { ProjectInfoWidget } from "../layout/ProjectInfoWidget";
 import { ElicitationModal } from "./ElicitationModal";
 import { runsRespondElicitation } from "../../lib/ipc";
-import { useRunsStore } from "../../stores/runs";
+import { normalizeToolKind } from "../../lib/toolDetails";
+import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 import { useThreadsStore } from "../../stores/threads";
 
@@ -23,6 +24,23 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
       s.runsByThread[threadId]?.some((run) => run.id === s.activeElicitation?.runId),
     ),
   );
+  const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
+  const activeRun = activeRunForThread(runs);
+  const activeView = useRunsStore((s) => (activeRun ? s.viewsByRun[activeRun.id] : undefined));
+  const parentWorking = activeRun?.status === "running";
+  let ambientKind = "idle";
+  if (parentWorking && activeView) {
+    const current = [...activeView.items]
+      .reverse()
+      .find(
+        (item) =>
+          (item.type === "tool" &&
+            (item.status === "pending" || item.status === "in_progress")) ||
+          (item.type === "thought" && item.streaming),
+      );
+    if (current?.type === "tool") ambientKind = normalizeToolKind(current);
+    else if (current?.type === "thought") ambientKind = "thought";
+  }
 
   if (!threadId) {
     return (
@@ -40,17 +58,15 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
           <MessagesTimeline threadId={threadId} />
           {projectWidgetOpen && !rightPanelOpen && <ProjectInfoWidget threadId={threadId} />}
         </div>
-        {/* Static ambient glow so the composer's glass has something to blur
-            in a chat, where the column behind it is flat canvas. */}
+        {/* Ambient glow: dim at rest, alive while the parent run works.
+            data-ambient-kind follows the current smart-row action. */}
         {!isSubagent && (
           <div
             aria-hidden
             data-composer-ambient
-            className="pointer-events-none absolute inset-x-0 bottom-0 h-48"
-            style={{
-              background:
-                "radial-gradient(70% 130% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 72%)",
-            }}
+            data-ambient-state={parentWorking ? "working" : "idle"}
+            data-ambient-kind={ambientKind}
+            className="composer-ambient pointer-events-none absolute inset-x-0 bottom-0 h-48"
           />
         )}
         <div className="shrink-0">

@@ -12,6 +12,7 @@ import { ModePill, ProviderModelPicker, configValueValid } from "./ComposerContr
 import {
   runsCancel,
   runsDispatch,
+  runsQueueRemove,
   runsQueueSteer,
   runsRespondPermission,
   workspaceFiles,
@@ -253,6 +254,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   const composerPrefill = useUiStore((s) => s.composerPrefill);
   const activeElicitation = useRunsStore((s) => s.activeElicitation);
   const commands = useRunsStore((s) => (threadId ? s.commandsByThread[threadId] : undefined));
+  const queue = useRunsStore((s) => (threadId ? s.queueByThread[threadId] : undefined));
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const activeRun = activeRunForThread(runs);
   const sendKey = useSettingsStore((s) => s.sendKey);
@@ -916,6 +918,43 @@ export function Composer({ threadId }: { threadId?: string }) {
                 </Button>
               );
             })}
+        </div>
+      )}
+      {queue && queue.length > 0 && threadId && (
+        <div className="mx-auto mb-2 w-full max-w-3xl px-3">
+          <div className="flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface/90 px-3 py-1.5 text-xs text-text-secondary backdrop-blur-(--composer-blur)">
+            <span className="min-w-0 flex-1 truncate">{queue[0].text}</span>
+            <button
+              type="button"
+              aria-label={t("composer.queue.steerAria")}
+              title={t("composer.queue.steerTitle")}
+              onClick={() => {
+                void runsQueueSteer(threadId, queue[0].id).catch((err) =>
+                  setError(localizeIpcError(err)),
+                );
+                if (activeRun) {
+                  void runsCancel(activeRun.id, true).catch((err) =>
+                    console.error("runs_cancel failed", err),
+                  );
+                }
+              }}
+              className="shrink-0 rounded-(--radius-sm) border border-border-subtle px-1.5 py-0.5 text-xs text-text-secondary transition hover:bg-hover hover:text-text-primary"
+            >
+              {t("composer.queue.steerButton")}
+            </button>
+            <button
+              type="button"
+              aria-label={t("composer.queue.removeAria")}
+              onClick={() =>
+                void runsQueueRemove(threadId, queue[0].id).catch((err) =>
+                  console.error("runs_queue_remove failed", err),
+                )
+              }
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              <X size={12} />
+            </button>
+          </div>
         </div>
       )}
       <div className="relative z-10 mx-auto w-full max-w-3xl">
