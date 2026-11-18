@@ -3,8 +3,13 @@ import type { KeyboardEvent } from "react";
 import { useRouter } from "@tanstack/react-router";
 import {
   ArrowUp,
+  Check,
+  CornerUpRight,
   FileText,
+  GripVertical,
+  ListPlus,
   Paperclip,
+  Pencil,
   X,
 } from "lucide-react";
 import { Button } from "../ui/button";
@@ -13,7 +18,9 @@ import {
   runsCancel,
   runsDispatch,
   runsQueueRemove,
+  runsQueueReorder,
   runsQueueSteer,
+  runsQueueUpdate,
   runsRespondPermission,
   workspaceFiles,
 } from "../../lib/ipc";
@@ -41,6 +48,7 @@ import type {
 } from "../../lib/types";
 
 const MAX_HEIGHT = 10 * 28; // 10 rows at the 28px effective line step
+const QUEUE_ROW_HEIGHT = 32;
 
 /** What a picked slash command inserts: the leading "/" is part of the command. */
 export function formatSlashInsertion(command: CommandInfo): string {
@@ -241,6 +249,14 @@ export function Composer({ threadId }: { threadId?: string }) {
     }
     return tokens;
   }, [chips, fileChips]);
+  const [editingQueueId, setEditingQueueId] = useState<string | null>(null);
+  const queueDraftRef = useRef("");
+  const [dragState, setDragState] = useState<{
+    id: string;
+    startY: number;
+    offset: number;
+    index: number;
+  } | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
   const [mention, setMention] = useState<{ start: number; query: string } | null>(null);
   const [mentionFiles, setMentionFiles] = useState<string[]>([]);
@@ -464,7 +480,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         config,
       );
       if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
-      // A queued message keeps its optimistic bubble until its run starts.
+      else if (outcome.queued) useRunsStore.getState().clearPendingUser(targetThreadId);
       if (mode) useRunsStore.getState().setDesiredMode(targetThreadId, mode);
       if (config) {
         for (const [id, value] of Object.entries(config)) {
@@ -620,22 +636,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           );
           useRunsStore.getState().setPendingUser(threadId, pendingText, images);
           try {
-            const outcome = await dispatchRun(
-              threadId,
-              promptText,
-              images,
-              modeForSend(desired, threadId),
-              config,
-            );
-            // Sending always works. If a run is active, the message goes to
-            // the front of the backend queue and is steered immediately. A
-            // long build/test holds it until the command finishes; a normal
-            // turn is replaced right away. No user-visible queue.
-            if (outcome.queued && outcome.queueId) {
-              await runsQueueSteer(threadId, outcome.queueId).catch((err) =>
-                console.error("auto-steer failed", err),
-              );
-            }
+            await dispatchRun(threadId, promptText, images, modeForSend(desired, threadId), config);
           } catch (err) {
             useRunsStore.getState().clearPendingUser(threadId);
             throw err;
@@ -665,6 +666,58 @@ export function Composer({ threadId }: { threadId?: string }) {
     t,
   ]);
 
+  const saveQueueEdit = useCallback(() => {
+    if (!threadId || !editingQueueId) return;
+    const text = value.trim();
+    if (!text) return;
+    setBusy(true);
+    void runsQueueUpdate(threadId, editingQueueId, text)
+      .then(() => {
+        setEditingQueueId(null);
+        setValue(queueDraftRef.current);
+        queueDraftRef.current = "";
+        requestAnimationFrame(autosize);
+      })
+      .catch((err) => setError(localizeIpcError(err)))
+      .finally(() => setBusy(false));
+  }, [threadId, editingQueueId, value, autosize, setValue]);
+
+  const startQueueEdit = useCallback(
+    (item: { id: string; text: string }) => {
+      queueDraftRef.current = value;
+      setEditingQueueId(item.id);
+      setValue(item.text);
+      requestAnimationFrame(() => {
+        textareaRef.current?.focus();
+        autosize();
+      });
+    },
+    [value, autosize, setValue],
+  );
+
+  const cancelQueueEdit = useCallback(() => {
+    setEditingQueueId(null);
+    setValue(queueDraftRef.current);
+    queueDraftRef.current = "";
+    requestAnimationFrame(autosize);
+  }, [autosize, setValue]);
+
+  const moveQueueItem = useCallback(
+    (from: number, to: number) => {
+      if (!threadId || !queue || from === to) return;
+      const ids = queue.map((item) => item.id);
+      if (from < 0 || to < 0 || from >= ids.length || to >= ids.length) return;
+      ids.splice(to, 0, ...ids.splice(from, 1));
+      void runsQueueReorder(threadId, ids).catch((err) => setError(localizeIpcError(err)));
+    },
+    [threadId, queue],
+  );
+
+  const handlePrimary = useCallback(() => {
+    if (editingQueueId) saveQueueEdit();
+    else handleSend();
+  }, [editingQueueId, saveQueueEdit, handleSend]);
+
   const cancelling = useRunsStore((s) =>
     activeRun ? s.cancellingByRun[activeRun.id] === true : false,
   );
@@ -681,6 +734,11 @@ export function Composer({ threadId }: { threadId?: string }) {
   useEffect(() => {
     const onKey = (e: WindowEventMap["keydown"]) => {
       if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (editingQueueId) {
+        e.preventDefault();
+        cancelQueueEdit();
+        return;
+      }
       const target = e.target;
       const inOverlay =
         (target instanceof HTMLElement &&
@@ -707,6 +765,8 @@ export function Composer({ threadId }: { threadId?: string }) {
     slashOpen,
     mentionOpen,
     handleStop,
+    editingQueueId,
+    cancelQueueEdit,
   ]);
 
   // Keyboard answers while a decision is pending (§6.1): A allow once,
@@ -846,7 +906,7 @@ export function Composer({ threadId }: { threadId?: string }) {
         (sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey);
       if (shouldSend) {
         e.preventDefault();
-        handleSend();
+        handlePrimary();
         return;
       }
       if (!mentionOpen && !slashOpen && !awaitingDecision) {
@@ -921,39 +981,100 @@ export function Composer({ threadId }: { threadId?: string }) {
         </div>
       )}
       {queue && queue.length > 0 && threadId && (
-        <div className="mx-auto mb-2 w-full max-w-3xl px-3">
-          <div className="flex items-center gap-2 rounded-(--radius-md) border border-border-subtle bg-surface/90 px-3 py-1.5 text-xs text-text-secondary backdrop-blur-(--composer-blur)">
-            <span className="min-w-0 flex-1 truncate">{queue[0].text}</span>
-            <button
-              type="button"
-              aria-label={t("composer.queue.steerAria")}
-              title={t("composer.queue.steerTitle")}
-              onClick={() => {
-                void runsQueueSteer(threadId, queue[0].id).catch((err) =>
-                  setError(localizeIpcError(err)),
-                );
-                if (activeRun) {
-                  void runsCancel(activeRun.id, true).catch((err) =>
-                    console.error("runs_cancel failed", err),
-                  );
-                }
-              }}
-              className="shrink-0 rounded-(--radius-sm) border border-border-subtle px-1.5 py-0.5 text-xs text-text-secondary transition hover:bg-hover hover:text-text-primary"
-            >
-              {t("composer.queue.steerButton")}
-            </button>
-            <button
-              type="button"
-              aria-label={t("composer.queue.removeAria")}
-              onClick={() =>
-                void runsQueueRemove(threadId, queue[0].id).catch((err) =>
-                  console.error("runs_queue_remove failed", err),
-                )
-              }
-              className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-            >
-              <X size={12} />
-            </button>
+        <div className="relative z-0 mx-auto -mb-3 w-full max-w-3xl px-3">
+          <div
+            className="flex flex-col overflow-hidden rounded-t-[18px] border border-b-0 border-border-strong pt-1 pb-4 backdrop-blur-(--composer-blur) backdrop-saturate-[1.08]"
+            style={{
+              backgroundColor: `color-mix(in srgb, var(--composer-tint) ${glassOpacity}%, transparent)`,
+              boxShadow: "var(--shadow-composer)",
+            }}
+          >
+            {queue.map((item, index) => {
+              const dragging = dragState?.id === item.id;
+              return (
+                <div
+                  key={item.id}
+                  onPointerDown={(event) => {
+                    if (editingQueueId !== null) return;
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, input, select, textarea, a")) return;
+                    event.preventDefault();
+                    event.currentTarget.setPointerCapture?.(event.pointerId);
+                    setDragState({ id: item.id, startY: event.clientY, offset: 0, index });
+                  }}
+                  onPointerMove={(event) => {
+                    if (!dragging) return;
+                    setDragState((current) =>
+                      current && current.id === item.id
+                        ? { ...current, offset: event.clientY - current.startY }
+                        : current,
+                    );
+                  }}
+                  onPointerUp={() => {
+                    if (!dragging || !dragState) return;
+                    const to = Math.max(
+                      0,
+                      Math.min(
+                        queue.length - 1,
+                        index + Math.round(dragState.offset / QUEUE_ROW_HEIGHT),
+                      ),
+                    );
+                    moveQueueItem(index, to);
+                    setDragState(null);
+                  }}
+                  onPointerCancel={() => setDragState(null)}
+                  className={`relative flex touch-none items-center gap-2 px-2 py-1.5 select-none transition-transform duration-150 ease-out ${
+                    dragging
+                      ? "z-10 rounded-(--radius-sm) bg-surface-raised/90 shadow-(--shadow-composer)"
+                      : ""
+                  } ${editingQueueId === item.id ? "bg-warning/5" : ""}`}
+                  style={dragging ? { transform: `translateY(${dragState.offset}px)` } : undefined}
+                >
+                  <button
+                    type="button"
+                    aria-label={t("composer.queue.reorderAria")}
+                    title={t("composer.queue.dragTitle")}
+                    className="flex h-5 w-4 cursor-grab touch-none items-center justify-center text-text-tertiary active:cursor-grabbing"
+                  >
+                    <GripVertical size={13} />
+                  </button>
+                  <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
+                  <button
+                    type="button"
+                    aria-label={t("composer.queue.steerAria")}
+                    title={t("composer.queue.steerTitle")}
+                    onClick={() =>
+                      runsQueueSteer(threadId, item.id).catch((err) =>
+                        setError(localizeIpcError(err)),
+                      )
+                    }
+                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("composer.queue.editAria")}
+                    onClick={() => startQueueEdit(item)}
+                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <Pencil size={11} /> {t("composer.queue.edit")}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={t("composer.queue.removeAria")}
+                    onClick={() =>
+                      runsQueueRemove(threadId, item.id).catch((err) =>
+                        console.error("runs_queue_remove failed", err),
+                      )
+                    }
+                    className="flex h-6 w-6 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -1088,6 +1209,20 @@ export function Composer({ threadId }: { threadId?: string }) {
               ))}
             </div>
           )}
+          {editingQueueId && (
+            <div className="flex items-center gap-2 px-4 pt-2 text-xs text-warning">
+              <Pencil size={11} className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate">{t("composer.queue.editing")}</span>
+              <button
+                type="button"
+                aria-label={t("composer.queue.cancel")}
+                onClick={cancelQueueEdit}
+                className="flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+              >
+                <X size={11} />
+              </button>
+            </div>
+          )}
           <div className="relative">
             {inlineTokens.size > 0 && (
               <div
@@ -1144,17 +1279,28 @@ export function Composer({ threadId }: { threadId?: string }) {
             <ModePill threadId={threadId} />
             <div className="flex-1" />
             <ProviderModelPicker threadId={threadId} />
-            {runActive ? (
+            {editingQueueId ? (
+              <button
+                type="button"
+                onClick={handlePrimary}
+                aria-label={t("composer.queue.save")}
+                title={t("composer.queue.save")}
+                disabled={!value.trim() || busy}
+                className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
+              >
+                <Check size={15} />
+              </button>
+            ) : runActive ? (
               value.trim() || chips.length > 0 || fileChips.length > 0 ? (
                 <button
                   type="button"
                   onClick={handleSend}
-                  aria-label={t("composer.send")}
-                  title={t("composer.send")}
+                  aria-label={t("composer.queue")}
+                  title={t("composer.queue")}
                   disabled={awaitingDecision || busy}
                   className="flex h-8 w-8 items-center justify-center rounded-full bg-accent bg-gradient-to-b from-white/35 via-white/10 to-black/15 text-accent-fg transition hover:brightness-110 disabled:bg-none disabled:bg-active disabled:text-text-tertiary disabled:opacity-100"
                 >
-                  <ArrowUp size={14} />
+                  <ListPlus size={15} className="translate-x-[1px]" />
                 </button>
               ) : (
                 <button
