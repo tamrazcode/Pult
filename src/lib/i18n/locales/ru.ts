@@ -384,6 +384,11 @@ export const ru: Record<string, string> = {
   "settings.appearance.composerOpacity": "Прозрачность поля ввода",
   "settings.appearance.glassHint":
     "Меньшие значения делают поле ввода прозрачнее, сохраняя размытие фона.",
+  "settings.appearance.timeHeading": "Время",
+  "settings.appearance.timeFormat": "Формат времени",
+  "settings.appearance.timeFormat24": "24 часа (14:30)",
+  "settings.appearance.timeFormat12": "12 часов (2:30 PM)",
+  "settings.appearance.timeHint": "Применяется к времени сообщений.",
   "settings.chat.title": "Чат",
   "settings.chat.subtitle": "Поведение поля ввода и поток вывода сообщений.",
   "settings.chat.sendWith": "Отправка сообщения",

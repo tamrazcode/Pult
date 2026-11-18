@@ -32,7 +32,7 @@
   --code-bg: #111111;
   --mention-bg: color-mix(in oklab, var(--accent) 16%, transparent);
   --composer-blur: 22px;
-  --composer-tint: rgba(17, 17, 17, 0.62);
+  --composer-tint: rgba(17, 17, 17, 0.4);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 18px;

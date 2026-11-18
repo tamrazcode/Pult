@@ -373,6 +373,11 @@ export const de: Record<string, string> = {
   "settings.appearance.composerOpacity": "Deckkraft des Eingabefelds",
   "settings.appearance.glassHint":
     "Niedrigere Werte machen das Eingabefeld transparenter und behalten den Hintergrund-Blur bei.",
+  "settings.appearance.timeHeading": "Zeit",
+  "settings.appearance.timeFormat": "Zeitformat",
+  "settings.appearance.timeFormat24": "24 Stunden (14:30)",
+  "settings.appearance.timeFormat12": "12 Stunden (2:30 PM)",
+  "settings.appearance.timeHint": "Gilt für die Zeitstempel der Nachrichten.",
   "settings.chat.title": "Chat",
   "settings.chat.subtitle": "Verhalten des Eingabefelds und Streaming des Verlaufs.",
   "settings.chat.sendWith": "Nachricht senden mit",

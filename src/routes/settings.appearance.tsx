@@ -15,6 +15,8 @@ function AppearanceSettings() {
   const setAccentHue = useSettingsStore((s) => s.setAccentHue);
   const glassOpacity = useSettingsStore((s) => s.glassOpacity);
   const setGlassOpacity = useSettingsStore((s) => s.setGlassOpacity);
+  const timeFormat = useSettingsStore((s) => s.timeFormat);
+  const setTimeFormat = useSettingsStore((s) => s.setTimeFormat);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -144,6 +146,22 @@ function AppearanceSettings() {
         />
       </label>
       <p className="mt-2 text-xs text-text-tertiary">{t("settings.appearance.glassHint")}</p>
+
+      <h2 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+        {t("settings.appearance.timeHeading")}
+      </h2>
+      <label className="mt-2 block">
+        <span className="text-sm text-text-primary">{t("settings.appearance.timeFormat")}</span>
+        <select
+          value={timeFormat}
+          onChange={(event) => setTimeFormat(event.target.value === "12h" ? "12h" : "24h")}
+          className="mt-2 w-full rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1.5 text-sm text-text-primary"
+        >
+          <option value="24h">{t("settings.appearance.timeFormat24")}</option>
+          <option value="12h">{t("settings.appearance.timeFormat12")}</option>
+        </select>
+      </label>
+      <p className="mt-2 text-xs text-text-tertiary">{t("settings.appearance.timeHint")}</p>
     </div>
   );
 }

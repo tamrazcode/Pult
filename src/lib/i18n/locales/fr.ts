@@ -376,6 +376,11 @@ export const fr: Record<string, string> = {
   "settings.appearance.composerOpacity": "Opacité de la zone de saisie",
   "settings.appearance.glassHint":
     "Des valeurs plus basses rendent la zone de saisie plus transparente tout en conservant le flou d’arrière-plan.",
+  "settings.appearance.timeHeading": "Heure",
+  "settings.appearance.timeFormat": "Format de l’heure",
+  "settings.appearance.timeFormat24": "24 heures (14:30)",
+  "settings.appearance.timeFormat12": "12 heures (2:30 PM)",
+  "settings.appearance.timeHint": "S’applique aux horodatages des messages.",
   "settings.chat.title": "Chat",
   "settings.chat.subtitle": "Comportement de la zone de saisie et diffusion de la transcription.",
   "settings.chat.sendWith": "Envoyer le message avec",

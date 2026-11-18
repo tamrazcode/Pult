@@ -17,6 +17,7 @@ import { useUiStore } from "./ui";
 
 export type PermissionMode = "supervised" | "auto_edit" | "auto" | "full_access";
 export type ThemeName = "dark" | "light" | "graphite";
+export type TimeFormat = "24h" | "12h";
 
 /** Human-readable labels for permission modes (raw enum ids are not user-facing copy). */
 export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
@@ -73,6 +74,8 @@ interface SettingsState {
   followStreaming: boolean;
   /** Composer glass tint opacity (0–100). */
   glassOpacity: number;
+  /** Clock format for message timestamps (24h by default). */
+  timeFormat: TimeFormat;
   /** Default diff presentation (persisted; also seeds the git store). */
   diffViewMode: "unified" | "split";
   /** Editor used by Files/Project card "Open in editor". */
@@ -96,6 +99,7 @@ interface SettingsState {
   setNotificationSound: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
   setGlassOpacity: (value: number) => void;
+  setTimeFormat: (value: TimeFormat) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
   setPreferredEditor: (editor: EditorId) => void;
   setKeybinding: (commandId: string, binding: string) => void;
@@ -184,6 +188,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   notificationSound: true,
   followStreaming: true,
   glassOpacity: 100,
+  timeFormat: "24h",
   diffViewMode: "unified",
   preferredEditor: "zed",
   keybindings: {},
@@ -245,6 +250,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const glassOpacity = Math.min(100, Math.max(0, Math.round(value)));
     set({ glassOpacity });
     if (isTauri()) void settingsSet("glass_opacity", glassOpacity).catch(() => {});
+  },
+  setTimeFormat: (timeFormat) => {
+    set({ timeFormat });
+    if (isTauri()) void settingsSet("time_format", timeFormat).catch(() => {});
   },
   setDiffViewMode: (diffViewMode) => {
     set({ diffViewMode });
@@ -349,6 +358,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       diffViewMode,
       preferredEditor,
       glassOpacity,
+      timeFormat,
       language,
       profile,
       modelPrefsList,
@@ -369,6 +379,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("diff_view_mode").catch(() => null),
       settingsGet("preferred_editor").catch(() => null),
       settingsGet("glass_opacity").catch(() => null),
+      settingsGet("time_format").catch(() => null),
       settingsGet("language").catch(() => null),
       settingsGet("profile").catch(() => null),
       providersModelPrefsList().catch(() => [] as ProviderModelPrefs[]),
@@ -402,6 +413,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       preferredEditor: isEditorId(preferredEditor) ? preferredEditor : "zed",
       glassOpacity:
         typeof glassOpacity === "number" ? Math.min(100, Math.max(0, glassOpacity)) : 100,
+      timeFormat: timeFormat === "12h" ? "12h" : "24h",
       keybindings:
         keybindings && typeof keybindings === "object"
           ? (keybindings as Record<string, string>)

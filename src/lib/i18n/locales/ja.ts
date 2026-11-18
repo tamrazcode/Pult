@@ -374,6 +374,11 @@ export const ja: Record<string, string> = {
   "settings.appearance.composerOpacity": "入力欄の不透明度",
   "settings.appearance.glassHint":
     "値を小さくすると、背景のぼかしを保ったまま入力欄がより透明になります。",
+  "settings.appearance.timeHeading": "時刻",
+  "settings.appearance.timeFormat": "時刻の形式",
+  "settings.appearance.timeFormat24": "24 時間 (14:30)",
+  "settings.appearance.timeFormat12": "12 時間 (2:30 PM)",
+  "settings.appearance.timeHint": "メッセージのタイムスタンプに適用されます。",
   "settings.chat.title": "チャット",
   "settings.chat.subtitle": "入力欄の動作とトランスクリプトのストリーミング表示。",
   "settings.chat.sendWith": "メッセージ送信キー",

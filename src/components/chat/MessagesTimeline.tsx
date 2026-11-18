@@ -773,40 +773,13 @@ function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; stre
   useEffect(() => {
     if (!runActive) setOpen(false);
   }, [runActive]);
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    // Only the live thought label needs a ticking clock.
-    if (!spinning || activeItem?.type !== "thought") return;
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-    // Depend on the item type, not the object: a thought delta replaces the
-    // item object and must not restart the clock every chunk.
-  }, [spinning, activeItem?.type]);
-
-  // Consecutive thoughts/tools share one continuous clock for the group.
-  const groupStartedAt = entries.reduce<number | undefined>((min, entry) => {
-    const ts = entry.item.type === "thought" ? entry.item.startedAt : entry.item.ts;
-    return ts === undefined ? min : min === undefined ? ts : Math.min(min, ts);
-  }, undefined);
-
   let label: string;
   if (activeItem?.type === "thought") {
-    const preview = thoughtPreview(activeItem.text);
-    const thoughtStart = groupStartedAt ?? activeItem.startedAt;
-    const duration = formatDuration(thoughtStart, now);
-    label = preview
-      ? t("chat.thoughtPreviewWithDuration", { preview, duration })
-      : now - thoughtStart < 1000
-        ? t("chat.thinking")
-        : t("chat.thinkingWithDuration", { duration });
+    label = thoughtPreview(activeItem.text) ?? t("chat.thinking");
   } else if (activeItem?.type === "tool") {
     label = deriveToolTitle(activeItem, "present");
   } else if (items.length === 1 && last.type === "thought") {
-    const preview = thoughtPreview(last.text);
-    const duration = formatDuration(last.startedAt, last.endedAt);
-    label = preview
-      ? t("chat.thoughtPreviewWithDuration", { preview, duration })
-      : t("chat.thoughtFor", { duration });
+    label = thoughtPreview(last.text) ?? summarizeActionGroup(items);
   } else if (items.length === 1 && last.type === "trace") {
     label = t("chat.trace.autoAllowed", { optionId: last.optionId });
   } else {
@@ -1087,7 +1060,8 @@ function EmptyState() {
 
 function formatTime(ts: number | undefined): string | null {
   if (!ts) return null;
-  return formatClock(ts);
+  const hour12 = useSettingsStore.getState().timeFormat === "12h";
+  return formatClock(ts, undefined, hour12);
 }
 
 /** `46s`, `2m 5s`, `1h 3m` — how long after the run started this message landed. */
@@ -1114,6 +1088,8 @@ function MessageActions({
   const [copied, setCopied] = useState(false);
   const t = useT();
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
+  const timeFormat = useSettingsStore((s) => s.timeFormat);
+  void timeFormat;
   const time = showTimestamps ? formatTime(ts) : null;
   const elapsed = time && startedAt !== undefined && ts ? formatElapsed(startedAt, ts) : null;
   const copy = () => {

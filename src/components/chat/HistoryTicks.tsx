@@ -67,7 +67,7 @@ export function HistoryTicks({
     return () => window.removeEventListener("resize", update);
   }, []);
   if (ticks.length === 0) return null;
-  const maxVisible = Math.max(6, Math.floor((available - 16) / 18));
+  const maxVisible = Math.max(6, Math.floor((available - 16) / 13));
   const visible = compressHistoryTicks(ticks, maxVisible, activeKey);
   const preview = visible.find((tick) => tick.key === previewKey);
   return (
@@ -80,7 +80,7 @@ export function HistoryTicks({
           {preview.label}
         </span>
       )}
-      <div className="pointer-events-auto flex max-h-[70vh] flex-col items-end gap-0.5 py-2">
+      <div className="pointer-events-auto flex max-h-[70vh] flex-col items-end gap-px py-1">
         {visible.map((tick) => (
           <button
             key={tick.key}
@@ -92,13 +92,13 @@ export function HistoryTicks({
             onMouseLeave={() => setPreviewKey((key) => (key === tick.key ? null : key))}
             onFocus={() => setPreviewKey(tick.key)}
             onBlur={() => setPreviewKey((key) => (key === tick.key ? null : key))}
-            className="group flex h-4 w-7 shrink-0 items-center justify-end"
+            className="group flex h-3 w-5 shrink-0 items-center justify-end"
           >
             <span
-              className={`h-0.5 rounded-full transition-all ${
+              className={`h-px rounded-full transition-all ${
                 activeKey === tick.key
-                  ? "w-4 bg-accent"
-                  : "w-2.5 bg-text-tertiary/60 group-hover:w-4 group-hover:bg-accent"
+                  ? "w-3 bg-accent"
+                  : "w-1.5 bg-text-tertiary/60 group-hover:w-3 group-hover:bg-accent"
               }`}
             />
           </button>

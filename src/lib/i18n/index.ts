@@ -89,12 +89,22 @@ export function formatDate(value: number | Date, locale?: LocaleId): string {
   }
 }
 
-export function formatTime(value: number | Date, locale?: LocaleId): string {
+export function formatTime(
+  value: number | Date,
+  locale?: LocaleId,
+  hour12?: boolean,
+): string {
   const active = locale ?? useLocaleStore.getState().locale;
   try {
-    return new Intl.DateTimeFormat(active, { timeStyle: "short" }).format(value);
+    return new Intl.DateTimeFormat(active, {
+      timeStyle: "short",
+      ...(hour12 === undefined ? {} : { hour12 }),
+    }).format(value);
   } catch {
-    return new Date(value).toLocaleTimeString();
+    return new Date(value).toLocaleTimeString(
+      undefined,
+      hour12 === undefined ? undefined : { hour12 },
+    );
   }
 }
 

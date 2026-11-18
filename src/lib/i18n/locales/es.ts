@@ -373,6 +373,11 @@ export const es: Record<string, string> = {
   "settings.appearance.composerOpacity": "Opacidad del editor",
   "settings.appearance.glassHint":
     "Valores menores hacen el editor más transparente manteniendo el desenfoque de fondo.",
+  "settings.appearance.timeHeading": "Hora",
+  "settings.appearance.timeFormat": "Formato de hora",
+  "settings.appearance.timeFormat24": "24 horas (14:30)",
+  "settings.appearance.timeFormat12": "12 horas (2:30 PM)",
+  "settings.appearance.timeHint": "Se aplica a las marcas de tiempo de los mensajes.",
   "settings.chat.title": "Chat",
   "settings.chat.subtitle": "Comportamiento del editor y transmisión de la transcripción.",
   "settings.chat.sendWith": "Enviar mensaje con",

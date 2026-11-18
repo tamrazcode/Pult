@@ -53,6 +53,11 @@ export const settings = {
   "settings.appearance.composerOpacity": "Composer opacity",
   "settings.appearance.glassHint":
     "Lower values make the composer more transparent while keeping the backdrop blur.",
+  "settings.appearance.timeHeading": "Time",
+  "settings.appearance.timeFormat": "Time format",
+  "settings.appearance.timeFormat24": "24-hour (14:30)",
+  "settings.appearance.timeFormat12": "12-hour (2:30 PM)",
+  "settings.appearance.timeHint": "Applies to message timestamps.",
   "settings.chat.title": "Chat",
   "settings.chat.subtitle": "Composer behaviour and how the transcript streams.",
   "settings.chat.sendWith": "Send message with",

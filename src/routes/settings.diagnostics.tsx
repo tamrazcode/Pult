@@ -13,7 +13,8 @@ import {
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { useUiStore } from "../stores/ui";
-import { localizeIpcError, useT } from "../lib/i18n";
+import { useSettingsStore } from "../stores/settings";
+import { formatTime, localizeIpcError, useT } from "../lib/i18n";
 import type { InstanceInfo, McpServer, McpServerStats, ProcessNode } from "../lib/types";
 
 export const Route = createFileRoute("/settings/diagnostics")({ component: DiagnosticsSettings });
@@ -21,6 +22,7 @@ export const Route = createFileRoute("/settings/diagnostics")({ component: Diagn
 /** One instance card: caps, process log, last raw frames (§8 M6). */
 function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
   const t = useT();
+  const timeFormat = useSettingsStore((s) => s.timeFormat);
   const [frames, setFrames] = useState<string[] | null>(null);
   const [framesError, setFramesError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -96,7 +98,7 @@ function InstanceDiagnostics({ info }: { info: InstanceInfo }) {
           <div className="mt-1 max-h-24 space-y-0.5 overflow-y-auto font-mono text-[13px] text-text-tertiary">
             {processEvents.map((event, i) => (
               <p key={i}>
-                {new Date(event.at).toLocaleTimeString()} {event.kind}
+                {formatTime(event.at, undefined, timeFormat === "12h")} {event.kind}
                 {event.detail ? ` — ${event.detail}` : ""}
               </p>
             ))}
