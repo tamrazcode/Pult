@@ -51,7 +51,6 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
     args: [] as string[],
   };
   const statusKey = STATUS_KEYS[task.status] ?? "subagents.status.running";
-  const preview = task.summary?.trim() || task.promptSummary.trim();
   void now;
 
   const stop = () => {
@@ -85,7 +84,7 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
   return (
     <div
       data-subagent-card
-      className="rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-2.5"
+      className="rounded-(--radius-md) border border-border-subtle bg-surface px-3 py-1.5"
     >
       <div className="flex items-center gap-2">
         <ProviderLogo instance={identity} />
@@ -107,7 +106,7 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
         </span>
       </div>
 
-      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-text-tertiary">
+      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-text-tertiary">
         <span className="font-mono">{task.targetModel ?? task.targetInstanceId}</span>
         {task.role && task.role !== "general" && <span>· {task.role}</span>}
         {task.isolation === "worktree" && <span>· worktree</span>}
@@ -119,14 +118,11 @@ export function SubagentCard({ task }: { task: DelegatedTask }) {
         ) : null}
       </div>
 
-      {preview && (
-        <p className="mt-1.5 line-clamp-2 text-xs leading-snug text-text-secondary">{preview}</p>
-      )}
       {task.error && (
         <p className="mt-1 line-clamp-2 text-xs leading-snug text-danger">{task.error}</p>
       )}
 
-      <div className="mt-2 flex items-center gap-1">
+      <div className="mt-1 flex items-center gap-1">
         <button
           type="button"
           onClick={open}

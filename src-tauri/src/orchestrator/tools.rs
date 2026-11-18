@@ -53,7 +53,6 @@ pub fn tool_specs() -> Value {
                         "additionalProperties": false
                     },
                     "isolation": { "type": "string", "enum": ["shared", "worktree"] },
-                    "permissionMode": { "type": "string", "enum": ["supervised", "auto_edit", "auto", "full_access"] },
                     "timeoutSec": { "type": "integer", "minimum": 30, "maximum": 3600 }
                 },
                 "additionalProperties": false

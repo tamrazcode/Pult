@@ -147,12 +147,6 @@ function ThreadRow({
             >
               <SquarePen size={12} className="text-warning" />
             </span>
-          ) : unread ? (
-            <span
-              data-unread="true"
-              aria-label={t("sidebar.unreadThread")}
-              className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
-            />
           ) : null}
           <FadeText text={thread.title || t("sidebar.untitled")} className="min-w-0" />
           {working ? (
@@ -165,6 +159,7 @@ function ThreadRow({
             </span>
           ) : unread ? (
             <span
+              data-unread="true"
               aria-label={t("sidebar.unreadThread")}
               className="ml-auto h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
             />

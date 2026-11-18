@@ -295,11 +295,11 @@ impl OrchestratorEngine {
             .get("model")
             .and_then(Value::as_str)
             .map(str::to_string);
-        let permission_mode = arguments
-            .get("permissionMode")
-            .and_then(Value::as_str)
-            .map(str::to_string)
-            .unwrap_or_else(|| mode_name(runtime.permission_mode_for(&scope.thread_id)));
+        // A child always inherits the parent's current mode. There is no
+        // per-delegation override: the composer's mode is the single source
+        // of truth, so a Full-access parent never gets approval prompts in
+        // its subagents.
+        let permission_mode = mode_name(runtime.permission_mode_for(&scope.thread_id));
 
         let child_id = self.next_id("th-sub");
         let child = ThreadRecord {
@@ -364,8 +364,7 @@ impl OrchestratorEngine {
         }
 
         let ceiling = runtime.permission_mode_for(&scope.thread_id);
-        let requested_mode = parse_mode(&permission_mode).unwrap_or(ceiling);
-        runtime.set_thread_permission_mode(&child_id, ceiling.min(requested_mode));
+        runtime.set_thread_permission_mode(&child_id, ceiling);
         if let Some(model) = requested_model {
             let mut patch = crate::runtime::DesiredConfigMap::new();
             patch.insert(
@@ -1245,6 +1244,7 @@ fn mode_name(mode: PermissionMode) -> String {
     .to_string()
 }
 
+#[cfg(test)]
 fn parse_mode(value: &str) -> Option<PermissionMode> {
     match value {
         "supervised" => Some(PermissionMode::Supervised),

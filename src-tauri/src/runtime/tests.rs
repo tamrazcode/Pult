@@ -254,6 +254,54 @@ async fn orchestrator_delegates_and_waits_for_a_child_task() {
 }
 
 #[tokio::test]
+async fn delegation_always_inherits_the_parent_permission_mode() {
+    use crate::runtime::permissions::PermissionMode;
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-root-mode"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-root-mode").unwrap();
+    runtime.set_thread_permission_mode("th-root-mode", PermissionMode::FullAccess);
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let parent_run = runtime.dispatch(&root, "coordinate", &[], "mock").unwrap();
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-mode".to_string(),
+        thread_id: "th-root-mode".to_string(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({
+                "title": "Mode inheritance",
+                "task": "Reply with ok.",
+                "role": "test",
+                // A lower request must not lower the child below the parent.
+                "permissionMode": "supervised"
+            }),
+        )
+        .await
+        .expect("delegate_task succeeds");
+    let child_thread_id = started["task"]["childThreadId"].as_str().unwrap();
+    assert_eq!(
+        runtime.permission_mode_for(child_thread_id),
+        PermissionMode::FullAccess,
+        "a child always inherits the parent mode"
+    );
+    assert_eq!(started["task"]["permissionMode"], "full_access");
+    if let Some(child_run_id) = started["task"]["childRunId"].as_str() {
+        runtime.cancel_with_force(child_run_id, true).ok();
+    }
+}
+
+#[tokio::test]
 async fn orchestrator_cancel_stops_a_blocked_child_run() {
     let _env = env_lock();
     let (runtime, _sink) = mock_runtime();

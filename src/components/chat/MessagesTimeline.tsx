@@ -1,4 +1,13 @@
-import { memo, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import {
   ArrowRightLeft,
@@ -57,7 +66,10 @@ import type {
 import type { PlanEntry } from "../../lib/types";
 import { runsRespondPermission } from "../../lib/ipc";
 import {
+  deriveToolTitle,
+  normalizeToolKind,
   numberedExcerpt,
+  thoughtPreview,
   toolCommand,
   toolLineRange,
   toolOutputText,
@@ -83,17 +95,6 @@ const TOOL_ICONS: Record<string, LucideIcon> = {
 
 function toolIcon(kind: string): LucideIcon {
   return TOOL_ICONS[kind] ?? Wrench;
-}
-
-const TOOL_DOT_CLASSES: Record<string, string> = {
-  pending: "bg-text-tertiary",
-  in_progress: "bg-accent",
-  completed: "bg-success",
-  failed: "bg-danger",
-};
-
-function toolDot(status: string): string {
-  return TOOL_DOT_CLASSES[status] ?? "bg-text-tertiary";
 }
 
 const STOP_REASON_KEYS: Record<string, string> = {
@@ -144,6 +145,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           parentRunId,
           tasks: sorted,
           active,
+          startedAt: sorted[0].startedAt,
           // A running child lives at the bottom of the current run, so later
           // answers cannot hide it. Finished children settle where they were.
           anchorTs: active
@@ -170,7 +172,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
   const hasView = view !== undefined;
-  const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
   // tail window only, expandable in chunks ("Earlier messages").
@@ -180,6 +181,21 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const followStreaming = useSettingsStore((s) => s.followStreaming);
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
+  // One pending pin frame at a time: repeated deltas must not queue up and
+  // fight the reader's wheel.
+  const pinFrameRef = useRef(0);
+  const pinToBottom = useCallback(() => {
+    if (pinFrameRef.current) return;
+    pinFrameRef.current = requestAnimationFrame(() => {
+      pinFrameRef.current = 0;
+      // The reader may have scrolled up while the frame was pending.
+      if (!isAtBottomRef.current) return;
+      const container = scrollRef.current;
+      // scrollHeight includes the pb-6 gap, so the composer gap stays constant.
+      if (container) container.scrollTop = container.scrollHeight;
+    });
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(pinFrameRef.current), []);
   // Long user bubbles cap at half the visible transcript height.
   const [viewportHeight, setViewportHeight] = useState(0);
   useLayoutEffect(() => {
@@ -203,15 +219,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     isAtBottomRef.current = true;
   }, [threadId]);
 
-  // Follow the stream: scroll only while pinned to the bottom, in a frame.
+  // Follow the stream: pin only while the reader is at the bottom.
   useEffect(() => {
     if (!followStreaming || !isAtBottomRef.current) return;
-    const frame = requestAnimationFrame(() => {
-      // The reader may have scrolled up while the frame was pending.
-      if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [view, followStreaming]);
+    pinToBottom();
+  }, [view, followStreaming, pinToBottom]);
 
   // Markdown's trailing throttle can grow the DOM between events; keep the
   // view pinned when the reader has not scrolled away.
@@ -220,13 +232,11 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (!content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (!followStreaming || !isAtBottomRef.current) return;
-      requestAnimationFrame(() => {
-        if (isAtBottomRef.current) bottomRef.current?.scrollIntoView({ block: "end" });
-      });
+      pinToBottom();
     });
     observer.observe(content);
     return () => observer.disconnect();
-  }, [threadId, hasView, entries.length, followStreaming]);
+  }, [threadId, hasView, entries.length, followStreaming, pinToBottom]);
 
   // The composer changes the transcript height. Keep a pinned reader pinned;
   // a reader who scrolled up only gets the "Scroll to end" pill refreshed.
@@ -235,16 +245,15 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (!container || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
       if (isAtBottomRef.current) {
-        container.scrollTop = container.scrollHeight - container.clientHeight;
+        pinToBottom();
       } else {
-        const atBottom =
-          container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+        const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 48;
         setShowScrollToEnd(!atBottom);
       }
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [hasView, threadId]);
+  }, [hasView, threadId, pinToBottom]);
 
   if (!threadId) return <EmptyState />;
 
@@ -255,7 +264,12 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-6">
             {pendingUser && (
-              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} clampMaxPx={clampMaxPx} />
+              <UserRow
+                text={pendingUser.text}
+                images={pendingUser.images}
+                ts={pendingUser.ts}
+                clampMaxPx={clampMaxPx}
+              />
             )}
             {pendingUser && <ThinkingRow />}
             {subagentGroups.map((group) =>
@@ -328,16 +342,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     setActiveHistoryKey((previous) => (previous === current ? previous : current));
   };
 
-  // Only the active run's actions replace the Working row; a previous run's
-  // action group must not hide the indicator for a fresh run.
-  const hasActionItems = entries.some(
-    (entry) =>
-      entry.runId === runId &&
-      isActionItem(entry.item) &&
-      !isNativeSubagentItem(entry.item) &&
-      !isZeroSecondThought(entry.item),
-  );
-
   return (
     <div className="relative flex min-h-0 flex-1">
       <div
@@ -365,7 +369,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               runIndexById={runIndexById}
               runStartedAtById={runStartedAtById}
               clampMaxPx={clampMaxPx}
-              startedAt={activeRun?.startedAt}
               activeRunId={activeRun?.id}
               streaming={view.streaming}
             />
@@ -373,13 +376,18 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
           {pendingUser && (
             <div>
-              <UserRow text={pendingUser.text} images={pendingUser.images} ts={pendingUser.ts} clampMaxPx={clampMaxPx} />
+              <UserRow
+                text={pendingUser.text}
+                images={pendingUser.images}
+                ts={pendingUser.ts}
+                clampMaxPx={clampMaxPx}
+              />
             </div>
           )}
 
           {pendingUser && !view.streaming && <ThinkingRow />}
 
-          {view.streaming && activeRun?.startedAt !== undefined && !hasActionItems && (
+          {view.streaming && activeRun?.startedAt !== undefined && (
             <WorkingTimer startedAt={activeRun.startedAt} />
           )}
 
@@ -409,8 +417,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           {!view.streaming && view.stopReason && view.stopReason !== "end_turn" && (
             <FinishDivider stopReason={view.stopReason} />
           )}
-
-          <div ref={bottomRef} />
         </div>
       </div>
       {showScrollToEnd && (
@@ -446,12 +452,7 @@ const ChatItemRow = memo(
     switch (item.type) {
       case "user":
         return (
-          <UserRow
-            text={item.text}
-            images={item.images}
-            ts={item.ts}
-            clampMaxPx={clampMaxPx}
-          />
+          <UserRow text={item.text} images={item.images} ts={item.ts} clampMaxPx={clampMaxPx} />
         );
       case "assistant":
         return (
@@ -525,11 +526,10 @@ function summarizeActionGroup(items: ChatItem[]): string {
       continue;
     }
     if (item.type !== "tool") continue;
-    switch (item.kind) {
+    switch (normalizeToolKind(item)) {
       case "edit":
-      case "write":
-      case "move":
       case "delete":
+      case "move":
         files += 1;
         break;
       case "execute":
@@ -546,8 +546,8 @@ function summarizeActionGroup(items: ChatItem[]): string {
     }
   }
   const parts: string[] = [];
-  if (files > 0) parts.push(plural("chat.tool.changedFiles", files));
   if (commands > 0) parts.push(plural("chat.tool.ranCommands", commands));
+  if (files > 0) parts.push(plural("chat.tool.changedFiles", files));
   if (reads > 0) parts.push(plural("chat.tool.readFiles", reads));
   if (searches > 0) parts.push(plural("chat.tool.searchedTimes", searches));
   if (other > 0) parts.push(plural("chat.tool.otherActions", other));
@@ -556,13 +556,18 @@ function summarizeActionGroup(items: ChatItem[]): string {
       ? plural("chat.tool.thoughtTimes", thoughts)
       : translate("chat.tool.actions");
   }
-  if (parts.length === 1) return parts[0];
-  return `${parts.slice(0, -1).join(", ")} ${translate("chat.list.and")} ${parts[parts.length - 1]}`;
+  const summary =
+    parts.length === 1
+      ? parts[0]
+      : `${parts.slice(0, -1).join(", ")} ${translate("chat.list.and")} ${parts[parts.length - 1]}`;
+  return summary.charAt(0).toUpperCase() + summary.slice(1);
 }
 
 type SubagentAnchor = {
   parentRunId: string;
   tasks: DelegatedTask[];
+  active: boolean;
+  startedAt: number;
   anchorTs: number;
 };
 
@@ -582,7 +587,6 @@ function TimelineRows({
   runIndexById,
   runStartedAtById,
   clampMaxPx,
-  startedAt,
   activeRunId,
   streaming,
 }: {
@@ -594,7 +598,6 @@ function TimelineRows({
   runIndexById: Map<string, number>;
   runStartedAtById: Map<string, number>;
   clampMaxPx: number;
-  startedAt?: number;
   activeRunId?: string;
   streaming?: boolean;
 }) {
@@ -613,9 +616,26 @@ function TimelineRows({
   const firstVisibleIdx = segments.length
     ? (runIndexById.get(segments[0].runId) ?? -Infinity)
     : Infinity;
+  const pushGroup = (group: SubagentAnchor) => {
+    rows.push(
+      group.tasks.length > 1 ? (
+        <SubagentGroupCard key={`subagent-${group.parentRunId}`} tasks={group.tasks} />
+      ) : (
+        <SubagentCard key={group.tasks[0].taskId} task={group.tasks[0]} />
+      ),
+    );
+  };
+
   const groupsForRun = new Map<string, SubagentAnchor[]>();
   const floating: Array<{ beforeIndex: number; group: SubagentAnchor }> = [];
+  // A group with a running task always sits at the bottom of the transcript,
+  // right above the live action row — its parent run may be far above.
+  const activeGroups: SubagentAnchor[] = [];
   for (const group of subagentGroups) {
+    if (group.active) {
+      activeGroups.push(group);
+      continue;
+    }
     if (visibleRuns.has(group.parentRunId)) {
       const list = groupsForRun.get(group.parentRunId) ?? [];
       list.push(group);
@@ -635,15 +655,11 @@ function TimelineRows({
     );
     floating.push({ beforeIndex: beforeIndex === -1 ? segments.length : beforeIndex, group });
   }
-
-  const pushGroup = (group: SubagentAnchor) => {
-    rows.push(
-      group.tasks.length > 1 ? (
-        <SubagentGroupCard key={`subagent-${group.parentRunId}`} tasks={group.tasks} />
-      ) : (
-        <SubagentCard key={group.tasks[0].taskId} task={group.tasks[0]} />
-      ),
-    );
+  activeGroups.sort((a, b) => a.startedAt - b.startedAt);
+  let activePushed = false;
+  const pushActiveGroups = () => {
+    for (const group of activeGroups) pushGroup(group);
+    activePushed = true;
   };
 
   segments.forEach((segment, segmentIndex) => {
@@ -706,13 +722,16 @@ function TimelineRows({
       anchorIndex += 1;
     }
     if (actions.length > 0) {
+      // Running subagents sit directly above the live action row.
+      if (!activePushed && streaming === true && segment.runId === activeRunId) {
+        pushActiveGroups();
+      }
       // One smart row per run, after all of that run's messages: tools,
       // thoughts and traces stay together and never split the reply.
       rows.push(
         <div key={`action-group-${segment.runId}`} data-history-key={actions[0].key}>
           <ActionGroupRow
             entries={actions}
-            startedAt={startedAt}
             streaming={streaming === true && segment.runId === activeRunId}
           />
         </div>,
@@ -723,6 +742,7 @@ function TimelineRows({
   for (const item of floating) {
     if (item.beforeIndex >= segments.length) pushGroup(item.group);
   }
+  if (!activePushed) pushActiveGroups();
   return <>{rows}</>;
 }
 
@@ -732,27 +752,7 @@ const MAX_DETAIL_CHARS = 12_000;
 const clipDetail = (text: string): string =>
   text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS)}\n…` : text;
 
-const ACTION_LABEL_KEYS: Record<string, string> = {
-  read: "chat.action.reading",
-  edit: "chat.action.editing",
-  write: "chat.action.editing",
-  move: "chat.action.editing",
-  delete: "chat.action.editing",
-  execute: "chat.action.running",
-  search: "chat.action.searching",
-  fetch: "chat.action.fetching",
-  think: "chat.thinking",
-};
-
-function ActionGroupRow({
-  entries,
-  startedAt,
-  streaming,
-}: {
-  entries: TimelineEntry[];
-  startedAt?: number;
-  streaming?: boolean;
-}) {
+function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; streaming?: boolean }) {
   const t = useT();
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
@@ -764,23 +764,24 @@ function ActionGroupRow({
         (item.type === "thought" && item.streaming),
     );
   const active = activeItem !== undefined;
-  const spinning = active || (streaming === true && startedAt !== undefined);
-  // Collapsed by default; a manual open stays until the run finishes, and a
-  // finished run folds away again.
+  // The run-level spinner and clock live in WorkingTimer; this row spins only
+  // while one of its own items is live.
+  const spinning = active;
+  // A manual open survives individual completions and folds only with the run.
+  const runActive = Boolean(streaming) || active;
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (!spinning) setOpen(false);
-  }, [spinning]);
+    if (!runActive) setOpen(false);
+  }, [runActive]);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (!spinning) return;
-    if (activeItem?.type === "thought" || startedAt !== undefined) {
-      const timer = window.setInterval(() => setNow(Date.now()), 1000);
-      return () => window.clearInterval(timer);
-    }
+    // Only the live thought label needs a ticking clock.
+    if (!spinning || activeItem?.type !== "thought") return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
     // Depend on the item type, not the object: a thought delta replaces the
     // item object and must not restart the clock every chunk.
-  }, [spinning, activeItem?.type, startedAt]);
+  }, [spinning, activeItem?.type]);
 
   // Consecutive thoughts/tools share one continuous clock for the group.
   const groupStartedAt = entries.reduce<number | undefined>((min, entry) => {
@@ -790,36 +791,34 @@ function ActionGroupRow({
 
   let label: string;
   if (activeItem?.type === "thought") {
+    const preview = thoughtPreview(activeItem.text);
     const thoughtStart = groupStartedAt ?? activeItem.startedAt;
-    label =
-      now - thoughtStart < 1000
+    const duration = formatDuration(thoughtStart, now);
+    label = preview
+      ? t("chat.thoughtPreviewWithDuration", { preview, duration })
+      : now - thoughtStart < 1000
         ? t("chat.thinking")
-        : t("chat.thinkingWithDuration", {
-            duration: formatDuration(thoughtStart, now),
-          });
+        : t("chat.thinkingWithDuration", { duration });
   } else if (activeItem?.type === "tool") {
-    const action = t(ACTION_LABEL_KEYS[activeItem.kind] ?? "chat.tool.working");
-    label =
-      startedAt !== undefined
-        ? t("chat.action.withDuration", {
-            action,
-            duration: formatDuration(startedAt, now),
-          })
-        : action;
-  } else if (streaming === true && startedAt !== undefined) {
-    label = t("chat.workingFor", { duration: formatDuration(startedAt, now) });
+    label = deriveToolTitle(activeItem, "present");
   } else if (items.length === 1 && last.type === "thought") {
-    label = t("chat.thoughtFor", { duration: formatDuration(last.startedAt, last.endedAt) });
+    const preview = thoughtPreview(last.text);
+    const duration = formatDuration(last.startedAt, last.endedAt);
+    label = preview
+      ? t("chat.thoughtPreviewWithDuration", { preview, duration })
+      : t("chat.thoughtFor", { duration });
   } else if (items.length === 1 && last.type === "trace") {
     label = t("chat.trace.autoAllowed", { optionId: last.optionId });
-  } else if (items.length === 1 && last.type === "tool" && last.kind === "other") {
-    label = last.title;
   } else {
     label = summarizeActionGroup(items);
   }
 
   const SingleIcon =
-    last.type === "tool" ? toolIcon(last.kind) : last.type === "thought" ? Brain : ShieldCheck;
+    last.type === "tool"
+      ? toolIcon(normalizeToolKind(last))
+      : last.type === "thought"
+        ? Brain
+        : ShieldCheck;
   const Icon = items.length > 1 ? Eye : SingleIcon;
 
   return (
@@ -864,9 +863,11 @@ function ThoughtDetail({ item }: { item: ThoughtChatItem }) {
   const t = useT();
   const [expanded, setExpanded] = useState(false);
   const hasText = item.text.trim().length > 0;
-  const label = t("chat.thoughtFor", {
-    duration: formatDuration(item.startedAt, item.endedAt),
-  });
+  const preview = thoughtPreview(item.text);
+  const duration = formatDuration(item.startedAt, item.endedAt);
+  const label = preview
+    ? t("chat.thoughtPreviewWithDuration", { preview, duration })
+    : t("chat.thoughtFor", { duration });
   return (
     <div className="py-0.5">
       {hasText ? (
@@ -903,24 +904,20 @@ const DIFF_KINDS = new Set(["edit", "write", "move", "delete"]);
 const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }) {
   const t = useT();
   const [raw, setRaw] = useState(false);
-  const Icon = toolIcon(item.kind);
+  const kind = normalizeToolKind(item);
+  const Icon = toolIcon(kind);
   const path = toolPath(item);
   const range = toolLineRange(item);
   const output = clipDetail(toolOutputText(item));
   const image = findImageCandidate(item.rawOutput ?? item.content ?? item.rawInput);
-  const excerpt =
-    item.kind === "read" && output ? numberedExcerpt(output, range?.start ?? 1) : null;
-  const canDiff = DIFF_KINDS.has(item.kind) && path !== null;
-  const title =
-    path === null
-      ? item.title
-      : item.kind === "read"
-        ? t("chat.action.readFile", { path })
-        : canDiff
-          ? t("chat.action.editedFile", { path })
-          : item.title;
-  const command = item.kind === "execute" ? toolCommand(item) : null;
-  const query = item.kind === "search" ? toolQuery(item) : null;
+  const excerpt = kind === "read" && output ? numberedExcerpt(output, range?.start ?? 1) : null;
+  const canDiff = DIFF_KINDS.has(kind) && path !== null;
+  const title = deriveToolTitle(
+    item,
+    item.status === "in_progress" || item.status === "pending" ? "present" : "past",
+  );
+  const command = kind === "execute" ? toolCommand(item) : null;
+  const query = kind === "search" ? toolQuery(item) : null;
   const hasRaw =
     item.rawInput !== undefined || item.rawOutput !== undefined || item.content !== undefined;
   const hasDetails = Boolean(
@@ -968,7 +965,9 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
             )}
           </div>
         )}
-        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${toolDot(item.status)}`} />
+        {item.status === "failed" && (
+          <span data-status-dot="failed" className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" />
+        )}
         {canDiff && (
           <button
             type="button"
@@ -1307,9 +1306,7 @@ function TextRow({
       <div className="md text-base text-text-primary">
         <Markdown text={text} streaming={streaming} />
       </div>
-      {!streaming && (
-        <MessageActions text={text} ts={ts} startedAt={runStartedAt} align="left" />
-      )}
+      {!streaming && <MessageActions text={text} ts={ts} startedAt={runStartedAt} align="left" />}
     </div>
   );
 }

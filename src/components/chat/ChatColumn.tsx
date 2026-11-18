@@ -8,10 +8,8 @@ import { runsRespondElicitation } from "../../lib/ipc";
 import { useRunsStore } from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 import { useThreadsStore } from "../../stores/threads";
-import { useT } from "../../lib/i18n";
 
 export function ChatColumn({ title, threadId }: { title?: string; threadId?: string }) {
-  const t = useT();
   const projectWidgetOpen = useUiStore((s) => s.projectWidgetOpen);
   const rightPanelOpen = useUiStore((s) => s.rightPanelOpen);
   const isSubagent = useThreadsStore((s) =>
@@ -42,6 +40,19 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
           <MessagesTimeline threadId={threadId} />
           {projectWidgetOpen && !rightPanelOpen && <ProjectInfoWidget threadId={threadId} />}
         </div>
+        {/* Static ambient glow so the composer's glass has something to blur
+            in a chat, where the column behind it is flat canvas. */}
+        {!isSubagent && (
+          <div
+            aria-hidden
+            data-composer-ambient
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-48"
+            style={{
+              background:
+                "radial-gradient(70% 130% at 50% 100%, color-mix(in srgb, var(--accent) 14%, transparent) 0%, transparent 72%)",
+            }}
+          />
+        )}
         <div className="shrink-0">
           {elicitationHere && activeElicitation && (
             <ElicitationModal
@@ -57,15 +68,7 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
               }}
             />
           )}
-          {isSubagent ? (
-            <div className="mx-auto mb-4 w-full max-w-3xl px-6">
-              <p className="rounded-(--radius-md) border border-border-subtle bg-surface px-4 py-3 text-center text-xs text-text-tertiary">
-                {t("subagents.readOnly")}
-              </p>
-            </div>
-          ) : (
-            <Composer threadId={threadId} />
-          )}
+          {!isSubagent && <Composer threadId={threadId} />}
         </div>
       </div>
     </div>
