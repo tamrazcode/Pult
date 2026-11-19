@@ -100,6 +100,14 @@ struct ConfigFile {
 /// via a temp file + rename so a failed write never corrupts the old file;
 /// creates the file if absent).
 pub fn save_instances(home: &Path, specs: &[InstanceSpec]) -> Result<(), PultError> {
+    // One writer at a time: Windows `rename` over a file another thread is
+    // reading (or renaming on top of) fails with access denied. The temp+rename
+    // pair stays atomic per process; cross-process writers still use unique
+    // temp names and last-writer-wins.
+    static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = SAVE_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let path = home.join("config.toml");
     let mut table: toml::Table = match std::fs::read_to_string(&path) {
         Ok(raw) => {
@@ -116,16 +124,43 @@ pub fn save_instances(home: &Path, specs: &[InstanceSpec]) -> Result<(), PultErr
     let body = toml::to_string_pretty(&table)
         .map_err(|e| PultError::store(format!("config.toml serialize: {e}")))?;
     std::fs::create_dir_all(home).map_err(|e| PultError::store(format!("create home: {e}")))?;
-    let tmp = home.join(format!("config.toml.tmp.{}", std::process::id()));
-    let write = (|| -> std::io::Result<()> {
-        let mut file = std::fs::File::create(&tmp)?;
-        std::io::Write::write_all(&mut file, body.as_bytes())?;
-        file.sync_all()?;
-        std::fs::rename(&tmp, &path)
-    })();
-    if let Err(err) = write {
+    write_atomic(&path, body.as_bytes())
+        .map_err(|e| PultError::store(format!("write config: {e}")))
+}
+
+/// Temp-file-and-rename with a *unique* temp name: two concurrent saves must
+/// never open the same file (the old `pid`-only name let them truncate each
+/// other and could leave the loser's rename failing after the winner copied).
+fn write_atomic(path: &Path, body: &[u8]) -> std::io::Result<()> {
+    static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let tmp = loop {
+        let seq = TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let candidate = dir.join(format!("config.toml.tmp.{}.{seq}", std::process::id()));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(mut file) => {
+                let written = std::io::Write::write_all(&mut file, body)
+                    .and_then(|()| file.sync_all());
+                drop(file);
+                if let Err(error) = written {
+                    let _ = std::fs::remove_file(&candidate);
+                    return Err(error);
+                }
+                break candidate;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error),
+        }
+    };
+    // shortcut: no parent-directory fsync; add it if power-loss durability of
+    // the rename itself ever matters more than the extra syscall.
+    if let Err(error) = std::fs::rename(&tmp, path) {
         let _ = std::fs::remove_file(&tmp);
-        return Err(PultError::store(format!("write config: {err}")));
+        return Err(error);
     }
     Ok(())
 }
@@ -611,6 +646,38 @@ mod tests {
             "no leftover .tmp files expected after save, found {tmp_leftovers:?}"
         );
 
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn concurrent_saves_never_collide_on_the_temp_file_or_corrupt_the_config() {
+        let home = temp_config_home("concurrent-save");
+        let threads: Vec<_> = (0..8)
+            .map(|index| {
+                let home = home.clone();
+                std::thread::spawn(move || {
+                    let mut spec = mock_spec();
+                    spec.id = format!("instance-{index}");
+                    spec.display_name = format!("Instance {index}");
+                    save_instances(&home, std::slice::from_ref(&spec))
+                })
+            })
+            .collect();
+        for thread in threads {
+            thread.join().unwrap().expect("concurrent save failed");
+        }
+        let loaded = load_instances_checked(&home).expect("config must stay parseable");
+        assert_eq!(loaded.len(), 1, "last writer wins, never a mix: {loaded:?}");
+        assert!(loaded[0].id.starts_with("instance-"));
+        let tmp_leftovers: Vec<_> = std::fs::read_dir(&home)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            tmp_leftovers.is_empty(),
+            "no leftover .tmp files expected, found {tmp_leftovers:?}"
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 }

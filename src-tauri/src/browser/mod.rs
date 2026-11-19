@@ -11,16 +11,24 @@
 //! inside the registered root (workspace root for project files, otherwise the
 //! file's own directory).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use tauri::webview::Webview;
 use tauri::webview::{PageLoadEvent, WebviewBuilder};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Url, WebviewUrl};
+use tokio::io::AsyncReadExt;
 
 const CHILD_LABEL: &str = "pult-browser";
+
+/// A client that connects and never sends must not pin a preview task.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+/// Registered preview roots kept for the process lifetime; older tokens are
+/// evicted first (the webview reloads through `browser_navigate` anyway).
+const MAX_PREVIEW_ROOTS: usize = 64;
 
 #[derive(Debug, Clone, Copy)]
 struct Bounds {
@@ -251,6 +259,11 @@ pub fn browser_close(state: tauri::State<'_, BrowserState>) -> Result<(), crate:
     if let Some(webview) = webview {
         let _ = webview.close();
     }
+    // The preview tokens only exist for the page that is now gone; dropping
+    // them keeps the root table from outliving the browser session.
+    if let Some(server) = state.server.get() {
+        server.clear_roots();
+    }
     Ok(())
 }
 
@@ -325,9 +338,38 @@ fn resolve_local(
     Ok((root, candidate))
 }
 
+#[derive(Default)]
+struct Roots {
+    map: HashMap<String, PathBuf>,
+    /// Insertion order for FIFO eviction once the cap is reached.
+    order: VecDeque<String>,
+}
+
+impl Roots {
+    fn insert(&mut self, token: String, root: PathBuf) {
+        while self.map.len() >= MAX_PREVIEW_ROOTS {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            self.map.remove(&oldest);
+        }
+        self.order.push_back(token.clone());
+        self.map.insert(token, root);
+    }
+
+    fn get(&self, token: &str) -> Option<&PathBuf> {
+        self.map.get(token)
+    }
+
+    fn clear(&mut self) {
+        self.map.clear();
+        self.order.clear();
+    }
+}
+
 struct StaticServer {
     base: String,
-    roots: Mutex<HashMap<String, PathBuf>>,
+    roots: Mutex<Roots>,
 }
 
 impl StaticServer {
@@ -336,7 +378,7 @@ impl StaticServer {
         let port = listener.local_addr()?.port();
         let server = Arc::new(Self {
             base: format!("http://127.0.0.1:{port}"),
-            roots: Mutex::new(HashMap::new()),
+            roots: Mutex::new(Roots::default()),
         });
         let acceptor = Arc::clone(&server);
         tauri::async_runtime::spawn(async move {
@@ -361,6 +403,12 @@ impl StaticServer {
         token
     }
 
+    fn clear_roots(&self) {
+        if let Ok(mut roots) = self.roots.lock() {
+            roots.clear();
+        }
+    }
+
     fn file_url(&self, token: &str, file: &Path) -> Result<Url, String> {
         let root = self
             .roots
@@ -378,20 +426,16 @@ impl StaticServer {
     }
 
     async fn handle(&self, mut stream: tokio::net::TcpStream) -> io::Result<()> {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
 
-        let mut buffer = Vec::with_capacity(4096);
-        let mut chunk = [0u8; 2048];
-        loop {
-            let read = stream.read(&mut chunk).await?;
-            if read == 0 {
-                return Ok(());
+        let buffer = match read_headers(&mut stream, HEADER_TIMEOUT).await {
+            Ok(Some(buffer)) => buffer,
+            Ok(None) => return Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => {
+                return respond(&mut stream, 408, "text/plain", b"request timed out").await
             }
-            buffer.extend_from_slice(&chunk[..read]);
-            if buffer.windows(4).any(|w| w == b"\r\n\r\n") || buffer.len() > 16 * 1024 {
-                break;
-            }
-        }
+            Err(error) => return Err(error),
+        };
         let request = String::from_utf8_lossy(&buffer);
         let mut parts = request.lines().next().unwrap_or("").split_whitespace();
         let method = parts.next().unwrap_or("");
@@ -448,6 +492,36 @@ impl StaticServer {
     }
 }
 
+/// Reads one request head with a hard deadline. `Ok(None)` means the client
+/// closed before sending anything.
+async fn read_headers(
+    stream: &mut tokio::net::TcpStream,
+    timeout: Duration,
+) -> io::Result<Option<Vec<u8>>> {
+    let read = tokio::time::timeout(timeout, async {
+        let mut buffer = Vec::with_capacity(4096);
+        let mut chunk = [0u8; 2048];
+        loop {
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                return Ok(None);
+            }
+            buffer.extend_from_slice(&chunk[..read]);
+            if buffer.windows(4).any(|window| window == b"\r\n\r\n") || buffer.len() > 16 * 1024 {
+                return Ok(Some(buffer));
+            }
+        }
+    })
+    .await;
+    match read {
+        Ok(result) => result,
+        Err(_) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "preview client sent no request head",
+        )),
+    }
+}
+
 async fn respond(
     stream: &mut tokio::net::TcpStream,
     status: u16,
@@ -460,6 +534,7 @@ async fn respond(
         403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        408 => "Request Timeout",
         413 => "Payload Too Large",
         _ => "Internal Server Error",
     };
@@ -661,6 +736,52 @@ mod tests {
         let unknown = fetch("/not-a-token/index.html".to_string()).await;
         assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn header_read_times_out_when_the_client_stays_silent() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = tokio::spawn(async move {
+            let stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            drop(stream);
+        });
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let error = read_headers(&mut stream, Duration::from_millis(100))
+            .await
+            .expect_err("a silent client must time out");
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        client.abort();
+    }
+
+    #[tokio::test]
+    async fn registers_are_bounded_and_evict_the_oldest_root() {
+        let server = StaticServer::start().await.unwrap();
+        let root = std::env::temp_dir();
+        let first = server.register(root.clone());
+        let mut last = first.clone();
+        for _ in 0..MAX_PREVIEW_ROOTS + 5 {
+            last = server.register(root.clone());
+        }
+        let roots = server.roots.lock().unwrap();
+        assert_eq!(roots.map.len(), MAX_PREVIEW_ROOTS);
+        assert!(!roots.map.contains_key(&first), "oldest root must be evicted");
+        assert!(roots.map.contains_key(&last), "newest root must be kept");
+        drop(roots);
+        drop(server);
+    }
+
+    #[tokio::test]
+    async fn clearing_roots_revokes_preview_tokens() {
+        let server = StaticServer::start().await.unwrap();
+        let root = std::env::temp_dir();
+        let token = server.register(root.clone());
+        assert!(server.roots.lock().unwrap().get(&token).is_some());
+        server.clear_roots();
+        assert!(server.roots.lock().unwrap().get(&token).is_none());
     }
 
     #[test]

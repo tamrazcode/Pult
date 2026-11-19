@@ -15,6 +15,10 @@ use tokio::task::AbortHandle;
 
 use super::transport::{await_reply, McpTransport, PendingRequests, SseDecoder, TransportFuture};
 
+/// Bound on the SSE handshake only. The stream itself stays open for as long
+/// as the server keeps sending: a client-wide timeout would kill it.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct SseConfig {
     pub url: String,
     pub headers: BTreeMap<String, String>,
@@ -79,6 +83,7 @@ impl SseTransport {
                 loop_closed,
                 loop_epoch,
                 allow_localhost,
+                HANDSHAKE_TIMEOUT,
                 Some(ready_tx),
             )
             .await;
@@ -185,6 +190,7 @@ async fn stream_loop(
     closed: Arc<AtomicBool>,
     epoch: Arc<AtomicU64>,
     allow_localhost: bool,
+    handshake_timeout: Duration,
     mut ready: Option<oneshot::Sender<Result<(), String>>>,
 ) {
     let mut backoff_seconds = 1u64;
@@ -197,9 +203,11 @@ async fn stream_loop(
         for (name, value) in &headers {
             builder = builder.header(name, value);
         }
-        let opened = builder.send().await;
+        // Only the handshake is bounded: once headers arrive the stream is an
+        // unbounded `bytes_stream` and must keep running.
+        let opened = tokio::time::timeout(handshake_timeout, builder.send()).await;
         match opened {
-            Ok(response) if response.status().is_success() => {
+            Ok(Ok(response)) if response.status().is_success() => {
                 backoff_seconds = 1;
                 let mut stream = response.bytes_stream();
                 let mut decoder = SseDecoder::default();
@@ -236,7 +244,7 @@ async fn stream_loop(
                 }
                 pending.fail_all("MCP SSE stream closed");
             }
-            Ok(response) => {
+            Ok(Ok(response)) => {
                 let status = response.status().as_u16();
                 if let Some(sender) = ready.take() {
                     let _ = sender.send(Err(format!("MCP SSE server returned HTTP {status}")));
@@ -244,11 +252,23 @@ async fn stream_loop(
                     tracing::warn!(target: "pult::mcp", status, "SSE reconnect rejected");
                 }
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 if let Some(sender) = ready.take() {
                     let _ = sender.send(Err(format!("MCP SSE connection failed: {error}")));
                 } else {
                     tracing::warn!(target: "pult::mcp", error = %error, "SSE stream dropped");
+                }
+            }
+            Err(_) => {
+                // A server that accepts the socket but never sends headers must
+                // not hold connect() forever; an announced stream is untouched.
+                if let Some(sender) = ready.take() {
+                    let _ = sender.send(Err(format!(
+                        "MCP SSE handshake timed out after {} ms",
+                        handshake_timeout.as_millis()
+                    )));
+                } else {
+                    tracing::warn!(target: "pult::mcp", "SSE stream handshake timed out");
                 }
             }
         }
@@ -363,6 +383,49 @@ mod tests {
             transport.task.is_finished(),
             "close must abort the SSE task"
         );
+    }
+
+    #[tokio::test]
+    async fn handshake_timeout_fails_connect_instead_of_hanging() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let url = format!(
+            "http://127.0.0.1:{}/sse",
+            listener.local_addr().unwrap().port()
+        );
+        // Accept the socket, never answer: the handshake has to time out.
+        let hold = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(10)).await;
+            drop(stream);
+        });
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .no_proxy()
+            .build()
+            .unwrap();
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio::spawn(stream_loop(
+            client,
+            url,
+            BTreeMap::new(),
+            Arc::new(PendingRequests::new()),
+            Arc::new(AsyncMutex::new(None)),
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicU64::new(0)),
+            true,
+            Duration::from_millis(100),
+            Some(ready_tx),
+        ));
+        let result = tokio::time::timeout(Duration::from_secs(5), ready_rx)
+            .await
+            .expect("handshake timeout must notify the ready sender")
+            .expect("ready sender must outlive the failed handshake");
+        assert!(
+            result.unwrap_err().contains("handshake timed out"),
+            "a hanging server must fail the handshake"
+        );
+        task.await.unwrap();
+        hold.abort();
     }
 
     #[test]

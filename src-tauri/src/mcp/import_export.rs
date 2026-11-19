@@ -60,7 +60,7 @@ async fn import_one(store: &Store, name: &str, entry: &Value) -> ImportOutcome {
         Ok(false) => {}
         Err(error) => return skipped(error.to_string()),
     }
-    let Some(transport) = parse_transport(entry).await else {
+    let Some((transport, allow_localhost)) = parse_transport(entry).await else {
         return skipped("entry has neither `command` nor a supported `url`".to_string());
     };
     let mut input: CustomMcpServerInput = match serde_json::from_value(json!({
@@ -71,6 +71,7 @@ async fn import_one(store: &Store, name: &str, entry: &Value) -> ImportOutcome {
         Err(error) => return skipped(format!("could not build config: {error}")),
     };
     input.transport = transport;
+    input.allow_localhost = allow_localhost;
     match config::create(store, input) {
         Ok(_) => ImportOutcome {
             name,
@@ -81,7 +82,9 @@ async fn import_one(store: &Store, name: &str, entry: &Value) -> ImportOutcome {
     }
 }
 
-async fn parse_transport(entry: &Value) -> Option<TransportInput> {
+/// Returns the transport plus the `allow_localhost` flag it must be imported
+/// with: only a loopback URL may reach a local address later.
+async fn parse_transport(entry: &Value) -> Option<(TransportInput, bool)> {
     if let Some(command) = entry.get("command").and_then(Value::as_str) {
         let command = command.trim();
         if command.is_empty() {
@@ -95,16 +98,20 @@ async fn parse_transport(entry: &Value) -> Option<TransportInput> {
             .filter(|value| !value.is_empty())
             .map(str::to_string);
         let (env, secret_env) = split_secrets(entry.get("env"));
-        return Some(TransportInput::Stdio {
-            command: command.to_string(),
-            args,
-            cwd,
-            env,
-            secret_env,
-        });
+        return Some((
+            TransportInput::Stdio {
+                command: command.to_string(),
+                args,
+                cwd,
+                env,
+                secret_env,
+            },
+            true,
+        ));
     }
     let url = entry.get("url").and_then(Value::as_str)?.trim().to_string();
-    if security::validate_url(&url, true).await.is_err() {
+    let allow_localhost = is_loopback_url(&url);
+    if security::validate_url(&url, allow_localhost).await.is_err() {
         return None;
     }
     let (headers, secret_headers) = split_secrets(entry.get("headers"));
@@ -114,18 +121,45 @@ async fn parse_transport(entry: &Value) -> Option<TransportInput> {
         .unwrap_or("http")
         .to_ascii_lowercase();
     if kind == "sse" || kind == "legacy-sse" {
-        Some(TransportInput::Sse {
-            url,
-            headers,
-            secret_headers,
-        })
+        Some((
+            TransportInput::Sse {
+                url,
+                headers,
+                secret_headers,
+            },
+            allow_localhost,
+        ))
     } else {
-        Some(TransportInput::Http {
-            url,
-            headers,
-            secret_headers,
-        })
+        Some((
+            TransportInput::Http {
+                url,
+                headers,
+                secret_headers,
+            },
+            allow_localhost,
+        ))
     }
+}
+
+/// `true` for 127.0.0.0/8, `::1` and `localhost` / `localhost.` — the only
+/// hosts an imported server may ever be allowed to reach locally.
+fn is_loopback_url(raw: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(raw) else {
+        return false;
+    };
+    let Some(host) = url.host_str() else {
+        return false;
+    };
+    let host = host
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .trim_end_matches('.');
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
 }
 
 fn split_secrets(value: Option<&Value>) -> (BTreeMap<String, String>, Vec<SecretInput>) {
@@ -294,6 +328,49 @@ mod tests {
                 .as_deref(),
             Some("sk-import-123456")
         );
+    }
+
+    #[tokio::test]
+    async fn import_stamps_allow_localhost_from_the_url() {
+        let store = Store::open_in_memory().unwrap();
+        // Public IP literal on purpose: no DNS lookup inside the test.
+        let outcomes = import_json(
+            &store,
+            &json!({
+                "mcpServers": {
+                    "local": { "url": "http://127.0.0.1:8123/mcp" },
+                    "remote": { "url": "https://1.1.1.1/mcp" }
+                }
+            })
+            .to_string(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            outcomes.iter().all(|outcome| outcome.status == "imported"),
+            "{outcomes:?}"
+        );
+        let servers = store.list_custom_mcp_servers().unwrap();
+        let by_name = |name: &str| {
+            servers
+                .iter()
+                .find(|server| server.name == name)
+                .unwrap_or_else(|| panic!("{name} was not imported"))
+        };
+        assert!(by_name("local").allow_localhost);
+        assert!(!by_name("remote").allow_localhost);
+    }
+
+    #[test]
+    fn loopback_urls_only_cover_local_hosts() {
+        assert!(is_loopback_url("http://127.0.0.1:9000/mcp"));
+        assert!(is_loopback_url("http://127.1.2.3/mcp"));
+        assert!(is_loopback_url("http://[::1]:9000/mcp"));
+        assert!(is_loopback_url("http://localhost:9000/mcp"));
+        assert!(is_loopback_url("http://localhost.:9000/mcp"));
+        assert!(!is_loopback_url("https://1.1.1.1/mcp"));
+        assert!(!is_loopback_url("http://192.168.1.10:9000/mcp"));
+        assert!(!is_loopback_url("not a url"));
     }
 
     #[tokio::test]

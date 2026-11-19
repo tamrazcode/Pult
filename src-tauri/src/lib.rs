@@ -189,58 +189,49 @@ pub fn run() {
                 Arc::new(app.handle().clone()) as Arc<dyn runtime::EventSink>,
             ));
             runtime.attach_orchestrator();
-            // User MCP gateway: agents get loopback URLs with per-session
-            // tokens; upstream credentials never leave this process.
-            let (gateway_tx, gateway_rx) = std::sync::mpsc::channel();
+            // Startup is non-blocking: the window opens immediately and both
+            // loopback MCP servers come up in the background. Early runs wait
+            // on the runtime gate, so no `recv_timeout` here.
+            runtime.readiness.defer();
             let gateway_store = Arc::clone(runtime.store());
             let gateway_tokens = Arc::clone(&runtime.gateway_tokens);
-            tauri::async_runtime::spawn(async move {
-                let started = crate::mcp::gateway::McpGateway::start(
-                    Arc::new(crate::mcp::StoreConnector::new(gateway_store)),
-                    gateway_tokens,
-                )
-                .await;
-                let _ = gateway_tx.send(started);
-            });
-            match gateway_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-                Ok(Ok(gateway)) => {
-                    let _ = runtime.gateway.set(gateway);
-                }
-                Ok(Err(error)) => tracing::error!(target: "pult::mcp",
-                    error = %error, "custom MCP gateway did not start; user MCP servers are unavailable"),
-                Err(error) => tracing::error!(target: "pult::mcp",
-                    error = %error, "custom MCP gateway startup timed out"),
-            }
+            let engine = Arc::clone(&runtime.orchestrator);
+            let registry = Arc::clone(&runtime.mcp_registry);
+            let startup_runtime = Arc::clone(&runtime);
             let health_store = Arc::clone(runtime.store());
+            tauri::async_runtime::spawn(async move {
+                let gateway = async {
+                    match crate::mcp::gateway::McpGateway::start(
+                        Arc::new(crate::mcp::StoreConnector::new(gateway_store)),
+                        gateway_tokens,
+                    )
+                    .await
+                    {
+                        Ok(gateway) => {
+                            let _ = startup_runtime.gateway.set(gateway);
+                        }
+                        Err(error) => tracing::error!(target: "pult::mcp", error = %error,
+                            "custom MCP gateway did not start; user MCP servers are unavailable"),
+                    }
+                };
+                let host = Arc::new(orchestrator::engine::RuntimeHost {
+                    engine: Arc::clone(&engine),
+                });
+                let orchestration = async {
+                    match orchestrator::OrchestratorMcpServer::start(host, registry).await {
+                        Ok(server) => engine.set_server(server),
+                        Err(error) => tracing::error!(target: "pult::orchestrator", error = %error,
+                            "orchestration MCP server did not start; delegation is unavailable"),
+                    }
+                };
+                tokio::join!(gateway, orchestration);
+                // Open the gate on every outcome: a server that failed to start
+                // must never leave early runs waiting forever.
+                startup_runtime.readiness.mark_ready();
+            });
             tauri::async_runtime::spawn(async move {
                 crate::mcp::manager::check_all(health_store).await;
             });
-            let engine = Arc::clone(&runtime.orchestrator);
-            let host = Arc::new(orchestrator::engine::RuntimeHost {
-                engine: Arc::clone(&engine),
-            });
-            let registry = Arc::clone(&runtime.mcp_registry);
-            let (started_tx, started_rx) = std::sync::mpsc::channel();
-            tauri::async_runtime::spawn(async move {
-                match orchestrator::OrchestratorMcpServer::start(host, registry).await {
-                    Ok(server) => {
-                        engine.set_server(server);
-                        let _ = started_tx.send(Ok(()));
-                    }
-                    Err(error) => {
-                        let _ = started_tx.send(Err(error.to_string()));
-                    }
-                }
-            });
-            match started_rx.recv_timeout(std::time::Duration::from_secs(5)) {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    tracing::error!(target: "pult::orchestrator", error = %error,
-                        "orchestration MCP server did not start; delegation is unavailable")
-                }
-                Err(error) => tracing::error!(target: "pult::orchestrator", error = %error,
-                    "orchestration MCP server startup timed out"),
-            }
             app.manage(runtime);
             app.manage(browser::BrowserState::default());
             Ok(())

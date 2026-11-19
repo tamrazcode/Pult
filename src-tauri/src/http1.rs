@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 
 const MAX_HEADERS: usize = 16 * 1024;
 
+#[derive(Debug)]
 pub struct HttpRequest {
     pub method: String,
     pub path: String,
@@ -68,25 +69,38 @@ pub async fn read_request(
         }
     }
 
-    let content_length = headers
+    let content_length = match headers
         .iter()
         .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-        .and_then(|(_, value)| value.parse::<usize>().ok())
-        .unwrap_or(0);
-    if content_length > max_body {
+    {
+        Some((_, value)) => Some(value.trim().parse::<usize>().map_err(|_| {
+            HttpReadError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid Content-Length header",
+            ))
+        })?),
+        None => None,
+    };
+    if content_length.is_some_and(|length| length > max_body) {
         return Err(HttpReadError::TooLarge);
     }
+    let chunked = headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("transfer-encoding")
+            && value
+                .split(',')
+                .any(|token| token.trim().eq_ignore_ascii_case("chunked"))
+    });
 
     let mut body = buffer[(header_end + 4)..].to_vec();
-    while body.len() < content_length {
-        let mut chunk = [0u8; 8192];
-        let read = stream.read(&mut chunk).await?;
-        if read == 0 {
-            break;
+    if chunked {
+        body = read_chunked(stream, body, max_body).await?;
+    } else {
+        let content_length = content_length.unwrap_or(0);
+        while body.len() < content_length {
+            read_body_more(stream, &mut body).await?;
         }
-        body.extend_from_slice(&chunk[..read]);
+        body.truncate(content_length);
     }
-    body.truncate(content_length);
 
     Ok(Some(HttpRequest {
         method,
@@ -94,6 +108,71 @@ pub async fn read_request(
         headers,
         body,
     }))
+}
+
+/// Reads once more into `body`; EOF mid-body is a truncated request, not a
+/// request with fewer bytes.
+async fn read_body_more(stream: &mut TcpStream, body: &mut Vec<u8>) -> Result<(), HttpReadError> {
+    let mut chunk = [0u8; 8192];
+    let read = stream.read(&mut chunk).await?;
+    if read == 0 {
+        return Err(HttpReadError::Io(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "connection closed before the request body was complete",
+        )));
+    }
+    body.extend_from_slice(&chunk[..read]);
+    Ok(())
+}
+
+/// Decodes a `Transfer-Encoding: chunked` body, capped at `max_body` decoded
+/// bytes. Truncated or malformed framing is an error, never a short body.
+async fn read_chunked(
+    stream: &mut TcpStream,
+    mut buffer: Vec<u8>,
+    max_body: usize,
+) -> Result<Vec<u8>, HttpReadError> {
+    let mut body = Vec::new();
+    loop {
+        let line_end = loop {
+            if let Some(index) = find_bytes(&buffer, b"\r\n") {
+                break index;
+            }
+            if buffer.len() > 1024 {
+                return Err(HttpReadError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "chunk size line is too long",
+                )));
+            }
+            read_body_more(stream, &mut buffer).await?;
+        };
+        let line = String::from_utf8_lossy(&buffer[..line_end]).into_owned();
+        let size_text = line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_text, 16).map_err(|_| {
+            HttpReadError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "invalid chunk size",
+            ))
+        })?;
+        buffer.drain(..line_end + 2);
+        if size == 0 {
+            return Ok(body);
+        }
+        if body.len() + size > max_body {
+            return Err(HttpReadError::TooLarge);
+        }
+        while buffer.len() < size + 2 {
+            read_body_more(stream, &mut buffer).await?;
+        }
+        if &buffer[size..size + 2] != b"\r\n" {
+            return Err(HttpReadError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "chunk is not terminated by CRLF",
+            )));
+        }
+        body.extend_from_slice(&buffer[..size]);
+        buffer.drain(..size + 2);
+    }
 }
 
 pub async fn respond(
@@ -169,5 +248,99 @@ mod tests {
         assert_eq!(request.body, b"{\"a\":1}");
         drop(stream);
         client.await.unwrap();
+    }
+
+    /// Serves one raw request and returns what `read_request` made of it.
+    async fn read_raw(raw: &'static [u8], max_body: usize) -> Result<HttpRequest, HttpReadError> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut stream = TcpStream::connect(addr).await.unwrap();
+            stream.write_all(raw).await.unwrap();
+            // Keep the socket open: EOF must be explicit in the failing tests.
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        });
+        let (mut stream, _) = listener.accept().await.unwrap();
+        read_request(&mut stream, max_body)
+            .await?
+            .ok_or(HttpReadError::Io(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "missing request",
+            )))
+    }
+
+    #[tokio::test]
+    async fn reads_a_chunked_body() {
+        let request = read_raw(
+            b"POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n6\r\n world\r\n0\r\n\r\n",
+            1024,
+        )
+        .await
+        .unwrap();
+        assert_eq!(request.body, b"hello world");
+    }
+
+    #[tokio::test]
+    async fn rejects_a_truncated_chunked_body() {
+        let error = read_raw(
+            b"POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel",
+            1024,
+        )
+        .await
+        .expect_err("truncated chunk must fail");
+        assert!(
+            matches!(error, HttpReadError::Io(ref error) if error.kind() == io::ErrorKind::UnexpectedEof),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_a_malformed_chunk_size() {
+        let error = read_raw(
+            b"POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\nabc\r\n0\r\n\r\n",
+            1024,
+        )
+        .await
+        .expect_err("malformed chunk size must fail");
+        assert!(
+            matches!(error, HttpReadError::Io(ref error) if error.kind() == io::ErrorKind::InvalidData),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_an_oversized_chunked_body() {
+        let error = read_raw(
+            b"POST /mcp HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\na\r\n0123456789\r\n0\r\n\r\n",
+            8,
+        )
+        .await
+        .expect_err("oversized chunked body must fail");
+        assert!(matches!(error, HttpReadError::TooLarge), "{error:?}");
+    }
+
+    #[tokio::test]
+    async fn rejects_eof_and_bad_content_length() {
+        let error = read_raw(
+            b"POST /mcp HTTP/1.1\r\nContent-Length: 10\r\n\r\nabc",
+            1024,
+        )
+        .await
+        .expect_err("premature EOF must fail");
+        assert!(
+            matches!(error, HttpReadError::Io(ref error) if error.kind() == io::ErrorKind::UnexpectedEof),
+            "{error:?}"
+        );
+
+        let error = read_raw(
+            b"POST /mcp HTTP/1.1\r\nContent-Length: abc\r\n\r\n{}",
+            1024,
+        )
+        .await
+        .expect_err("non-numeric Content-Length must fail");
+        assert!(
+            matches!(error, HttpReadError::Io(ref error) if error.kind() == io::ErrorKind::InvalidData),
+            "{error:?}"
+        );
     }
 }
