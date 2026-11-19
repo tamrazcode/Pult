@@ -268,6 +268,11 @@ impl IdlePool {
         }
     }
 
+    /// Snapshot of the parked connections (app shutdown kills them all).
+    pub fn conns(&self) -> Vec<Arc<AgentConn>> {
+        self.lock().values().map(|entry| Arc::clone(&entry.conn)).collect()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, IdleConn>> {
         self.entries
             .lock()

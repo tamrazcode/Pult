@@ -310,7 +310,7 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
 /// under `%LOCALAPPDATA%\\pult\\antigravity` or on PATH. A copy already fetched
 /// by another tool is adopted into pult's folder once, so the UI never shows a
 /// foreign config path.
-fn antigravity_server_path() -> Option<std::path::PathBuf> {
+pub(crate) fn antigravity_server_path() -> Option<std::path::PathBuf> {
     #[cfg(windows)]
     if let Some(path) = antigravity_server_path_in(
         std::env::var_os("LOCALAPPDATA")

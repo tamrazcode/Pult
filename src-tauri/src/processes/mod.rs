@@ -5,6 +5,7 @@
 //! snapshot, filtered to descendants of `pult-core`, so foreign processes never
 //! appear and stale registry rows cannot be shown.
 
+pub mod job;
 pub mod registry;
 #[cfg(test)]
 mod tests;
@@ -14,6 +15,7 @@ pub use registry::{
 };
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use serde::Serialize;
@@ -207,8 +209,85 @@ pub fn kill_process(pid: u32) -> Result<(), PultError> {
     Ok(())
 }
 
-fn find(nodes: &[ProcessNode], pid: u32) -> Option<&ProcessNode> {
-    for node in nodes {
+/// Kills agent trees left behind by an earlier Pult run.
+///
+/// A root is a process running exactly `exe` whose parent is neither another
+/// such process nor a live Pult, so the agents of the running app are never
+/// touched. Called once at boot, before the first spawn of this run.
+pub fn reap_orphan_agents(exe: &Path) -> usize {
+    let mut system = System::new();
+    system.refresh_processes(ProcessesToUpdate::All, true);
+    let own = exe.to_string_lossy().to_ascii_lowercase();
+    let same = |process: &sysinfo::Process| {
+        process
+            .exe()
+            .is_some_and(|path| path.to_string_lossy().eq_ignore_ascii_case(&own))
+    };
+    let mut roots: Vec<u32> = Vec::new();
+    for (pid, process) in system.processes() {
+        if !same(process) {
+            continue;
+        }
+        let parent = process
+            .parent()
+            .and_then(|parent| system.process(parent))
+            .map(|parent| {
+                let exe = parent
+                    .exe()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (exe, parent.name().to_string_lossy().into_owned())
+            });
+        let parent = parent
+            .as_ref()
+            .map(|(exe, name)| (exe.as_str(), name.as_str()));
+        if is_orphan_root(parent, &own) {
+            roots.push(pid.as_u32());
+        }
+    }
+    for pid in &roots {
+        kill_tree(*pid);
+        unregister_process(*pid);
+    }
+    roots.len()
+}
+
+/// A root has no live parent: it is gone, or it is neither another process of
+/// the same agent executable nor a running Pult.
+fn is_orphan_root(parent: Option<(&str, &str)>, own_exe: &str) -> bool {
+    match parent {
+        None => true,
+        Some((parent_exe, parent_name)) => {
+            !(parent_exe.eq_ignore_ascii_case(own_exe)
+                || parent_name.to_ascii_lowercase().contains("pult"))
+        }
+    }
+}
+
+/// `taskkill /T` so a root's own children die with it. Best effort: a tree that
+/// already exited reports failure and that is fine.
+fn kill_tree(pid: u32) {
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        use std::os::windows::process::CommandExt;
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .status();
+    }
+}
+
+fn find(nodes: &[ProcessNode], pid: u32) -> Option<&ProcessNode> {    for node in nodes {
         if node.pid == pid {
             return Some(node);
         }

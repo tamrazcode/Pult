@@ -143,6 +143,9 @@ impl PtyRegistry {
             .spawn_command(cmd)
             .map_err(|e| PultError::internal(format!("pty spawn {program}: {e}")))?;
         let pid = child.process_id();
+        if let Some(pid) = pid {
+            crate::processes::job::adopt(pid);
+        }
         // ConPTY keeps handles in the slave; drop our end after spawn.
         drop(pair.slave);
 

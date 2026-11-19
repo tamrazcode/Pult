@@ -3617,6 +3617,25 @@ impl Drop for KillOnDrop {
 }
 
 impl AgentRuntime {
+    /// Kill every live agent process: active runs, warm-up spawns and parked
+    /// idle sessions. Tauri's exit path ends in `process::exit`, so no
+    /// destructor runs and `kill_on_drop` never fires — this is the explicit
+    /// shutdown that must run on `RunEvent::Exit`.
+    pub fn shutdown_agents(&self) -> usize {
+        let mut conns: Vec<Arc<AgentConn>> = Vec::new();
+        if let Ok(inner) = self.inner.lock() {
+            conns.extend(inner.runs.values().map(|run| Arc::clone(&run.conn)));
+            conns.extend(inner.warm.values().map(|warm| Arc::clone(&warm.conn)));
+        }
+        conns.extend(self.pool.conns());
+        let total = conns.len();
+        for conn in conns {
+            conn.kill();
+        }
+        tracing::info!(target: "pult::processes", agents = total, "shutdown: agent trees killed");
+        total
+    }
+
     /// Shared `session/new` for the result path: only -32000 flips the
     /// provider to Needs sign-in and gets the typed `auth_required` code.
     async fn open_session(

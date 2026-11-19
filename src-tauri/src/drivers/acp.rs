@@ -240,6 +240,11 @@ impl AcpConn {
                 command: config.command.clone(),
                 source,
             })?;
+        if let Some(pid) = child.id() {
+            // Job membership is what makes the tree die with Pult even when no
+            // destructor runs (crash, Task Manager, process::exit).
+            crate::processes::job::adopt(pid);
+        }
 
         let child_stdin = child.stdin.take().expect("stdin piped just above");
         let child_stdout = child.stdout.take().expect("stdout piped just above");

@@ -155,6 +155,9 @@ impl PiRpcConn {
                 command: config.command.clone(),
                 source,
             })?;
+        if let Some(pid) = child.id() {
+            crate::processes::job::adopt(pid);
+        }
         let child_stdin = child.stdin.take().expect("stdin piped");
         let child_stdout = child.stdout.take().expect("stdout piped");
         let child_stderr = child.stderr.take().expect("stderr piped");

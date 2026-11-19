@@ -202,7 +202,7 @@ pub fn run() {
     init_tracing();
     tracing::info!("pult starting");
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         // Auto-update plumbing (M8): inert until a real endpoint + public key
@@ -229,6 +229,16 @@ pub fn run() {
         .setup(|app| {
             #[cfg(windows)]
             register_toast_app_id();
+            // Previous runs could exit without killing their agents (no
+            // destructors on process::exit). The job object prevents that from
+            // now on; this clears whatever an earlier build left behind.
+            if let Some(exe) = config::antigravity_server_path() {
+                let reaped = processes::reap_orphan_agents(&exe);
+                if reaped > 0 {
+                    tracing::warn!(target: "pult::processes", trees = reaped,
+                        "reaped orphaned agent trees from a previous run");
+                }
+            }
             let store = match open_store() {
                 Ok(store) => store,
                 Err(error) => {
@@ -398,8 +408,17 @@ pub fn run() {
             ipc::providers_authenticate,
             ipc::usage_report,
         ])
-        .run(tauri::generate_context!())
-        .expect("pult: failed to start tauri application");
+        .build(tauri::generate_context!())
+        .expect("pult: failed to build tauri application");
+    app.run(|handle, event| {
+        // Destructors never run on this exit path, so the agents Pult spawned
+        // are killed here or they outlive the app as orphans.
+        if matches!(event, tauri::RunEvent::Exit) {
+            if let Some(runtime) = handle.try_state::<Arc<runtime::AgentRuntime>>() {
+                runtime.shutdown_agents();
+            }
+        }
+    });
 }
 
 #[cfg(test)]

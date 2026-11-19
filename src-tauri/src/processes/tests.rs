@@ -123,8 +123,54 @@ fn a_reused_pid_with_a_different_start_time_is_not_killable() {
     global_registry().unregister(pid);
 }
 
-fn find(nodes: &[super::ProcessNode], pid: u32) -> Option<super::ProcessNode> {
-    for node in nodes {
+#[test]
+fn only_a_dead_or_foreign_parent_makes_an_orphan_root() {
+    let own = r"c:\users\borch\appdata\local\pult\antigravity\agy_acp_server.exe";
+    assert!(super::is_orphan_root(None, own));
+    assert!(!super::is_orphan_root(Some((own, "agy_acp_server.exe")), own));
+    assert!(!super::is_orphan_root(
+        Some((r"c:\somewhere\Pult-0.1.12c.exe", "Pult-0.1.12c.exe")),
+        own
+    ));
+    assert!(super::is_orphan_root(
+        Some((r"c:\windows\explorer.exe", "explorer.exe")),
+        own
+    ));
+}
+
+#[test]
+fn reap_ignores_an_executable_that_is_not_our_agent() {
+    let reaped = super::reap_orphan_agents(std::path::Path::new(
+        r"C:\pult-none\agy_acp_server.exe",
+    ));
+    assert_eq!(reaped, 0);
+}
+
+#[cfg(windows)]
+#[test]
+fn adopted_children_join_the_kill_on_close_job() {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let mut child = Command::new("cmd")
+        .args(["/c", "ping -n 30 127.0.0.1 >nul"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn child");
+    let pid = child.id();
+    super::job::adopt(pid);
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(
+        super::job::is_member(pid),
+        "a spawned child must live inside the app job, or it can outlive Pult"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+fn find(nodes: &[super::ProcessNode], pid: u32) -> Option<super::ProcessNode> {    for node in nodes {
         if node.pid == pid {
             return Some(node.clone());
         }

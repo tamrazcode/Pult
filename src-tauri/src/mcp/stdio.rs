@@ -69,6 +69,7 @@ impl StdioTransport {
             .spawn()
             .map_err(|e| format!("failed to start `{command}`: {e}"))?;
         if let Some(pid) = child.id() {
+            crate::processes::job::adopt(pid);
             crate::processes::register_process(
                 pid,
                 crate::processes::ProcessMeta::new("mcp").with_label(&config.label),
