@@ -1185,5 +1185,236 @@ async fn checkpoint_with_temp_index(
     Ok(sha)
 }
 
+/// Run ids become a ref path segment, so only a safe alphabet is allowed —
+/// `../` or a leading `-` could otherwise write outside `refs/pult/checkpoints/`.
+pub fn validate_run_id(run_id: &str) -> Result<(), PultError> {
+    let invalid = || {
+        git_err(
+            "git.invalid_checkpoint",
+            format!("invalid checkpoint run id: {run_id:?}"),
+        )
+    };
+    if run_id.is_empty() || run_id.starts_with('-') || run_id.contains("..") {
+        return Err(invalid());
+    }
+    if !run_id
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    {
+        return Err(invalid());
+    }
+    Ok(())
+}
+
+/// Checkpoint run ids for the repo, oldest first. A non-repo workspace has no
+/// checkpoints (auto checkpoints skip it too), so it is not an error.
+pub async fn checkpoints_list(dir: &Path) -> Result<Vec<String>, PultError> {
+    let repo = match resolve_repo(dir).await {
+        Ok(repo) => repo,
+        Err(PultError::Git { code, .. }) if code == "git.not_a_repo" => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let raw = git(
+        &repo,
+        &[
+            "for-each-ref",
+            "--sort=committerdate",
+            "--format=%(refname:strip=3)",
+            "refs/pult/checkpoints",
+        ],
+        None,
+    )
+    .await?;
+    Ok(raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
+}
+
+/// Validates `run_id` and returns its ref, or `git.checkpoint_not_found`.
+async fn checkpoint_ref(repo: &Path, run_id: &str) -> Result<String, PultError> {
+    validate_run_id(run_id)?;
+    let target = format!("refs/pult/checkpoints/{run_id}");
+    if git(repo, &["rev-parse", "--verify", "-q", &target], None)
+        .await
+        .is_err()
+    {
+        return Err(git_err(
+            "git.checkpoint_not_found",
+            format!("checkpoint not found: {run_id}"),
+        ));
+    }
+    Ok(target)
+}
+
+/// (target ref, base ref, base label for the UI). An explicit `base_run_id`
+/// wins; otherwise the checkpoint's parent commit is the tree the run started
+/// from, falling back to the empty tree for a parentless checkpoint.
+async fn checkpoint_bases(
+    repo: &Path,
+    run_id: &str,
+    base_run_id: Option<&str>,
+) -> Result<(String, String, String), PultError> {
+    let target = checkpoint_ref(repo, run_id).await?;
+    if let Some(prev) = base_run_id.map(str::trim).filter(|prev| !prev.is_empty()) {
+        let base = checkpoint_ref(repo, prev).await?;
+        return Ok((target, base, prev.to_string()));
+    }
+    let parent = format!("{target}^");
+    if git(repo, &["rev-parse", "--verify", "-q", &parent], None)
+        .await
+        .is_ok()
+    {
+        return Ok((target, parent, format!("{run_id}^")));
+    }
+    Ok((target, EMPTY_TREE.to_string(), "worktree".to_string()))
+}
+
+/// What a checkpoint changed relative to its base (parent commit or another
+/// checkpoint), metadata only.
+pub async fn checkpoint_diff_summary(
+    dir: &Path,
+    run_id: &str,
+    base_run_id: Option<&str>,
+) -> Result<GitDiffSummary, PultError> {
+    let repo = resolve_repo(dir).await?;
+    let (target, base, reported_base) = checkpoint_bases(&repo, run_id, base_run_id).await?;
+    let numstat = git(
+        &repo,
+        &["diff", "--numstat", "--no-renames", "-z", &base, &target],
+        None,
+    )
+    .await?;
+    let raw = git(
+        &repo,
+        &[
+            "diff",
+            "--raw",
+            "--no-abbrev",
+            "--no-renames",
+            "-z",
+            &base,
+            &target,
+        ],
+        None,
+    )
+    .await?;
+    parse_summary(&repo, &reported_base, &numstat, &raw)
+}
+
+/// One file's patch inside a checkpoint diff.
+pub async fn checkpoint_diff_file(
+    dir: &Path,
+    run_id: &str,
+    path: &str,
+    base_run_id: Option<&str>,
+) -> Result<DiffFile, PultError> {
+    let repo = resolve_repo(dir).await?;
+    validate_repo_relative_path(&repo, path)?;
+    let (target, base, _reported_base) = checkpoint_bases(&repo, run_id, base_run_id).await?;
+    let raw = git(
+        &repo,
+        &[
+            "diff",
+            "--no-color",
+            "--no-ext-diff",
+            "--no-renames",
+            &base,
+            &target,
+            "--",
+            path,
+        ],
+        None,
+    )
+    .await?;
+    parse_diff_files(&raw)
+        .into_iter()
+        .next()
+        .ok_or_else(|| git_err("git.not_found", format!("no diff for {path}")))
+}
+
+fn split_nul_paths(raw: &str) -> std::collections::BTreeSet<String> {
+    raw.split('\0')
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Never deleted by a restore: git's own metadata and pult's worktrees.
+fn is_protected_path(path: &str) -> bool {
+    path == ".git" || path.starts_with(".git/") || path == ".pult" || path.starts_with(".pult/")
+}
+
+async fn prune_empty_parents(repo: &Path, path: &Path) {
+    let mut parent = path.parent();
+    while let Some(dir) = parent {
+        if dir == repo || !dir.starts_with(repo) || tokio::fs::remove_dir(dir).await.is_err() {
+            break;
+        }
+        parent = dir.parent();
+    }
+}
+
+/// Restores the worktree to the checkpoint tree: modified and deleted files
+/// come back, files absent from the snapshot are removed. HEAD, the real index
+/// and git-ignored files/directories are left alone.
+pub async fn checkpoint_restore(dir: &Path, run_id: &str) -> Result<(), PultError> {
+    let repo = resolve_repo(dir).await?;
+    let target = checkpoint_ref(&repo, run_id).await?;
+    let tree = split_nul_paths(
+        &git(
+            &repo,
+            &["ls-tree", "-r", "--name-only", "-z", &target],
+            None,
+        )
+        .await?,
+    );
+    let worktree = split_nul_paths(
+        &git(
+            &repo,
+            &[
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ],
+            None,
+        )
+        .await?,
+    );
+
+    // Scratch index first: if it cannot be built (e.g. a copied index in a
+    // merge-conflict state) the worktree is still untouched.
+    let (temp, _copied) = temp_index_for(&repo).await?;
+    let result = async {
+        git(&repo, &["read-tree", &target], Some(&temp)).await?;
+
+        for stale in worktree.difference(&tree) {
+            if is_protected_path(stale) {
+                continue;
+            }
+            let abs = repo.join(stale);
+            match tokio::fs::remove_file(&abs).await {
+                Ok(()) => prune_empty_parents(&repo, &abs).await,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(internal(format!("restore remove {}: {err}", abs.display())))
+                }
+            }
+        }
+
+        if !tree.is_empty() {
+            git(&repo, &["checkout-index", "--all", "--force"], Some(&temp)).await?;
+        }
+        Ok(())
+    }
+    .await;
+    drop_temp_index(&temp).await;
+    result
+}
+
 #[cfg(test)]
 mod tests;

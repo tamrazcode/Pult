@@ -570,3 +570,175 @@ async fn worktree_remove_preserves_untracked_file_unless_forced() {
     worktree_remove(fx.path(), &name, true).await.unwrap();
     assert!(!wt_path.exists(), "worktree removed when force=true");
 }
+
+#[tokio::test]
+async fn checkpoints_list_empty_for_non_repo_then_lists_refs() {
+    let flat = fixture_root();
+    assert!(checkpoints_list(flat.path()).await.unwrap().is_empty());
+
+    let fx = fixture_repo().await;
+    assert!(checkpoints_list(fx.path()).await.unwrap().is_empty());
+
+    std::fs::write(fx.path().join("tracked.txt"), "a\n").unwrap();
+    checkpoint(fx.path(), "run-a").await.unwrap();
+    std::fs::write(fx.path().join("tracked.txt"), "b\n").unwrap();
+    checkpoint(fx.path(), "run-b").await.unwrap();
+
+    let listed = checkpoints_list(fx.path()).await.unwrap();
+    assert_eq!(listed.len(), 2);
+    assert!(listed.iter().any(|id| id == "run-a"));
+    assert!(listed.iter().any(|id| id == "run-b"));
+
+    let expected: Vec<String> = git_sync(
+        fx.path(),
+        &[
+            "for-each-ref",
+            "--sort=committerdate",
+            "--format=%(refname:strip=3)",
+            "refs/pult/checkpoints",
+        ],
+    )
+    .lines()
+    .map(str::trim)
+    .filter(|line| !line.is_empty())
+    .map(str::to_string)
+    .collect();
+    assert_eq!(listed, expected, "list must keep git's committerdate order");
+}
+
+#[tokio::test]
+async fn checkpoint_diff_vs_parent_and_between_runs() {
+    let fx = fixture_repo().await;
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nRUN_A\nline3\n").unwrap();
+    checkpoint(fx.path(), "run-a").await.unwrap();
+
+    let summary = checkpoint_diff_summary(fx.path(), "run-a", None)
+        .await
+        .unwrap();
+    assert_eq!(summary.base, "run-a^");
+    let file = summary
+        .files
+        .iter()
+        .find(|f| f.path == "tracked.txt")
+        .expect("tracked.txt changed in run-a");
+    assert_eq!(file.added, 1);
+    assert_eq!(file.removed, 1);
+    assert_eq!(file.status, "modified");
+
+    let one = checkpoint_diff_file(fx.path(), "run-a", "tracked.txt", None)
+        .await
+        .unwrap();
+    assert_eq!(one.path, "tracked.txt");
+    assert_eq!(one.added, 1);
+    assert!(one.raw.contains("+RUN_A"));
+
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nRUN_B\nline3\n").unwrap();
+    std::fs::write(fx.path().join("run_b.txt"), "b\n").unwrap();
+    checkpoint(fx.path(), "run-b").await.unwrap();
+
+    let between = checkpoint_diff_summary(fx.path(), "run-b", Some("run-a"))
+        .await
+        .unwrap();
+    assert_eq!(between.base, "run-a");
+    let between_file = between
+        .files
+        .iter()
+        .find(|f| f.path == "tracked.txt")
+        .expect("tracked.txt changed between run-a and run-b");
+    assert_eq!(between_file.added, 1);
+    assert_eq!(between_file.removed, 1);
+    let added = between
+        .files
+        .iter()
+        .find(|f| f.path == "run_b.txt")
+        .expect("run_b.txt appeared in run-b");
+    assert_eq!(added.status, "added");
+    assert_eq!(added.added, 1);
+
+    let err = checkpoint_diff_summary(fx.path(), "run-missing", None)
+        .await
+        .unwrap_err();
+    assert_eq!(err_code(&err), "git.checkpoint_not_found");
+    let err = checkpoint_diff_summary(fx.path(), "run-b", Some("run-missing"))
+        .await
+        .unwrap_err();
+    assert_eq!(err_code(&err), "git.checkpoint_not_found");
+}
+
+#[tokio::test]
+async fn checkpoint_restore_resets_worktree_without_touching_ignored_or_head() {
+    let fx = fixture_repo().await;
+    std::fs::write(fx.path().join(".gitignore"), "ignored_dir/\n").unwrap();
+    git_sync(fx.path(), &["add", ".gitignore"]);
+    git_sync(fx.path(), &["commit", "-q", "-m", "ignore"]);
+    let head_before = git_sync(fx.path(), &["rev-parse", "HEAD"])
+        .trim()
+        .to_string();
+
+    let ignored_dir = fx.path().join("ignored_dir");
+    std::fs::create_dir_all(&ignored_dir).unwrap();
+    std::fs::write(ignored_dir.join("keep.txt"), "ignored\n").unwrap();
+    std::fs::write(fx.path().join("tracked.txt"), "line1\nSNAP\nline3\n").unwrap();
+    checkpoint(fx.path(), "run-1").await.unwrap();
+
+    // Divergence after the snapshot: edited, deleted, and brand-new files.
+    std::fs::write(fx.path().join("tracked.txt"), "hacked\n").unwrap();
+    std::fs::remove_file(fx.path().join("sub").join("nested.txt")).unwrap();
+    std::fs::write(fx.path().join("new.txt"), "new\n").unwrap();
+    std::fs::create_dir_all(fx.path().join("scratch").join("deep")).unwrap();
+    std::fs::write(fx.path().join("scratch").join("deep").join("x.txt"), "x\n").unwrap();
+    std::fs::write(ignored_dir.join("keep.txt"), "still here\n").unwrap();
+
+    checkpoint_restore(fx.path(), "run-1").await.unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(fx.path().join("tracked.txt")).unwrap(),
+        "line1\nSNAP\nline3\n"
+    );
+    assert!(fx.path().join("sub").join("nested.txt").exists());
+    assert!(!fx.path().join("new.txt").exists());
+    assert!(
+        !fx.path().join("scratch").exists(),
+        "emptied directories are pruned"
+    );
+    assert_eq!(
+        std::fs::read_to_string(ignored_dir.join("keep.txt")).unwrap(),
+        "still here\n",
+        "ignored files must survive the restore"
+    );
+    assert_eq!(
+        git_sync(fx.path(), &["rev-parse", "HEAD"]).trim(),
+        head_before,
+        "restore must not move HEAD"
+    );
+    let st = status(fx.path()).await.unwrap();
+    assert_eq!(
+        st.entries.len(),
+        1,
+        "only the snapshot edit remains: {st:?}"
+    );
+    assert_eq!(st.entries[0].path, "tracked.txt");
+    assert_eq!(st.entries[0].index_status, " ");
+
+    let err = checkpoint_restore(fx.path(), "run-missing")
+        .await
+        .unwrap_err();
+    assert_eq!(err_code(&err), "git.checkpoint_not_found");
+}
+
+#[tokio::test]
+async fn checkpoint_run_ids_reject_unsafe_segments() {
+    let fx = fixture_repo().await;
+    for bad in ["", "-x", "a/b", "a\\b", "a b", "a..b", "a\nb", ".."] {
+        assert!(validate_run_id(bad).is_err(), "{bad:?} must be rejected");
+        let err = checkpoint_diff_summary(fx.path(), bad, None)
+            .await
+            .unwrap_err();
+        assert_eq!(err_code(&err), "git.invalid_checkpoint", "{bad:?}");
+        let err = checkpoint_restore(fx.path(), bad).await.unwrap_err();
+        assert_eq!(err_code(&err), "git.invalid_checkpoint", "{bad:?}");
+    }
+    for good in ["run-123", "run_1.2", "abc"] {
+        assert!(validate_run_id(good).is_ok(), "{good:?} must be accepted");
+    }
+}

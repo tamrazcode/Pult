@@ -305,3 +305,102 @@ async fn refused_dirty_delete_keeps_thread_and_settles_status() {
         "finalize_run must emit thread:update with settled status even while deleting"
     );
 }
+
+const PNG_BYTES: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+
+fn image_fixture_workspace() -> PathBuf {
+    let n = SEQ.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("pult-img-ws-{}-{n}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mkdir image workspace");
+    dir
+}
+
+/// An image preview is limited to the thread workspace even when the thread
+/// is in FullAccess: the command must not become a general file reader.
+#[test]
+fn image_preview_is_limited_to_the_thread_workspace_in_full_access() {
+    let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+    let runtime = AgentRuntime::new(store, Arc::new(NoopSink));
+    let ws = image_fixture_workspace();
+    let now = now_millis();
+    runtime
+        .store()
+        .create_thread(&ThreadRecord {
+            id: "th-img".to_string(),
+            project_id: None,
+            title: "image".to_string(),
+            status: "draft".to_string(),
+            pinned: false,
+            created_at: now,
+            updated_at: now,
+            workspace: Some(ws.to_string_lossy().into_owned()),
+            main_repo: None,
+            worktree_name: None,
+            parent_thread_id: None,
+            parent_run_id: None,
+            depth: 0,
+            lineage_kind: None,
+            child_role: None,
+        })
+        .expect("create thread");
+    runtime
+        .set_permission_mode(
+            "th-img",
+            crate::runtime::permissions::PermissionMode::FullAccess,
+        )
+        .expect("set full access");
+    let roots = super::image_roots(&runtime, Some("th-img"));
+
+    let inside = ws.join("shot.png");
+    std::fs::write(&inside, PNG_BYTES).expect("write workspace png");
+    let data_url =
+        super::image_data_url(&roots, &inside.to_string_lossy()).expect("workspace image");
+    assert!(data_url.starts_with("data:image/png;base64,"));
+
+    let outside = image_fixture_workspace().join("outside.png");
+    std::fs::write(&outside, PNG_BYTES).expect("write outside png");
+    assert!(
+        super::image_data_url(&roots, &outside.to_string_lossy()).is_err(),
+        "FullAccess must not lift the workspace restriction"
+    );
+
+    let renamed = ws.join("notes.png");
+    std::fs::write(&renamed, b"just text, not an image").expect("write fake png");
+    assert!(
+        super::image_data_url(&roots, &renamed.to_string_lossy()).is_err(),
+        "magic bytes that disagree with the extension must be rejected"
+    );
+
+    let _ = std::fs::remove_dir_all(&ws);
+    let _ = std::fs::remove_dir_all(outside.parent().expect("outside parent"));
+}
+
+/// Only plain npm package specs reach npm; shell metacharacters do not.
+#[test]
+fn npm_package_specs_are_allowlisted() {
+    for ok in [
+        "left-pad",
+        "@anthropic-ai/claude-code",
+        "@openai/codex",
+        "@google/gemini-cli",
+        "opencode@1.2.3",
+        "@scope/pkg@0.1.0-rc.1",
+    ] {
+        assert!(super::valid_npm_package(ok), "{ok} must be accepted");
+    }
+    for bad in [
+        "",
+        "@",
+        "@/pkg",
+        "Pkg",
+        "pkg@",
+        "a; rm -rf /",
+        "pkg && calc",
+        "$(whoami)",
+        "pkg\n--registry evil",
+        "pkg --force",
+        "@scope/pkg@1.0.0/../x",
+    ] {
+        assert!(!super::valid_npm_package(bad), "{bad} must be rejected");
+    }
+}

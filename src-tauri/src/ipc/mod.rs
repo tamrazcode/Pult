@@ -804,19 +804,16 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
             ));
         }
     };
+    if !valid_npm_package(package) {
+        return Err(PultError::with_code(
+            "provider.install_invalid",
+            format!("refusing to install unexpected package: {package}"),
+        ));
+    }
+    let mut command = tokio::process::Command::new(npm_program());
+    command.args(["install", "-g", "--", package]);
     #[cfg(windows)]
-    let mut command = {
-        let mut command = tokio::process::Command::new("cmd.exe");
-        command.args(["/d", "/s", "/c", &format!("npm install -g {package}")]);
-        command.creation_flags(0x0800_0000);
-        command
-    };
-    #[cfg(not(windows))]
-    let mut command = {
-        let mut command = tokio::process::Command::new("npm");
-        command.args(["install", "-g", package]);
-        command
-    };
+    command.creation_flags(0x0800_0000);
     let output = tokio::time::timeout(std::time::Duration::from_secs(600), command.output())
         .await
         .map_err(|_| PultError::with_code("provider.install_timeout", "npm install timed out"))?
@@ -1120,6 +1117,52 @@ pub async fn git_checkpoint(
 ) -> Result<String, PultError> {
     let dir = thread_git_dir(&runtime, &thread_id)?;
     crate::git::checkpoint(&dir, &run_id).await
+}
+
+/// Hidden checkpoint refs for the thread, oldest first.
+#[tauri::command]
+pub async fn git_checkpoints_list(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+) -> Result<Vec<String>, PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::checkpoints_list(&dir).await
+}
+
+/// What one checkpoint run changed (metadata only; patches load per file).
+#[tauri::command]
+pub async fn git_checkpoint_diff(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    run_id: String,
+    base_run_id: Option<String>,
+) -> Result<crate::git::GitDiffSummary, PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::checkpoint_diff_summary(&dir, &run_id, base_run_id.as_deref()).await
+}
+
+/// One file's patch inside a checkpoint diff.
+#[tauri::command]
+pub async fn git_checkpoint_diff_file(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    run_id: String,
+    path: String,
+    base_run_id: Option<String>,
+) -> Result<crate::git::DiffFile, PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::checkpoint_diff_file(&dir, &run_id, &path, base_run_id.as_deref()).await
+}
+
+/// Rolls the worktree back to a checkpoint tree without touching HEAD.
+#[tauri::command]
+pub async fn git_checkpoint_restore(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
+    run_id: String,
+) -> Result<(), PultError> {
+    let dir = thread_git_dir(&runtime, &thread_id)?;
+    crate::git::checkpoint_restore(&dir, &run_id).await
 }
 
 // ---- PTY terminals (M5) ----
@@ -1575,22 +1618,65 @@ pub struct ProviderUpdate {
     pub managed: bool,
 }
 
+/// npm package spec, optionally scoped and versioned, e.g.
+/// `@anthropic-ai/claude-code` or `left-pad@1.3.0`. Anything a shell could
+/// interpret is rejected before the spec reaches npm.
+fn valid_npm_package(spec: &str) -> bool {
+    fn start_ok(c: char) -> bool {
+        c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '~'
+    }
+    fn rest_ok(c: char) -> bool {
+        start_ok(c) || c == '.' || c == '_'
+    }
+    let (name, version) = match spec.rfind('@') {
+        Some(idx) if idx > 0 => (&spec[..idx], Some(&spec[idx + 1..])),
+        _ => (spec, None),
+    };
+    let (scope, name) = match name.strip_prefix('@') {
+        Some(scoped) => match scoped.split_once('/') {
+            Some((scope, name)) => (Some(scope), name),
+            None => return false,
+        },
+        None => (None, name),
+    };
+    if let Some(scope) = scope {
+        if !scope.chars().next().is_some_and(start_ok) || !scope.chars().all(rest_ok) {
+            return false;
+        }
+    }
+    if !name.chars().next().is_some_and(start_ok) || !name.chars().all(rest_ok) {
+        return false;
+    }
+    match version {
+        Some(version) => {
+            !version.is_empty()
+                && version.chars().all(|c| {
+                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-')
+                })
+        }
+        None => true,
+    }
+}
+
+/// npm only exists as a `.cmd` shim on Windows; Rust escapes batch arguments
+/// itself (CVE-2024-24576), so no shell string is built here.
+fn npm_program() -> &'static str {
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
+    }
+}
+
 fn npm_command(args: &[&str]) -> std::process::Command {
+    let mut command = std::process::Command::new(npm_program());
+    command.args(args);
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        let mut command = std::process::Command::new("cmd");
-        command.args(["/c", "npm"]);
-        command.args(args);
         command.creation_flags(0x0800_0000);
-        command
     }
-    #[cfg(not(windows))]
-    {
-        let mut command = std::process::Command::new("npm");
-        command.args(args);
-        command
-    }
+    command
 }
 
 /// Which self-updater a configured agent has (no package replacement).
@@ -1640,24 +1726,39 @@ fn cli_version(program: &str) -> Option<String> {
         .map(|value| value.trim_start_matches('v').to_string())
 }
 
-fn npm_latest(package: &str) -> Option<String> {
-    let output = npm_command(&["view", package, "version"]).output().ok()?;
+async fn npm_latest(package: &str) -> Option<String> {
+    let package = package.to_string();
+    let output =
+        tokio::task::spawn_blocking(move || npm_command(&["view", &package, "version"]).output())
+            .await
+            .ok()?
+            .ok()?;
     let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!text.is_empty()).then_some(text)
 }
 
-fn opencode_latest() -> Option<String> {
-    let output = std::process::Command::new("curl")
-        .args([
-            "-L",
-            "-s",
-            "-H",
-            "User-Agent: pult",
-            "https://api.github.com/repos/sst/opencode/releases/latest",
-        ])
-        .output()
+/// reqwest is built with `rustls-no-provider` (same as the updater); install
+/// ring once before the first client exists.
+fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, PultError> {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    });
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("pult")
+        .build()
+        .map_err(|e| PultError::internal(format!("http client: {e}")))
+}
+
+async fn opencode_latest() -> Option<String> {
+    let response = http_client(std::time::Duration::from_secs(10))
+        .ok()?
+        .get("https://api.github.com/repos/sst/opencode/releases/latest")
+        .send()
+        .await
         .ok()?;
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let value: serde_json::Value = response.json().await.ok()?;
     value
         .get("tag_name")?
         .as_str()
@@ -1670,37 +1771,43 @@ pub async fn providers_update_check(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
 ) -> Result<Vec<ProviderUpdate>, PultError> {
     let instances = runtime.instances_spec();
-    tokio::task::spawn_blocking(move || {
-        let mut updates = Vec::new();
-        for instance in instances {
-            let Some(kind) = update_kind(&instance) else {
-                continue;
-            };
-            let (current, latest, package) = match kind {
-                "codex" => (
-                    cli_version("codex"),
-                    npm_latest("@openai/codex"),
-                    "@openai/codex",
-                ),
-                "opencode" => (cli_version("opencode"), opencode_latest(), "opencode"),
-                _ => continue,
-            };
-            if latest.is_none() || current == latest {
-                continue;
-            }
-            updates.push(ProviderUpdate {
-                instance_id: instance.id,
-                display_name: instance.display_name,
-                package: Some(package.to_string()),
-                current,
-                latest,
-                managed: true,
-            });
+    let mut updates = Vec::new();
+    for instance in instances {
+        let Some(kind) = update_kind(&instance) else {
+            continue;
+        };
+        let (current, latest, package): (Option<String>, Option<String>, &str) = match kind {
+            "codex" => (
+                tokio::task::spawn_blocking(|| cli_version("codex"))
+                    .await
+                    .ok()
+                    .flatten(),
+                npm_latest("@openai/codex").await,
+                "@openai/codex",
+            ),
+            "opencode" => (
+                tokio::task::spawn_blocking(|| cli_version("opencode"))
+                    .await
+                    .ok()
+                    .flatten(),
+                opencode_latest().await,
+                "opencode",
+            ),
+            _ => continue,
+        };
+        if latest.is_none() || current == latest {
+            continue;
         }
-        Ok(updates)
-    })
-    .await
-    .map_err(|e| PultError::internal(format!("update check failed: {e}")))?
+        updates.push(ProviderUpdate {
+            instance_id: instance.id,
+            display_name: instance.display_name,
+            package: Some(package.to_string()),
+            current,
+            latest,
+            managed: true,
+        });
+    }
+    Ok(updates)
 }
 
 /// Runs the provider's own updater (`codex update` / `opencode upgrade`).
@@ -1800,9 +1907,7 @@ pub struct EmbedCheck {
 
 #[tauri::command]
 pub async fn browser_check_frame_headers(url: String) -> Result<EmbedCheck, PultError> {
-    tokio::task::spawn_blocking(move || check_frame_headers(&url))
-        .await
-        .map_err(|e| PultError::internal(format!("header check failed: {e}")))?
+    check_frame_headers(&url).await
 }
 
 fn parse_frame_headers(raw: &str) -> EmbedCheck {
@@ -1853,20 +1958,30 @@ fn parse_frame_headers(raw: &str) -> EmbedCheck {
     }
 }
 
-fn check_frame_headers(url: &str) -> Result<EmbedCheck, PultError> {
+async fn check_frame_headers(url: &str) -> Result<EmbedCheck, PultError> {
     validate_external_url(url)?;
-    let output = std::process::Command::new("curl")
-        .args(["-sIL", "--max-time", "5", url])
-        .output();
-    let Ok(output) = output else {
+    // A probe that cannot reach the site stays optimistic; the browser
+    // surface itself will show the failure.
+    let Ok(client) = http_client(std::time::Duration::from_secs(5)) else {
         return Ok(EmbedCheck {
             embeddable: true,
             reason: None,
         });
     };
-    Ok(parse_frame_headers(&String::from_utf8_lossy(
-        &output.stdout,
-    )))
+    let Ok(response) = client.get(url).send().await else {
+        return Ok(EmbedCheck {
+            embeddable: true,
+            reason: None,
+        });
+    };
+    let mut raw = String::new();
+    for (name, value) in response.headers() {
+        raw.push_str(name.as_str());
+        raw.push_str(": ");
+        raw.push_str(value.to_str().unwrap_or(""));
+        raw.push('\n');
+    }
+    Ok(parse_frame_headers(&raw))
 }
 
 /// Reads an HTML file from the thread workspace for the browser surface.
@@ -2095,83 +2210,99 @@ pub async fn read_image_data_url(
     path: String,
     thread_id: Option<String>,
 ) -> Result<String, PultError> {
-    // Full access already lets the agent read these files itself; the display
-    // restriction exists to protect supervised/auto threads, not to hide the
-    // agent's own screenshots.
-    let full_access = thread_id
-        .as_deref()
-        .map(|id| {
-            runtime.permission_mode_for(id)
-                == crate::runtime::permissions::PermissionMode::FullAccess
-        })
-        .unwrap_or(false);
+    // The thread's own workspace, the global workspace and pult home are the
+    // only readable roots, whatever the permission mode: a FullAccess thread
+    // could read the file itself, but this command must not become a general
+    // file reader for the UI.
+    let roots = image_roots(runtime.inner(), thread_id.as_deref());
+    tokio::task::spawn_blocking(move || image_data_url(&roots, &path))
+        .await
+        .map_err(|e| PultError::internal(format!("image read task failed: {e}")))?
+}
+
+/// Resolved per call from one thread row, not by scanning every thread and
+/// project.
+fn image_roots(runtime: &AgentRuntime, thread_id: Option<&str>) -> Vec<std::path::PathBuf> {
     let mut roots: Vec<std::path::PathBuf> = Vec::new();
-    if let Ok(threads) = runtime.store().list_threads() {
-        roots.extend(
-            threads
-                .into_iter()
-                .filter_map(|thread| thread.workspace.map(Into::into)),
-        );
-    }
-    if let Ok(projects) = runtime.store().list_projects() {
-        roots.extend(projects.into_iter().map(|project| project.root_path.into()));
+    if let Some(thread) = thread_id.and_then(|id| runtime.store().get_thread(id).ok()) {
+        if let Ok(root) = runtime.workspace_root_for(&thread) {
+            roots.push(root);
+        }
     }
     if let Ok(global) = runtime.global_workspace_root() {
         roots.push(global);
     }
     roots.push(crate::pult_home());
-    tokio::task::spawn_blocking(move || {
-        use base64::{engine::general_purpose::STANDARD, Engine as _};
-        // Never touch UNC paths: canonicalize would open an SMB connection.
-        if path.starts_with("\\\\") || path.starts_with("//") {
+    roots
+}
+
+fn image_data_url(roots: &[std::path::PathBuf], path: &str) -> Result<String, PultError> {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    // Never touch UNC paths: canonicalize would open an SMB connection.
+    if path.starts_with("\\\\") || path.starts_with("//") {
+        return Err(PultError::with_code(
+            "image.unc_blocked",
+            "network image paths are not allowed",
+        ));
+    }
+    let canonical = std::path::PathBuf::from(path)
+        .canonicalize()
+        .map_err(|e| PultError::internal(format!("image not found: {path} ({e})")))?;
+    let allowed = roots
+        .iter()
+        .filter_map(|root| root.canonicalize().ok())
+        .any(|root| canonical.starts_with(root));
+    if !allowed {
+        return Err(PultError::internal(
+            "image is outside the project/thread workspace",
+        ));
+    }
+    let meta = std::fs::metadata(&canonical)
+        .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
+    if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
+        return Err(PultError::with_code(
+            "image.too_large",
+            "image must be a file up to 8 MB",
+        ));
+    }
+    let ext = canonical
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let mime = match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => {
             return Err(PultError::with_code(
-                "image.unc_blocked",
-                "network image paths are not allowed",
-            ));
+                "image.unsupported_type",
+                "unsupported image type",
+            ))
         }
-        let canonical = std::path::PathBuf::from(&path)
-            .canonicalize()
-            .map_err(|e| PultError::internal(format!("image not found: {path} ({e})")))?;
-        let allowed = roots
-            .iter()
-            .filter_map(|root| root.canonicalize().ok())
-            .any(|root| canonical.starts_with(root));
-        if !allowed && !full_access {
-            return Err(PultError::internal(
-                "image is outside the project/thread workspace",
-            ));
-        }
-        let meta = std::fs::metadata(&canonical)
-            .map_err(|e| PultError::internal(format!("image not readable: {e}")))?;
-        if !meta.is_file() || meta.len() > 8 * 1024 * 1024 {
-            return Err(PultError::with_code(
-                "image.too_large",
-                "image must be a file up to 8 MB",
-            ));
-        }
-        let mime = match canonical
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .map(str::to_ascii_lowercase)
-            .as_deref()
-        {
-            Some("png") => "image/png",
-            Some("jpg" | "jpeg") => "image/jpeg",
-            Some("gif") => "image/gif",
-            Some("webp") => "image/webp",
-            _ => {
-                return Err(PultError::with_code(
-                    "image.unsupported_type",
-                    "unsupported image type",
-                ))
-            }
-        };
-        let bytes = std::fs::read(&canonical)
-            .map_err(|e| PultError::internal(format!("image read failed: {e}")))?;
-        Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
-    })
-    .await
-    .map_err(|e| PultError::internal(format!("image read task failed: {e}")))?
+    };
+    let bytes = std::fs::read(&canonical)
+        .map_err(|e| PultError::internal(format!("image read failed: {e}")))?;
+    if !image_magic_ok(&ext, &bytes) {
+        return Err(PultError::with_code(
+            "image.unsupported_type",
+            "file content does not match its image extension",
+        ));
+    }
+    Ok(format!("data:{mime};base64,{}", STANDARD.encode(bytes)))
+}
+
+/// Extension and leading bytes must agree, so `notes.txt` renamed to `.png`
+/// cannot be handed to the renderer as an image.
+fn image_magic_ok(ext: &str, bytes: &[u8]) -> bool {
+    match ext {
+        "png" => bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]),
+        "jpg" | "jpeg" => bytes.starts_with(&[0xff, 0xd8, 0xff]),
+        "gif" => bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a"),
+        "webp" => bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WEBP",
+        _ => false,
+    }
 }
 
 #[tauri::command]
