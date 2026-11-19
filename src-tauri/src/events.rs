@@ -306,8 +306,16 @@ fn merge_delta_into(prev: &mut Event, next: &Event) -> bool {
     if prev.run_id != next.run_id || prev.seq.checked_add(1) != Some(next.seq) {
         return false;
     }
+    // Never build one event big enough for the IPC cap to replace with an
+    // "omitted" stub: a block above MAX_MERGED_TEXT stays split, and every part
+    // is still far below the cap. Without this a long answer that used to
+    // survive as many small deltas would vanish whole after merging.
+    const MAX_MERGED_TEXT: usize = 1_500_000;
     match (&mut prev.kind, &next.kind) {
         (EventKind::AgentMessageDelta { delta: into }, EventKind::AgentMessageDelta { delta }) => {
+            if into.len() + delta.len() > MAX_MERGED_TEXT {
+                return false;
+            }
             into.push_str(delta);
         }
         (
@@ -320,6 +328,9 @@ fn merge_delta_into(prev: &mut Event, next: &Event) -> bool {
                 started_at: next_start,
             },
         ) => {
+            if into.len() + delta.len() > MAX_MERGED_TEXT {
+                return false;
+            }
             // The first merge pins the block start; later ones keep it. Reading
             // `prev.ts` here is still the block's first timestamp.
             let block_start = (*started_at).or(*next_start).unwrap_or(prev.ts);
@@ -475,6 +486,23 @@ mod tests {
         assert_eq!(events[0].id, "run-live-0");
         assert_eq!(events[1].id, "run-live-1");
         assert_eq!(events[2].id, "run-done-1");
+    }
+
+    #[test]
+    fn coalesce_never_builds_an_event_the_cap_would_stub() {
+        // cap_event_payloads replaces a delta longer than 2 MB with a stub
+        // instead of truncating it, so a merged block must stay well below that.
+        let big = "x".repeat(1_000_000);
+        let mut events = vec![
+            message("run-1", 0, 100, &big),
+            message("run-1", 1, 110, &big),
+            message("run-1", 2, 120, &big),
+        ];
+        coalesce_delta_events(&mut events, None);
+        assert_eq!(events.len(), 3, "2 MB blocks stay split, nothing is lost");
+        for event in &events {
+            assert!(serde_json::to_string(event).unwrap().len() < 2_000_000);
+        }
     }
 
     #[test]
