@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::Manager;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use thiserror::Error;
 
 /// Typed error surfaced over IPC as `{ code, message }` (§4.3 contract).
@@ -147,6 +148,51 @@ fn register_toast_app_id() {
         .status();
 }
 
+/// A store that cannot be opened is recoverable. The app used to abort setup,
+/// which flashed a window and exited with code 101 without telling the user
+/// anything; now a native dialog explains the failure and offers to move the
+/// broken database aside and restart.
+fn report_store_failure(app: &tauri::AppHandle, error: &PultError) {
+    // Nothing in the window can work without the store, so do not leave a
+    // half-loaded shell behind the dialog.
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+    let message = format!(
+        "Pult cannot open its database.\n\n{error}\n\nThe database lives in {}.\n\n\
+         Recreating moves it aside as pult.db.broken-<timestamp> and starts with an empty \
+         history. Nothing else is deleted.",
+        pult_home().display()
+    );
+    let handle = app.clone();
+    app.dialog()
+        .message(message)
+        .title("Pult — database problem")
+        .kind(MessageDialogKind::Error)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Recreate database".to_string(),
+            "Quit".to_string(),
+        ))
+        .show(move |recreate| {
+            if !recreate {
+                handle.exit(0);
+                return;
+            }
+            match store::recovery::move_broken_db_aside(&pult_home()) {
+                Ok(_) => handle.restart(),
+                Err(err) => {
+                    let inner = handle.clone();
+                    handle
+                        .dialog()
+                        .message(format!("Could not move the database aside: {err}"))
+                        .title("Pult — database problem")
+                        .kind(MessageDialogKind::Error)
+                        .show(move |_| inner.exit(1));
+                }
+            }
+        });
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // `pult mcp-stdio` must never create a window or a Tauri runtime.
@@ -183,7 +229,13 @@ pub fn run() {
         .setup(|app| {
             #[cfg(windows)]
             register_toast_app_id();
-            let store = open_store()?;
+            let store = match open_store() {
+                Ok(store) => store,
+                Err(error) => {
+                    report_store_failure(app.handle(), &error);
+                    return Ok(());
+                }
+            };
             let runtime: Arc<runtime::AgentRuntime> = Arc::new(runtime::AgentRuntime::new(
                 store,
                 Arc::new(app.handle().clone()) as Arc<dyn runtime::EventSink>,

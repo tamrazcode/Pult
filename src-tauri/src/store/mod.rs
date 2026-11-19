@@ -14,6 +14,7 @@ mod projects;
 mod providers;
 mod queue;
 pub mod records;
+pub mod recovery;
 mod runs;
 mod secrets;
 #[cfg(test)]
