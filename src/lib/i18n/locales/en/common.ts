@@ -63,6 +63,7 @@ export const common = {
   "common.commands.toggleRightPanel": "Toggle right panel",
   "common.commands.showDiffPanel": "Show diff panel",
   "common.commands.showTerminalPanel": "Show terminal panel",
+  "common.commands.toggleBottomTerminal": "Toggle bottom terminal",
   "common.commands.showBrowserPanel": "Show browser panel",
   "common.commands.showFilesPanel": "Show files panel",
   "common.commands.openSurface": "Open a surface",

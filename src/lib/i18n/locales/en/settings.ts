@@ -53,6 +53,9 @@ export const settings = {
   "settings.appearance.composerOpacity": "Composer opacity",
   "settings.appearance.glassHint":
     "Lower values make the composer more transparent while keeping the backdrop blur.",
+  "settings.appearance.reduceTransparency": "Reduce transparency",
+  "settings.appearance.reduceTransparencyDesc":
+    "Replace frosted backdrop blur with opaque smoked panes.",
   "settings.appearance.timeHeading": "Time",
   "settings.appearance.timeFormat": "Time format",
   "settings.appearance.timeFormat24": "24-hour (14:30)",
@@ -62,6 +65,11 @@ export const settings = {
   "settings.chat.subtitle": "Composer behaviour and how the transcript streams.",
   "settings.chat.sendWith": "Send message with",
   "settings.chat.sendWithHint": "The other combination always inserts a newline.",
+  "settings.chat.verbosity": "Transcript verbosity",
+  "settings.chat.verbosityFull": "Full",
+  "settings.chat.verbosityQuiet": "Quiet",
+  "settings.chat.verbosityHint":
+    "Quiet mode collapses consecutive file reads and searches into one expandable summary line.",
   "settings.chat.follow": "Follow streaming output",
   "settings.chat.followDesc": "Keep the transcript pinned to the bottom while the agent writes.",
   "settings.chat.timestamps": "Show message timestamps",
@@ -107,6 +115,10 @@ export const settings = {
     "How pult starts the agent (ACP over stdio). Bare names resolve on PATH — `npx`, `opencode`, `claude` all work.",
   "settings.providers.args": "Arguments (comma-separated)",
   "settings.providers.saveRuntime": "Save runtime",
+  "settings.providers.homePath": "Home path",
+  "settings.providers.shadowHomePath": "Shadow home path",
+  "settings.providers.envKey": "Variable name",
+  "settings.providers.envValue": "Variable value",
   "settings.providers.disconnect": "Disconnect",
   "settings.providers.removeHint": "Removes the provider from {{path}}.",
   "settings.providers.addHint":
