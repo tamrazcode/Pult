@@ -12,6 +12,7 @@ export default tseslint.config(
       "scripts/**",
       "fixtures/**",
       "docs/reviews/**",
+      "outputs/**",
       "src/routeTree.gen.ts",
     ],
   },
