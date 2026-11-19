@@ -370,7 +370,7 @@ fn cap_event_payloads(event: &mut crate::events::Event, max: usize) {
                 *delta = "\n\n_(large generated payload omitted)_\n\n".to_string();
             }
         }
-        crate::events::EventKind::AgentThoughtDelta { delta } => {
+        crate::events::EventKind::AgentThoughtDelta { delta, .. } => {
             if delta.len() > max {
                 *delta = "_(large thought payload omitted)_".to_string();
             }
@@ -400,6 +400,12 @@ pub async fn threads_get(
         let desired_config = runtime.desired_config(&thread_id);
         let runs = runtime.store().list_runs(&thread_id)?;
         let mut events = runtime.store().load_thread_events(&thread_id)?;
+        // Most of a long thread's events are text deltas the reducer glues into
+        // one block per run. Merge them before the payload cap, so the budget is
+        // spent on tool output the reader can actually see instead of on glue.
+        // The live run is skipped: its deltas keep arriving and its ids matter
+        // for dedupe.
+        crate::events::coalesce_delta_events(&mut events, active_run_id.as_deref());
         // Historical rows may predate the live payload caps (multi-MB tool
         // output / base64 images). Truncate before crossing IPC: opening such a
         // thread must never freeze the WebView.
@@ -2742,5 +2748,107 @@ mod security_regression_tests {
             "HTTP/1.1 200 OK\r\nContent-Security-Policy: frame-ancestors *\r\n\r\n",
         );
         assert!(wildcard.embeddable);
+    }
+}
+
+#[cfg(test)]
+mod thread_open_bench {
+    //! Ignored perf harness for `threads_get`'s data path on a real database.
+    //!
+    //! ```text
+    //! PULT_BENCH_DB=%TEMP%\pult-bench.db PULT_BENCH_THREAD=th-... \
+    //!   cargo test --release --lib thread_open_bench -- --ignored --nocapture
+    //! ```
+    //!
+    //! Reports the snapshot as it is sent today versus after delta coalescing:
+    //! event count, bytes crossing IPC, and how many events the 16 MB budget had
+    //! to gut to make room.
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    use crate::events::{coalesce_delta_events, Event, EventKind};
+    use crate::store::Store;
+
+    fn millis(samples: &[Duration]) -> f64 {
+        let mut sorted: Vec<f64> = samples.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted[sorted.len() / 2]
+    }
+
+    fn wire_bytes(events: &[Event]) -> usize {
+        serde_json::to_string(events)
+            .map(|text| text.len())
+            .unwrap_or(0)
+    }
+
+    /// True when the payload cap replaced a field with the "omitted" stub.
+    fn gutted(event: &Event) -> bool {
+        fn stubbed(value: &Option<serde_json::Value>) -> bool {
+            value
+                .as_ref()
+                .and_then(|v| v.get("truncated"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        }
+        match &event.kind {
+            EventKind::ToolCall { raw_input, .. } => stubbed(raw_input),
+            EventKind::ToolCallUpdate {
+                content, raw_output, ..
+            } => stubbed(content) || stubbed(raw_output),
+            _ => false,
+        }
+    }
+
+    #[test]
+    #[ignore = "perf harness: needs PULT_BENCH_DB and PULT_BENCH_THREAD"]
+    fn thread_open_before_after_coalescing() {
+        let db = PathBuf::from(std::env::var("PULT_BENCH_DB").expect("PULT_BENCH_DB"));
+        let thread_id = std::env::var("PULT_BENCH_THREAD").expect("PULT_BENCH_THREAD");
+        let store = Store::open(&db).expect("open store");
+
+        let (mut loads, mut before, mut after) = (vec![], vec![], vec![]);
+        let (mut before_n, mut after_n) = (0usize, 0usize);
+        let (mut before_bytes, mut after_bytes) = (0usize, 0usize);
+        let (mut before_gutted, mut after_gutted) = (0usize, 0usize);
+
+        for _ in 0..3 {
+            let t = Instant::now();
+            let baseline = store.load_thread_events(&thread_id).expect("load");
+            loads.push(t.elapsed());
+
+            let t = Instant::now();
+            let mut plain = baseline.clone();
+            super::cap_ui_event_payloads(&mut plain);
+            before.push(t.elapsed());
+            before_n = plain.len();
+            before_bytes = wire_bytes(&plain);
+            before_gutted = plain.iter().filter(|e| gutted(e)).count();
+
+            let t = Instant::now();
+            let mut merged = baseline;
+            coalesce_delta_events(&mut merged, None);
+            super::cap_ui_event_payloads(&mut merged);
+            after.push(t.elapsed());
+            after_n = merged.len();
+            after_bytes = wire_bytes(&merged);
+            after_gutted = merged.iter().filter(|e| gutted(e)).count();
+        }
+
+        println!("\n=== threads_get data path: {thread_id} ===");
+        println!("load_thread_events: {:.0} ms", millis(&loads));
+        println!(
+            "before (today):     {} events, {:.2} MB, gutted {} events, cap pass {:.0} ms",
+            before_n,
+            before_bytes as f64 / 1_048_576.0,
+            before_gutted,
+            millis(&before)
+        );
+        println!(
+            "after (coalesced):  {} events, {:.2} MB, gutted {} events, coalesce+cap {:.0} ms",
+            after_n,
+            after_bytes as f64 / 1_048_576.0,
+            after_gutted,
+            millis(&after)
+        );
     }
 }

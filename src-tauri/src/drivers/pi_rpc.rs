@@ -270,6 +270,7 @@ impl PiRpcConn {
                                     if let Some(delta) = update["delta"].as_str() {
                                         let _ = events_tx.send(EventKind::AgentThoughtDelta {
                                             delta: delta.to_string(),
+                                            started_at: None,
                                         });
                                     }
                                 }

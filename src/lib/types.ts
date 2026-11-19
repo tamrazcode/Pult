@@ -320,7 +320,8 @@ export interface EventMeta {
 export type EventPayloadUnion =
   | { kind: "user_message"; payload: { text: string; images: ImageInput[] } }
   | { kind: "agent_message_delta"; payload: { delta: string } }
-  | { kind: "agent_thought_delta"; payload: { delta: string } }
+  /** `startedAt` is set on a coalesced block (threads_get merges deltas). */
+  | { kind: "agent_thought_delta"; payload: { delta: string; startedAt?: number } }
   | {
       kind: "tool_call";
       payload: {

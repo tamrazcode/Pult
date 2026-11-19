@@ -175,6 +175,7 @@ function appendTextDelta(
   type: "assistant" | "thought",
   delta: string,
   ts: number,
+  startedAt?: number,
 ): ChatItem[] {
   const last = items[items.length - 1];
   if (last && last.type === type) {
@@ -192,7 +193,13 @@ function appendTextDelta(
     ...closed,
     type === "assistant"
       ? { type: "assistant", text: delta, streaming: true, ts }
-      : { type: "thought", text: delta, streaming: true, startedAt: ts, endedAt: ts },
+      : {
+          type: "thought",
+          text: delta,
+          streaming: true,
+          startedAt: startedAt ?? ts,
+          endedAt: ts,
+        },
   ];
 }
 
@@ -248,7 +255,13 @@ export function applyRunEvent(view: RunView, event: AppEvent): RunView {
     case "agent_thought_delta":
       return {
         ...view,
-        items: appendTextDelta(view.items, "thought", event.payload.delta, event.ts),
+        items: appendTextDelta(
+          view.items,
+          "thought",
+          event.payload.delta,
+          event.ts,
+          event.payload.startedAt,
+        ),
       };
 
     case "tool_call": {

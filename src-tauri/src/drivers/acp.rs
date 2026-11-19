@@ -844,7 +844,12 @@ pub fn project_update(update: SessionUpdate) -> Vec<EventKind> {
                 .unwrap_or_default(),
         },
         SessionUpdate::AgentThoughtChunk { content } => text_of(&content)
-            .map(|delta| vec![EventKind::AgentThoughtDelta { delta }])
+            .map(|delta| {
+                vec![EventKind::AgentThoughtDelta {
+                    delta,
+                    started_at: None,
+                }]
+            })
             .unwrap_or_default(),
         SessionUpdate::ToolCall {
             tool_call_id,
@@ -1122,6 +1127,7 @@ mod tests {
                 },
                 EventKind::AgentThoughtDelta {
                     delta: "thinking".into(),
+                    started_at: None,
                 },
             ),
             (

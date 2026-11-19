@@ -206,6 +206,7 @@ fn every_kind() -> Vec<EventKind> {
         },
         EventKind::AgentThoughtDelta {
             delta: "thinking".to_string(),
+            started_at: None,
         },
         EventKind::ToolCall {
             tool_call_id: "tc-1".to_string(),

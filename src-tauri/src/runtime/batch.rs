@@ -51,8 +51,8 @@ impl EventBatcher {
                     EventKind::AgentMessageDelta { delta: next },
                 ) => delta.push_str(&next),
                 (
-                    Some(EventKind::AgentThoughtDelta { delta }),
-                    EventKind::AgentThoughtDelta { delta: next },
+                    Some(EventKind::AgentThoughtDelta { delta, .. }),
+                    EventKind::AgentThoughtDelta { delta: next, .. },
                 ) => delta.push_str(&next),
                 _ => unreachable!("coalescing was checked above"),
             }

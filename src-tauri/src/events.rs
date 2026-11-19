@@ -62,6 +62,12 @@ pub enum EventKind {
     },
     AgentThoughtDelta {
         delta: String,
+        /// Start of a coalesced thought block. `threads_get` merges back-to-back
+        /// deltas of one run, so the merged event keeps the block's first
+        /// timestamp here while `ts` stays the last one — the UI shows the real
+        /// duration instead of 0 s. Absent on rows written before coalescing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        started_at: Option<i64>,
     },
     ToolCall {
         tool_call_id: String,
@@ -257,6 +263,77 @@ pub fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+/// Collapses back-to-back text deltas of one run into a single event.
+///
+/// The transcript reducer appends every delta to the trailing block, so a long
+/// thread ends up with a few thousand rows no matter how many deltas arrived
+/// (55 036 events on disk fold into 2 771 rows). Shipping the deltas one by one
+/// costs a serialization pass and an IPC object per chunk for text the UI glues
+/// together anyway.
+///
+/// A merged event keeps the last `id`/`seq`/`ts` of its block — so a late
+/// redelivery of the newest delta still dedupes against it — and carries the
+/// block start in `started_at` for thought blocks.
+///
+/// `events` must be in transcript order (run `idx`, then `seq`). The run in
+/// `skip_run` — the thread's live run — is left untouched: its deltas are still
+/// arriving, and a merged event there would hide the ids a live batch dedupes
+/// against. Returns the number of events merged away; idempotent.
+pub fn coalesce_delta_events(events: &mut Vec<Event>, skip_run: Option<&str>) -> usize {
+    let mut out: Vec<Event> = Vec::with_capacity(events.len());
+    let mut merged = 0usize;
+    for event in events.drain(..) {
+        if skip_run == Some(event.run_id.as_str()) {
+            out.push(event);
+            continue;
+        }
+        let keeps_text_flow = out
+            .last_mut()
+            .is_some_and(|prev| merge_delta_into(prev, &event));
+        if keeps_text_flow {
+            merged += 1;
+        } else {
+            out.push(event);
+        }
+    }
+    *events = out;
+    merged
+}
+
+/// Folds `next` into `prev` when both are the same kind of text delta of one
+/// run and directly adjacent. Returns false when the pair is not mergeable.
+fn merge_delta_into(prev: &mut Event, next: &Event) -> bool {
+    if prev.run_id != next.run_id || prev.seq.checked_add(1) != Some(next.seq) {
+        return false;
+    }
+    match (&mut prev.kind, &next.kind) {
+        (EventKind::AgentMessageDelta { delta: into }, EventKind::AgentMessageDelta { delta }) => {
+            into.push_str(delta);
+        }
+        (
+            EventKind::AgentThoughtDelta {
+                delta: into,
+                started_at,
+            },
+            EventKind::AgentThoughtDelta {
+                delta,
+                started_at: next_start,
+            },
+        ) => {
+            // The first merge pins the block start; later ones keep it. Reading
+            // `prev.ts` here is still the block's first timestamp.
+            let block_start = (*started_at).or(*next_start).unwrap_or(prev.ts);
+            into.push_str(delta);
+            *started_at = Some(block_start);
+        }
+        _ => return false,
+    }
+    prev.id = next.id.clone();
+    prev.seq = next.seq;
+    prev.ts = next.ts;
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -295,8 +372,11 @@ mod tests {
             "agent_message_delta"
         );
         assert_eq!(
-            serde_json::to_value(EventKind::AgentThoughtDelta { delta: "x".into() }).unwrap()
-                ["kind"],
+            serde_json::to_value(EventKind::AgentThoughtDelta {
+                delta: "x".into(),
+                started_at: None,
+            })
+            .unwrap()["kind"],
             "agent_thought_delta"
         );
         assert_eq!(
@@ -307,5 +387,111 @@ mod tests {
             .unwrap()["kind"],
             "run_finished"
         );
+    }
+
+    fn thought(run_id: &str, seq: u64, ts: i64, delta: &str) -> Event {
+        let mut event = Event::new(
+            run_id,
+            seq,
+            EventKind::AgentThoughtDelta {
+                delta: delta.into(),
+                started_at: None,
+            },
+        );
+        event.ts = ts;
+        event
+    }
+
+    fn message(run_id: &str, seq: u64, ts: i64, delta: &str) -> Event {
+        let mut event = Event::new(
+            run_id,
+            seq,
+            EventKind::AgentMessageDelta {
+                delta: delta.into(),
+            },
+        );
+        event.ts = ts;
+        event
+    }
+
+    #[test]
+    fn coalesce_merges_consecutive_thought_deltas() {
+        let mut events = vec![
+            thought("run-1", 0, 100, "a"),
+            thought("run-1", 1, 150, "b"),
+            thought("run-1", 2, 200, "c"),
+        ];
+        assert_eq!(coalesce_delta_events(&mut events, None), 2);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].id, "run-1-2");
+        assert_eq!(events[0].seq, 2);
+        assert_eq!(events[0].ts, 200, "block end stays the last delta's ts");
+        match &events[0].kind {
+            EventKind::AgentThoughtDelta { delta, started_at } => {
+                assert_eq!(delta, "abc");
+                assert_eq!(*started_at, Some(100), "block start is the first delta");
+            }
+            other => panic!("unexpected kind: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn coalesce_keeps_runs_gaps_and_kinds_apart() {
+        let mut events = vec![
+            thought("run-1", 0, 100, "a"),
+            thought("run-2", 1, 110, "b"), // other run
+            thought("run-2", 3, 120, "c"), // seq gap
+            message("run-2", 4, 130, "d"), // other kind
+            thought("run-2", 5, 140, "e"),
+        ];
+        assert_eq!(coalesce_delta_events(&mut events, None), 0);
+        assert_eq!(events.len(), 5);
+    }
+
+    #[test]
+    fn coalesce_merges_message_deltas_without_a_start_timestamp() {
+        let mut events = vec![message("run-1", 0, 100, "he"), message("run-1", 1, 120, "llo")];
+        assert_eq!(coalesce_delta_events(&mut events, None), 1);
+        assert_eq!(events[0].ts, 120);
+        assert_eq!(
+            serde_json::to_value(&events[0]).unwrap()["payload"],
+            serde_json::json!({ "delta": "hello" }),
+            "no startedAt field leaks into plain message deltas"
+        );
+    }
+
+    #[test]
+    fn coalesce_leaves_the_live_run_alone() {
+        // The thread's live run still streams: its ids must stay one-per-event
+        // so a redelivered batch keeps deduping against `appliedEvents`.
+        let mut events = vec![
+            thought("run-live", 0, 100, "a"),
+            thought("run-live", 1, 110, "b"),
+            thought("run-done", 0, 120, "c"),
+            thought("run-done", 1, 130, "d"),
+        ];
+        assert_eq!(coalesce_delta_events(&mut events, Some("run-live")), 1);
+        assert_eq!(events.len(), 3, "live run keeps both of its deltas");
+        assert_eq!(events[0].id, "run-live-0");
+        assert_eq!(events[1].id, "run-live-1");
+        assert_eq!(events[2].id, "run-done-1");
+    }
+
+    #[test]
+    fn coalesce_is_idempotent() {
+        let mut events = vec![
+            thought("run-1", 0, 100, "a"),
+            thought("run-1", 1, 150, "b"),
+            message("run-1", 2, 160, "x"),
+            message("run-1", 3, 170, "y"),
+            thought("run-1", 4, 200, "z"),
+        ];
+        coalesce_delta_events(&mut events, None);
+        let once = events.clone();
+        assert_eq!(coalesce_delta_events(&mut events, None), 0);
+        assert_eq!(events, once);
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].ts, 150);
+        assert_eq!(events[1].ts, 170);
     }
 }
