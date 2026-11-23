@@ -1,5 +1,9 @@
 import { create } from "zustand";
 import {
+  gitCheckpointDiff,
+  gitCheckpointDiffFile,
+  gitCheckpointRestore,
+  gitCheckpointsList,
   gitCommit,
   gitDiffFile,
   gitDiffSummary,
@@ -29,6 +33,15 @@ export interface FilePatchState {
   error?: string;
 }
 
+/** One checkpoint turn opened in the diff panel, diffed against its parent. */
+export interface ActiveCheckpointState {
+  runId: string;
+  diff: GitDiffSummary;
+  filePatches: Record<string, FilePatchState>;
+  loading: boolean;
+  error: string | null;
+}
+
 export interface GitThreadState {
   status: GitStatus | null;
   diff: GitDiffSummary | null;
@@ -47,6 +60,12 @@ export interface GitThreadState {
   prUrl: string | null;
   /** path → patch hash of the diff text the user reviewed. */
   reviewed: Record<string, string>;
+  /** Hidden checkpoint run ids, oldest first. */
+  checkpoints: string[];
+  /** Historical turn diff currently inspected; null shows the worktree. */
+  activeCheckpoint: ActiveCheckpointState | null;
+  /** Checkpoint run id whose worktree restore is in flight. */
+  restoringCheckpoint: string | null;
 }
 
 interface GitStore {
@@ -62,8 +81,15 @@ interface GitStore {
   setCommitMessage: (threadId: string, message: string) => void;
   toggleReviewed: (threadId: string, path: string, patchHash: string) => void;
   loadFileDiff: (threadId: string, path: string) => Promise<void>;
+  loadCheckpoints: (threadId: string) => Promise<void>;
+  viewCheckpointDiff: (threadId: string, runId: string) => Promise<void>;
+  loadCheckpointFileDiff: (threadId: string, runId: string, path: string) => Promise<void>;
+  clearCheckpointView: (threadId: string) => void;
+  restoreCheckpoint: (threadId: string, runId: string) => Promise<boolean>;
   setViewMode: (mode: DiffViewMode) => void;
   loadGhAvailability: () => Promise<void>;
+  /** Drops a deleted thread's git state and any refresh it still has queued. */
+  clearThread: (threadId: string) => void;
 }
 
 function emptyState(): GitThreadState {
@@ -81,10 +107,22 @@ function emptyState(): GitThreadState {
     pushedSha: null,
     prUrl: null,
     reviewed: {},
+    checkpoints: [],
+    activeCheckpoint: null,
+    restoringCheckpoint: null,
   };
 }
 
+/** The checkpoint's parent run, or null for the first one (parent commit). */
+function baseRunIdFor(checkpoints: string[], runId: string): string | null {
+  const idx = checkpoints.indexOf(runId);
+  return idx > 0 ? checkpoints[idx - 1] : null;
+}
+
 const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/** One gh probe per session wave; parallel panel mounts share the result. */
+let ghInFlight: Promise<void> | null = null;
 
 /** Debounced refresh — file_changed events arrive per write mid-turn. */
 export function scheduleGitRefresh(threadId: string, delayMs = 600): void {
@@ -357,6 +395,192 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
+  loadCheckpoints: async (threadId) => {
+    try {
+      const checkpoints = await gitCheckpointsList(threadId);
+      set((s) => ({
+        byThread: {
+          ...s.byThread,
+          [threadId]: {
+            ...(s.byThread[threadId] ?? emptyState()),
+            checkpoints: Array.isArray(checkpoints) ? checkpoints : [],
+          },
+        },
+      }));
+    } catch (err) {
+      // Not a repo / transient failure: keep whatever list we had.
+      console.error("git_checkpoints_list failed", err);
+    }
+  },
+
+  viewCheckpointDiff: async (threadId, runId) => {
+    // The parent run comes from the ordered list; a cold panel has none yet.
+    if ((get().byThread[threadId]?.checkpoints.length ?? 0) === 0) {
+      await get().loadCheckpoints(threadId);
+    }
+    const baseRunId = baseRunIdFor(get().byThread[threadId]?.checkpoints ?? [], runId);
+    set((s) => ({
+      byThread: {
+        ...s.byThread,
+        [threadId]: {
+          ...(s.byThread[threadId] ?? emptyState()),
+          activeCheckpoint: {
+            runId,
+            diff: { repoRoot: "", base: runId, totalAdded: 0, totalRemoved: 0, files: [] },
+            filePatches: {},
+            loading: true,
+            error: null,
+          },
+        },
+      },
+    }));
+    try {
+      const diff = await gitCheckpointDiff(threadId, runId, baseRunId);
+      set((s) => {
+        const prev = s.byThread[threadId];
+        if (!prev?.activeCheckpoint || prev.activeCheckpoint.runId !== runId) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...prev,
+              activeCheckpoint: { ...prev.activeCheckpoint, diff, loading: false },
+            },
+          },
+        };
+      });
+    } catch (err) {
+      set((s) => {
+        const prev = s.byThread[threadId];
+        if (!prev?.activeCheckpoint || prev.activeCheckpoint.runId !== runId) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...prev,
+              activeCheckpoint: {
+                ...prev.activeCheckpoint,
+                loading: false,
+                error: ipcErrorMessage(err),
+              },
+            },
+          },
+        };
+      });
+    }
+  },
+
+  loadCheckpointFileDiff: async (threadId, runId, path) => {
+    const prev = get().byThread[threadId];
+    const active = prev?.activeCheckpoint;
+    if (!active || active.runId !== runId) return;
+    const existing = active.filePatches[path];
+    if (existing?.loading || existing?.file) return;
+    const baseRunId = baseRunIdFor(prev.checkpoints, runId);
+
+    set((s) => {
+      const state = s.byThread[threadId];
+      if (!state?.activeCheckpoint || state.activeCheckpoint.runId !== runId) return s;
+      return {
+        byThread: {
+          ...s.byThread,
+          [threadId]: {
+            ...state,
+            activeCheckpoint: {
+              ...state.activeCheckpoint,
+              filePatches: { ...state.activeCheckpoint.filePatches, [path]: { loading: true } },
+            },
+          },
+        },
+      };
+    });
+
+    try {
+      const file = await gitCheckpointDiffFile(threadId, runId, path, baseRunId);
+      set((s) => {
+        const state = s.byThread[threadId];
+        if (!state?.activeCheckpoint || state.activeCheckpoint.runId !== runId) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...state,
+              activeCheckpoint: {
+                ...state.activeCheckpoint,
+                filePatches: {
+                  ...state.activeCheckpoint.filePatches,
+                  [path]: { loading: false, file },
+                },
+              },
+            },
+          },
+        };
+      });
+    } catch (err) {
+      set((s) => {
+        const state = s.byThread[threadId];
+        if (!state?.activeCheckpoint || state.activeCheckpoint.runId !== runId) return s;
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: {
+              ...state,
+              activeCheckpoint: {
+                ...state.activeCheckpoint,
+                filePatches: {
+                  ...state.activeCheckpoint.filePatches,
+                  [path]: { loading: false, error: ipcErrorMessage(err) },
+                },
+              },
+            },
+          },
+        };
+      });
+    }
+  },
+
+  clearCheckpointView: (threadId) =>
+    set((s) => {
+      const prev = s.byThread[threadId];
+      if (!prev) return s;
+      return { byThread: { ...s.byThread, [threadId]: { ...prev, activeCheckpoint: null } } };
+    }),
+
+  restoreCheckpoint: async (threadId, runId) => {
+    set((s) => ({
+      byThread: {
+        ...s.byThread,
+        [threadId]: { ...(s.byThread[threadId] ?? emptyState()), restoringCheckpoint: runId },
+      },
+    }));
+    try {
+      await gitCheckpointRestore(threadId, runId);
+      set((s) => {
+        const prev = s.byThread[threadId] ?? emptyState();
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: { ...prev, restoringCheckpoint: null, activeCheckpoint: null },
+          },
+        };
+      });
+      await Promise.all([get().refresh(threadId), get().loadCheckpoints(threadId)]);
+      return true;
+    } catch (err) {
+      set((s) => ({
+        byThread: {
+          ...s.byThread,
+          [threadId]: {
+            ...(s.byThread[threadId] ?? emptyState()),
+            restoringCheckpoint: null,
+            error: ipcErrorMessage(err),
+          },
+        },
+      }));
+      return false;
+    }
+  },
+
   toggleReviewed: (threadId, path, patchHash) =>
     set((s) => {
       const prev = s.byThread[threadId] ?? emptyState();
@@ -376,8 +600,36 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   setViewMode: (mode) => set({ viewMode: mode }),
 
-  loadGhAvailability: async () => {
-    if (get().ghLoaded) return;
-    set({ ghAvailable: await gitGhAvailable(), ghLoaded: true });
+  loadGhAvailability: () => {
+    if (get().ghLoaded) return Promise.resolve();
+    if (ghInFlight) return ghInFlight;
+    ghInFlight = (async () => {
+      try {
+        const ghAvailable = await gitGhAvailable();
+        set({ ghAvailable, ghLoaded: true });
+      } catch (err) {
+        // Leave ghLoaded false so the next mount retries instead of caching a
+        // transient IPC failure as "no gh CLI".
+        console.error("gh availability check failed", err);
+        set({ ghAvailable: false, ghLoaded: false });
+      } finally {
+        ghInFlight = null;
+      }
+    })();
+    return ghInFlight;
+  },
+
+  clearThread: (threadId) => {
+    const timer = debounceTimers.get(threadId);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      debounceTimers.delete(threadId);
+    }
+    set((s) => {
+      if (!(threadId in s.byThread)) return s;
+      const { [threadId]: _dropped, ...byThread } = s.byThread;
+      void _dropped;
+      return { byThread };
+    });
   },
 }));

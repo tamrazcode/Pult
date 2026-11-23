@@ -999,9 +999,6 @@ export const de: Record<string, string> = {
   "panels.diff.returnToWorktree": "Zurück zum Arbeitsbaum",
   "panels.terminal.bottomDrawer": "Unteres Terminal",
   "panels.terminal.closeDrawer": "Unteres Terminal ausblenden",
-  "settings.appearance.reduceTransparency": "Transparenz reduzieren",
-  "settings.appearance.reduceTransparencyDesc":
-    "Den Milchglas-Blur durch undurchsichtige, rauchige Flächen ersetzen.",
   "settings.chat.verbosity": "Detailgrad des Verlaufs",
   "settings.chat.verbosityFull": "Vollständig",
   "settings.chat.verbosityQuiet": "Kompakt",

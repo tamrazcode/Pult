@@ -53,9 +53,6 @@ export const settings = {
   "settings.appearance.composerOpacity": "Composer opacity",
   "settings.appearance.glassHint":
     "Lower values make the composer more transparent while keeping the backdrop blur.",
-  "settings.appearance.reduceTransparency": "Reduce transparency",
-  "settings.appearance.reduceTransparencyDesc":
-    "Replace frosted backdrop blur with opaque smoked panes.",
   "settings.appearance.timeHeading": "Time",
   "settings.appearance.timeFormat": "Time format",
   "settings.appearance.timeFormat24": "24-hour (14:30)",

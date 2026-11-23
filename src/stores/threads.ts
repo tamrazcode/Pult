@@ -13,6 +13,9 @@ import {
 } from "../lib/ipc";
 import { isTauri } from "../lib/tauri";
 import { useDraftsStore } from "./drafts";
+import { useGitStore } from "./git";
+import { useSubagentsStore } from "./subagents";
+import { useTerminalsStore } from "./terminals";
 import { useUiStore } from "../stores/ui";
 import type { Project, Thread } from "../lib/types";
 
@@ -168,9 +171,14 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   removeThread: (threadId) => {
     useDraftsStore.getState().clearDraft(threadId);
     useDraftsStore.getState().clearAttachments(threadId);
+    useSubagentsStore.getState().clearThread(threadId);
+    useGitStore.getState().clearThread(threadId);
+    useUiStore.getState().clearThreadState(threadId);
+    useTerminalsStore.getState().clearThread(threadId);
     set((s) => ({
       threads: s.threads.filter((t) => t.id !== threadId),
       unreadIds: s.unreadIds.filter((id) => id !== threadId),
+      activeThreadId: s.activeThreadId === threadId ? null : s.activeThreadId,
     }));
   },
 

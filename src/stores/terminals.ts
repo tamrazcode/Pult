@@ -26,6 +26,8 @@ interface TerminalsState {
   removeTerminal: (threadId: string, terminalId: string) => void;
   setActive: (threadId: string, terminalId: string | null) => void;
   subscribeData: (terminalId: string, listener: DataListener) => () => void;
+  /** Drops a deleted thread's terminals, buffered output and live subscribers. */
+  clearThread: (threadId: string) => void;
 }
 
 /** Live data subscribers — xterm panes register per terminal id. */
@@ -146,4 +148,20 @@ export const useTerminalsStore = create<TerminalsState>((set, get) => ({
       if (listeners!.size === 0) dataListeners.delete(terminalId);
     };
   },
+
+  clearThread: (threadId) =>
+    set((s) => {
+      const terminals = s.byThread[threadId] ?? [];
+      const backfill = { ...s.backfill };
+      for (const terminal of terminals) {
+        decoders.delete(terminal.terminalId);
+        dataListeners.delete(terminal.terminalId);
+        delete backfill[terminal.terminalId];
+      }
+      const { [threadId]: _list, ...byThread } = s.byThread;
+      void _list;
+      const { [threadId]: _active, ...activeByThread } = s.activeByThread;
+      void _active;
+      return { byThread, activeByThread, backfill };
+    }),
 }));

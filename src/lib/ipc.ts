@@ -654,6 +654,44 @@ export function gitCheckpoint(threadId: string, runId: string): Promise<string> 
   return invokeRequired<string>("git_checkpoint", { threadId, runId });
 }
 
+/** Hidden checkpoint run ids for the thread, oldest first. */
+export function gitCheckpointsList(threadId: string): Promise<string[]> {
+  return invokeWithFallback<string[]>("git_checkpoints_list", [], { threadId });
+}
+
+/** Metadata of what one checkpoint run changed. */
+export function gitCheckpointDiff(
+  threadId: string,
+  runId: string,
+  baseRunId?: string | null,
+): Promise<GitDiffSummary> {
+  return invokeRequired<GitDiffSummary>("git_checkpoint_diff", {
+    threadId,
+    runId,
+    baseRunId: baseRunId ?? null,
+  });
+}
+
+/** One file's patch inside a checkpoint diff. */
+export function gitCheckpointDiffFile(
+  threadId: string,
+  runId: string,
+  path: string,
+  baseRunId?: string | null,
+): Promise<DiffFile> {
+  return invokeRequired<DiffFile>("git_checkpoint_diff_file", {
+    threadId,
+    runId,
+    path,
+    baseRunId: baseRunId ?? null,
+  });
+}
+
+/** Rolls the worktree back to a checkpoint tree without touching HEAD. */
+export function gitCheckpointRestore(threadId: string, runId: string): Promise<void> {
+  return invokeRequired<void>("git_checkpoint_restore", { threadId, runId });
+}
+
 // ---- PTY terminals (M5) ----
 
 /** Spawns a PTY in the thread workspace (default shell: powershell -NoLogo). */

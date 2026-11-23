@@ -964,8 +964,6 @@ export const zh: Record<string, string> = {
   "panels.diff.returnToWorktree": "返回工作树",
   "panels.terminal.bottomDrawer": "底部终端",
   "panels.terminal.closeDrawer": "隐藏底部终端",
-  "settings.appearance.reduceTransparency": "降低透明度",
-  "settings.appearance.reduceTransparencyDesc": "用不透明的烟熏面板替代磨砂背景模糊。",
   "settings.chat.verbosity": "记录详细程度",
   "settings.chat.verbosityFull": "完整",
   "settings.chat.verbosityQuiet": "精简",

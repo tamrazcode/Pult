@@ -1004,9 +1004,6 @@ export const fr: Record<string, string> = {
   "panels.diff.returnToWorktree": "Retour à l'arbre de travail",
   "panels.terminal.bottomDrawer": "Terminal inférieur",
   "panels.terminal.closeDrawer": "Masquer le terminal inférieur",
-  "settings.appearance.reduceTransparency": "Réduire la transparence",
-  "settings.appearance.reduceTransparencyDesc":
-    "Remplacer le flou d'arrière-plan par des panneaux fumés opaques.",
   "settings.chat.verbosity": "Niveau de détail du fil",
   "settings.chat.verbosityFull": "Complet",
   "settings.chat.verbosityQuiet": "Compact",

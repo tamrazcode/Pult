@@ -128,6 +128,14 @@ export const STATIC_COMMANDS: Command[] = [
     run: () => useUiStore.setState({ rightPanelTab: "none", rightPanelOpen: true }),
   },
   {
+    id: "view.bottomTerminal",
+    titleKey: "common.commands.toggleBottomTerminal",
+    section: "actions",
+    keywords: "terminal shell console drawer bottom",
+    defaultBinding: "Mod+`",
+    run: () => useUiStore.getState().toggleBottomTerminal(),
+  },
+  {
     id: "settings.open",
     titleKey: "common.commands.openSettings",
     section: "settings",

@@ -72,8 +72,10 @@ interface SettingsState {
   notificationSound: boolean;
   /** Keep the transcript pinned to streaming output. */
   followStreaming: boolean;
-  /** Composer glass tint opacity (0–100). */
+  /** Composer glass tint opacity (0-100). */
   glassOpacity: number;
+  /** How much of each tool step the transcript spells out. */
+  transcriptVerbosity: "full" | "quiet";
   /** Clock format for message timestamps (24h by default). */
   timeFormat: TimeFormat;
   /** Default diff presentation (persisted; also seeds the git store). */
@@ -99,6 +101,7 @@ interface SettingsState {
   setNotificationSound: (value: boolean) => void;
   setFollowStreaming: (value: boolean) => void;
   setGlassOpacity: (value: number) => void;
+  setTranscriptVerbosity: (value: "full" | "quiet") => void;
   setTimeFormat: (value: TimeFormat) => void;
   setDiffViewMode: (mode: "unified" | "split") => void;
   setPreferredEditor: (editor: EditorId) => void;
@@ -188,6 +191,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   notificationSound: true,
   followStreaming: true,
   glassOpacity: 100,
+  transcriptVerbosity: "full",
   timeFormat: "24h",
   diffViewMode: "unified",
   preferredEditor: "zed",
@@ -250,6 +254,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const glassOpacity = Math.min(100, Math.max(0, Math.round(value)));
     set({ glassOpacity });
     if (isTauri()) void settingsSet("glass_opacity", glassOpacity).catch(() => {});
+  },
+  setTranscriptVerbosity: (transcriptVerbosity) => {
+    set({ transcriptVerbosity });
+    if (isTauri()) void settingsSet("transcript_verbosity", transcriptVerbosity).catch(() => {});
   },
   setTimeFormat: (timeFormat) => {
     set({ timeFormat });
@@ -359,6 +367,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       preferredEditor,
       glassOpacity,
       timeFormat,
+      transcriptVerbosity,
       language,
       profile,
       modelPrefsList,
@@ -380,6 +389,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       settingsGet("preferred_editor").catch(() => null),
       settingsGet("glass_opacity").catch(() => null),
       settingsGet("time_format").catch(() => null),
+      settingsGet("transcript_verbosity").catch(() => null),
       settingsGet("language").catch(() => null),
       settingsGet("profile").catch(() => null),
       providersModelPrefsList().catch(() => [] as ProviderModelPrefs[]),
@@ -413,6 +423,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       preferredEditor: isEditorId(preferredEditor) ? preferredEditor : "zed",
       glassOpacity:
         typeof glassOpacity === "number" ? Math.min(100, Math.max(0, glassOpacity)) : 100,
+      transcriptVerbosity: transcriptVerbosity === "quiet" ? "quiet" : "full",
       timeFormat: timeFormat === "12h" ? "12h" : "24h",
       keybindings:
         keybindings && typeof keybindings === "object"

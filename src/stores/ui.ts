@@ -58,11 +58,15 @@ interface UiState {
   processEvents: Record<string, { at: number; kind: string; detail?: string | null }[]>;
   /** Latest unrecovered app-level error (§8 M7 error states). */
   globalError: GlobalError | null;
+  /** Docked terminal under the chat, independent of the right panel. */
+  bottomTerminalOpen: boolean;
   toggleSidebar: () => void;
   /** Project ids whose thread list is collapsed (session memory). */
   collapsedProjects: string[];
   toggleProjectCollapsed: (projectId: string) => void;
   toggleRightPanel: () => void;
+  toggleBottomTerminal: () => void;
+  setBottomTerminalOpen: (open: boolean) => void;
   toggleProjectWidget: () => void;
   setProjectWidgetOpen: (open: boolean) => void;
   setRightPanelTab: (tab: RightPanelTab) => void;
@@ -80,6 +84,8 @@ interface UiState {
   /** Remember the selected provider per thread (restored when reopening). */
   instanceByThread: Record<string, string>;
   rememberInstance: (threadId: string, instanceId: string) => void;
+  /** Drops the per-thread agent choice when the thread is deleted. */
+  clearThreadState: (threadId: string) => void;
   /** Applies a "agent:caps" patch without re-listing all providers. */
   patchInstance: (
     instanceId: string,
@@ -90,6 +96,7 @@ interface UiState {
         | "modes"
         | "promptImage"
         | "loadSession"
+        | "steeringSupported"
         | "authMethods"
         | "authHint"
         | "status"
@@ -107,11 +114,11 @@ interface UiState {
 
 let unlistenProcessEvents: (() => void) | null = null;
 
-/** Merges one pane width into the persisted layout setting (§4.5). */
-async function persistLayout(patch: { sidebarWidth?: number; rightPanelWidth?: number }) {
+/** Writes both pane widths as one snapshot (no read-modify-write race). */
+async function persistLayout() {
   try {
-    const current = (await settingsGet("layout")) as Record<string, number> | null;
-    await settingsSet("layout", { ...(current ?? {}), ...patch });
+    const { sidebarWidth, rightPanelWidth } = useUiStore.getState();
+    await settingsSet("layout", { sidebarWidth, rightPanelWidth });
   } catch (err) {
     console.error("persist layout failed", err);
   }
@@ -172,6 +179,7 @@ export const useUiStore = create<UiState>((set) => ({
   pendingThreadId: null,
   processEvents: {},
   globalError: null,
+  bottomTerminalOpen: false,
   globalWorkspaceRoot: null,
   toggleSidebar: () =>
     set((s) => {
@@ -195,6 +203,8 @@ export const useUiStore = create<UiState>((set) => ({
         sidebarOpen: rightPanelOpen && isNarrowViewport() ? false : s.sidebarOpen,
       };
     }),
+  toggleBottomTerminal: () => set((s) => ({ bottomTerminalOpen: !s.bottomTerminalOpen })),
+  setBottomTerminalOpen: (bottomTerminalOpen) => set({ bottomTerminalOpen }),
   toggleProjectWidget: () => set((s) => ({ projectWidgetOpen: !s.projectWidgetOpen })),
   setProjectWidgetOpen: (projectWidgetOpen) => set({ projectWidgetOpen }),
   setRightPanelTab: (tab) =>
@@ -226,18 +236,25 @@ export const useUiStore = create<UiState>((set) => ({
   setSidebarWidth: (width, persist = false) => {
     const sidebarWidth = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(width)));
     set({ sidebarWidth });
-    if (persist && isTauri()) void persistLayout({ sidebarWidth });
+    if (persist && isTauri()) void persistLayout();
   },
   setRightPanelWidth: (width, persist = false) => {
     const rightPanelWidth = Math.min(RIGHT_PANEL_MAX, Math.max(RIGHT_PANEL_MIN, Math.round(width)));
     set({ rightPanelWidth });
-    if (persist && isTauri()) void persistLayout({ rightPanelWidth });
+    if (persist && isTauri()) void persistLayout();
   },
   setSelectedInstanceId: (selectedInstanceId) => set({ selectedInstanceId }),
   rememberInstance: (threadId, instanceId) =>
     set((s) => ({
       instanceByThread: { ...s.instanceByThread, [threadId]: instanceId },
     })),
+  clearThreadState: (threadId) =>
+    set((s) => {
+      if (!(threadId in s.instanceByThread)) return s;
+      const { [threadId]: _dropped, ...instanceByThread } = s.instanceByThread;
+      void _dropped;
+      return { instanceByThread };
+    }),
   patchInstance: (instanceId, patch) =>
     set((s) => ({
       instances: s.instances.map((instance) =>

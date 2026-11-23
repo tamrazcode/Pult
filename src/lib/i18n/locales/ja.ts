@@ -997,9 +997,6 @@ export const ja: Record<string, string> = {
   "panels.diff.returnToWorktree": "作業ツリーに戻る",
   "panels.terminal.bottomDrawer": "下部ターミナル",
   "panels.terminal.closeDrawer": "下部ターミナルを隠す",
-  "settings.appearance.reduceTransparency": "透明度を抑える",
-  "settings.appearance.reduceTransparencyDesc":
-    "すりガラス風のぼかしを、不透明なスモークパネルに置き換えます。",
   "settings.chat.verbosity": "記録の詳細度",
   "settings.chat.verbosityFull": "すべて",
   "settings.chat.verbosityQuiet": "簡潔",

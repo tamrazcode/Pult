@@ -148,6 +148,8 @@ export interface InstanceInfo {
   promptImage: boolean;
   /** From the last handshake: `session/load` supported (resume path). */
   loadSession: boolean;
+  /** From the last handshake: the agent can take a message mid-turn. */
+  steeringSupported?: boolean;
   /** Session modes the agent advertised (M6 picker; empty until known). */
   modes: SessionMode[];
   /** Session config options (model, thought level, toggles). */
@@ -207,6 +209,7 @@ export interface AgentCapsPayload {
   instanceId: string;
   promptImage: boolean;
   loadSession: boolean;
+  steeringSupported?: boolean;
   modes: SessionMode[];
   configOptions: SessionConfigOption[];
   authMethods: AuthMethod[];
@@ -230,6 +233,8 @@ export interface PreflightReport {
   agentVersion: string | null;
   loadSession: boolean;
   promptImage: boolean;
+  /** The agent advertised mid-turn steering at its handshake. */
+  steeringSupported?: boolean;
   authRequired: boolean;
   /** Detail when the probe failed (shown under "Needs sign-in"). */
   authHint: string | null;

@@ -1024,9 +1024,6 @@ export const ru: Record<string, string> = {
   "panels.diff.returnToWorktree": "Вернуться к рабочему дереву",
   "panels.terminal.bottomDrawer": "Нижний терминал",
   "panels.terminal.closeDrawer": "Скрыть нижний терминал",
-  "settings.appearance.reduceTransparency": "Меньше прозрачности",
-  "settings.appearance.reduceTransparencyDesc":
-    "Заменить размытие фона на непрозрачные дымчатые панели.",
   "settings.chat.verbosity": "Детализация расшифровки",
   "settings.chat.verbosityFull": "Полная",
   "settings.chat.verbosityQuiet": "Кратко",

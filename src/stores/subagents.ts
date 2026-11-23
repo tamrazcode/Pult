@@ -16,6 +16,8 @@ interface SubagentsState {
   applySpawned: (payload: SubagentSpawnedPayload) => void;
   applyFinished: (payload: SubagentFinishedPayload) => void;
   applyUpdated: (payload: SubagentFinishedPayload) => void;
+  /** Removes the tasks delegated from a deleted thread. */
+  clearThread: (threadId: string) => void;
 }
 
 /** App-owned subagents, keyed by task id. Child runs are invisible here:
@@ -66,6 +68,21 @@ export const useSubagentsStore = create<SubagentsState>()((set, get) => ({
       finishedAt: active ? null : current.finishedAt,
     });
   },
+  clearThread: (threadId) =>
+    set((state) => {
+      const dropped = new Set(
+        Object.values(state.tasks)
+          .filter((task) => task.parentThreadId === threadId)
+          .map((task) => task.taskId),
+      );
+      if (dropped.size === 0) return state;
+      return {
+        tasks: Object.fromEntries(
+          Object.entries(state.tasks).filter(([taskId]) => !dropped.has(taskId)),
+        ),
+        order: state.order.filter((taskId) => !dropped.has(taskId)),
+      };
+    }),
 }));
 
 export function isTaskActive(status: string): boolean {

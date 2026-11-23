@@ -1001,9 +1001,6 @@ export const es: Record<string, string> = {
   "panels.diff.returnToWorktree": "Volver al árbol de trabajo",
   "panels.terminal.bottomDrawer": "Terminal inferior",
   "panels.terminal.closeDrawer": "Ocultar el terminal inferior",
-  "settings.appearance.reduceTransparency": "Reducir la transparencia",
-  "settings.appearance.reduceTransparencyDesc":
-    "Sustituye el desenfoque del fondo por paneles ahumados opacos.",
   "settings.chat.verbosity": "Detalle de la transcripción",
   "settings.chat.verbosityFull": "Completa",
   "settings.chat.verbosityQuiet": "Compacta",

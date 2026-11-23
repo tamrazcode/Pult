@@ -101,6 +101,7 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
     useUiStore.getState().patchInstance(caps.instanceId, {
       promptImage: caps.promptImage,
       loadSession: caps.loadSession,
+      steeringSupported: caps.steeringSupported,
       modes: caps.modes,
       configOptions: caps.configOptions,
       authMethods: caps.authMethods,

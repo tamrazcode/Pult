@@ -726,6 +726,21 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           else files.push(change);
         }
       }
+      // A threads_get snapshot can be older than the live stream (C10): keep
+      // changes it does not know yet. Runs are ordered by idx, so a later run
+      // wins; for the same run the snapshot stays authoritative.
+      const runOrder = new Map(sorted.map((r, i) => [r.id, i]));
+      for (const live of s.filesByThread[threadId] ?? []) {
+        const i = files.findIndex((f) => f.path === live.path);
+        if (i < 0) {
+          files.push(live);
+          continue;
+        }
+        const liveOrder = runOrder.get(live.runId);
+        if (liveOrder !== undefined && liveOrder > (runOrder.get(files[i].runId) ?? -1)) {
+          files[i] = live;
+        }
+      }
       return {
         runsByThread: { ...s.runsByThread, [threadId]: sorted },
         viewsByRun,
@@ -754,6 +769,8 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       let view = s.viewsByRun[runId] ?? emptyRunView(true);
       let runsByThread = s.runsByThread;
       let commandsByThread = s.commandsByThread;
+      let filesByThread = s.filesByThread;
+      let activeElicitation = s.activeElicitation;
       let applied: Set<string> | null = null;
       let viewChanged = false;
       let cancellingByRun = s.cancellingByRun;
@@ -773,7 +790,59 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         }
         if (event.kind === "session_info") {
           const title = event.payload.title?.trim();
-          if (threadId && title) useThreadsStore.getState().renameThreadLocal(threadId, title);
+          // A title that is only the injected prompt preamble is not a title:
+          // it would rename the thread to the subagent brief verbatim.
+          if (threadId && title && !/<pult_(?:instructions|subagent_context)>?/.test(title)) {
+            useThreadsStore.getState().renameThreadLocal(threadId, title);
+          }
+          continue;
+        }
+        if (event.kind === "file_changed") {
+          const seenFiles: Set<string> | undefined = applied ?? s.appliedEvents[runId];
+          if (!threadId || seenFiles?.has(event.id)) continue;
+          applied ??= new Set(seenFiles ?? []);
+          applied.add(event.id);
+          const existing = filesByThread[threadId] ?? [];
+          const index = existing.findIndex((f) => f.path === event.payload.path);
+          const change: FileChange = {
+            runId,
+            path: event.payload.path,
+            diff: event.payload.diff,
+            added: event.payload.added,
+            removed: event.payload.removed,
+          };
+          const prev = index >= 0 ? existing[index] : undefined;
+          if (
+            prev &&
+            prev.runId === change.runId &&
+            prev.diff === change.diff &&
+            prev.added === change.added &&
+            prev.removed === change.removed
+          ) {
+            continue;
+          }
+          filesByThread = {
+            ...filesByThread,
+            [threadId]:
+              index >= 0
+                ? existing.map((f, i) => (i === index ? change : f))
+                : [...existing, change],
+          };
+          continue;
+        }
+        if (event.kind === "elicitation_request") {
+          // The persisted event carries no requestId (only the live
+          // elicitation:request IPC event does), so honour one when it travels
+          // along and never replace the request already on screen.
+          const { requestId } = event.payload as typeof event.payload & { requestId?: unknown };
+          if (typeof requestId !== "string" || !requestId) continue;
+          if (activeElicitation?.requestId === requestId) continue;
+          activeElicitation = {
+            runId,
+            requestId,
+            message: event.payload.message,
+            detail: (event.payload.detail ?? {}) as Record<string, unknown>,
+          };
           continue;
         }
         const seen: Set<string> | undefined = applied ?? s.appliedEvents[runId];
@@ -799,12 +868,22 @@ export const useRunsStore = create<RunsState>((set, get) => ({
           }));
         }
       }
-      if (!viewChanged && !cancellingChanged && commandsByThread === s.commandsByThread) return s;
+      if (
+        !viewChanged &&
+        !cancellingChanged &&
+        filesByThread === s.filesByThread &&
+        activeElicitation === s.activeElicitation &&
+        commandsByThread === s.commandsByThread
+      ) {
+        return s;
+      }
       return {
         runsByThread,
         viewsByRun: viewChanged ? { ...s.viewsByRun, [runId]: view } : s.viewsByRun,
         appliedEvents: applied ? { ...s.appliedEvents, [runId]: applied } : s.appliedEvents,
         commandsByThread,
+        filesByThread,
+        activeElicitation,
         ...(cancellingChanged ? { cancellingByRun } : {}),
       };
     }),
