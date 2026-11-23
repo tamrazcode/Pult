@@ -593,6 +593,11 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       delete commandsByThread[threadId];
       const filesByThread = { ...s.filesByThread };
       delete filesByThread[threadId];
+      const pendingUserByThread = { ...s.pendingUserByThread };
+      delete pendingUserByThread[threadId];
+      const cancellingByRun = Object.fromEntries(
+        Object.entries(s.cancellingByRun).filter(([id]) => !runIds.has(id)),
+      );
       const activeElicitation =
         s.activeElicitation && runIds.has(s.activeElicitation.runId) ? null : s.activeElicitation;
       return {
@@ -604,6 +609,8 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         desiredConfigByThread,
         commandsByThread,
         filesByThread,
+        pendingUserByThread,
+        cancellingByRun,
         activeElicitation,
       };
     }),

@@ -236,6 +236,11 @@ export function ElicitationModal({
           : "w-full max-w-lg overflow-hidden rounded-2xl border border-border-strong bg-(--surface-raised) shadow-(--shadow-composer)"
       }
     >
+      {inline && (
+        <div className="sr-only" role="status" aria-live="polite">
+          {t("chat.elicitation.request")}: {message}
+        </div>
+      )}
       <div className="bg-warning/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-warning">
         {t("chat.elicitation.request")}
       </div>

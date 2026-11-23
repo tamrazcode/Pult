@@ -23,15 +23,22 @@ export function EditorSplitButton({
   const setPreferred = useSettingsStore((s) => s.setPreferredEditor);
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const itemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const active = getEditorMeta(preferred);
 
   useEffect(() => {
     if (!open) return;
+    // Menu pattern: focus enters the list; Escape hands it back to the trigger.
+    itemRefs.current[0]?.focus();
     const close = (event: MouseEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
     };
     window.addEventListener("mousedown", close);
     window.addEventListener("keydown", onKey);
@@ -50,6 +57,21 @@ export function EditorSplitButton({
   const compact = variant === "compact";
   const openLabel = t("panels.files.openIn", { editor: active.label });
 
+  const moveFocus = (from: Element | null, delta: 1 | -1) => {
+    const items = itemRefs.current.filter(
+      (element): element is HTMLButtonElement => element !== null,
+    );
+    if (items.length === 0) return;
+    const index = items.indexOf(from as HTMLButtonElement);
+    const next =
+      index < 0
+        ? delta === 1
+          ? 0
+          : items.length - 1
+        : (index + delta + items.length) % items.length;
+    items[next]?.focus();
+  };
+
   return (
     <div ref={containerRef} className={`relative flex shrink-0 ${className}`}>
       <button
@@ -67,6 +89,7 @@ export function EditorSplitButton({
         <span className="truncate">{compact ? active.label : openLabel}</span>
       </button>
       <button
+        ref={triggerRef}
         type="button"
         aria-label={t("common.chooseEditor")}
         aria-haspopup="menu"
@@ -85,13 +108,21 @@ export function EditorSplitButton({
         <div
           role="menu"
           aria-label={t("common.editor")}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            moveFocus(event.target as Element, event.key === "ArrowDown" ? 1 : -1);
+          }}
           className={`absolute top-full z-40 mt-1 w-44 rounded-(--radius-md) border border-border-strong bg-surface-raised py-1 shadow-(--shadow-composer) ${
             compact ? "right-0" : "left-0"
           }`}
         >
-          {EDITORS.map((editor) => (
+          {EDITORS.map((editor, index) => (
             <button
               key={editor.id}
+              ref={(element) => {
+                itemRefs.current[index] = element;
+              }}
               type="button"
               role="menuitem"
               onClick={() => pick(editor.id)}

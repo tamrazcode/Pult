@@ -101,7 +101,7 @@ export function extractMentionQuery(
   return { start: caret - match[2].length - 1, query: match[2] };
 }
 
-const MAX_ATTACHMENTS = 4;
+const MAX_ATTACHMENTS = 20;
 const EMPTY_IMAGES: ImageChip[] = [];
 const EMPTY_FILES: FileChip[] = [];
 const MAX_ATTACHMENT_TEXT = 200_000;

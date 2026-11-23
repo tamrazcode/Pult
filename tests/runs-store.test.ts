@@ -142,6 +142,20 @@ describe("runs store", () => {
     expect(useRunsStore.getState().desiredConfigByThread["th"]).toBeUndefined();
   });
 
+  it("drops the pending user bubble and cancelling flags with the thread", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "th", "running")] },
+      pendingUserByThread: { th: { type: "user", text: "hi", images: [], ts: 1 } },
+      cancellingByRun: { r1: true, other: true },
+    });
+
+    useRunsStore.getState().dropThreadState("th");
+
+    expect(useRunsStore.getState().pendingUserByThread["th"]).toBeUndefined();
+    expect(useRunsStore.getState().cancellingByRun["r1"]).toBeUndefined();
+    expect(useRunsStore.getState().cancellingByRun["other"]).toBe(true);
+  });
+
   it("stores the backend queue per thread and replaces it on queue:update", () => {
     useRunsStore.getState().setQueue("th", [
       {

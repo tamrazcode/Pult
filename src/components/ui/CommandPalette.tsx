@@ -268,6 +268,11 @@ export function useGlobalHotkeys(openPalette: () => void): void {
         useUiStore.getState().setRightPanelTab("files");
         return;
       }
+      if (b("view.bottomTerminal") && matchesBinding(e, b("view.bottomTerminal")!)) {
+        e.preventDefault();
+        useUiStore.getState().toggleBottomTerminal();
+        return;
+      }
       if (b("settings.open") && matchesBinding(e, b("settings.open")!)) {
         e.preventDefault();
         navigate("/settings/appearance");

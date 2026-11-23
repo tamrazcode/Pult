@@ -70,6 +70,7 @@ function RootLayout() {
   const [resizing, setResizing] = useState(false);
   const router = useRouter();
   const onboarding = useRouterState({ select: (s) => s.location.pathname === "/welcome" });
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
   useGlobalHotkeys(() => setPaletteOpen(true));
 
   useEffect(() => {
@@ -153,16 +154,61 @@ function RootLayout() {
     };
   }, []);
 
+  // Settings needs the full width for nav + content: collapse the chat rail on
+  // entry or when a resize crosses the threshold, but never on an intra-settings
+  // navigation (the user may have deliberately re-opened it).
+  const prevInSettings = useRef(false);
+  useEffect(() => {
+    const inSettings = pathname.startsWith("/settings");
+    if (!inSettings) {
+      prevInSettings.current = false;
+      return;
+    }
+    const collapseIfNarrow = () => {
+      if (window.innerWidth >= 1200) return;
+      const store = useUiStore.getState();
+      if (store.sidebarOpen) store.toggleSidebar();
+    };
+    if (!prevInSettings.current) collapseIfNarrow();
+    prevInSettings.current = true;
+    let narrow = window.innerWidth < 1200;
+    const onResize = () => {
+      const nowNarrow = window.innerWidth < 1200;
+      if (nowNarrow && !narrow) collapseIfNarrow();
+      narrow = nowNarrow;
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pathname]);
+
   // Shrinking the window with both side rails open must not crush the chat.
   useEffect(() => {
     const onResize = () => {
-      if (window.innerWidth < 1180 && sidebarOpen && rightPanelOpen) {
-        useUiStore.getState().toggleSidebar();
+      const store = useUiStore.getState();
+      if (window.innerWidth < 1180 && store.sidebarOpen && store.rightPanelOpen) {
+        store.toggleSidebar();
       }
     };
     window.addEventListener("resize", onResize);
     onResize();
     return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  // Below 1180px both rails cannot stay open: opening one closes the other, so
+  // the button the user just pressed always wins.
+  const prevSidebarOpen = useRef(sidebarOpen);
+  const prevRightPanelOpen = useRef(rightPanelOpen);
+  useEffect(() => {
+    if (window.innerWidth < 1180) {
+      const store = useUiStore.getState();
+      if (sidebarOpen && !prevSidebarOpen.current && store.rightPanelOpen) {
+        store.toggleRightPanel();
+      } else if (rightPanelOpen && !prevRightPanelOpen.current && store.sidebarOpen) {
+        store.toggleSidebar();
+      }
+    }
+    prevSidebarOpen.current = sidebarOpen;
+    prevRightPanelOpen.current = rightPanelOpen;
   }, [sidebarOpen, rightPanelOpen]);
 
   const [contextMenu, setContextMenu] = useState<{
