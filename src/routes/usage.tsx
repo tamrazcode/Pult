@@ -210,6 +210,7 @@ export function UsagePage() {
                     key={item.id}
                     role="tab"
                     aria-selected={tab === item.id}
+                    aria-controls="usage-panel"
                     onClick={() => setTab(item.id)}
                     className={`rounded-(--radius-sm) px-2.5 py-1 text-xs transition ${
                       tab === item.id
@@ -222,7 +223,11 @@ export function UsagePage() {
                 ))}
               </div>
 
-              <div className="mt-2 overflow-hidden rounded-(--radius-md) border border-border-subtle">
+              <div
+                className="mt-2 overflow-hidden rounded-(--radius-md) border border-border-subtle"
+                role="tabpanel"
+                id="usage-panel"
+              >
                 {tab === "runs" && (
                   <table className="w-full text-left text-sm">
                     <thead className="bg-surface text-xs tracking-wider text-text-tertiary uppercase">
@@ -238,8 +243,10 @@ export function UsagePage() {
                         <tr
                           key={run.runId}
                           tabIndex={0}
+                          role="link"
+                          aria-label={run.threadTitle}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" || e.key === " ") {
                               void router.navigate({
                                 to: "/thread/$threadId",
                                 params: { threadId: run.threadId },
@@ -286,8 +293,10 @@ export function UsagePage() {
                         <tr
                           key={thread.threadId}
                           tabIndex={0}
+                          role="link"
+                          aria-label={thread.threadTitle}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") {
+                            if (e.key === "Enter" || e.key === " ") {
                               void router.navigate({
                                 to: "/thread/$threadId",
                                 params: { threadId: thread.threadId },

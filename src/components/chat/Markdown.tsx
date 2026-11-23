@@ -28,7 +28,29 @@ import { useThreadsStore } from "../../stores/threads";
 import "katex/dist/katex.min.css";
 import "./markdown.css";
 
-const SHIKI_THEME = "github-dark-default";
+const SHIKI_THEMES = {
+  light: "github-light-default",
+  dark: "github-dark-default",
+} as const;
+type DocumentTheme = keyof typeof SHIKI_THEMES;
+
+function readDocumentTheme(): DocumentTheme {
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
+
+/** Tracks the theme attribute so open code blocks re-highlight in light mode. */
+function useDocumentTheme(): DocumentTheme {
+  const [theme, setTheme] = useState<DocumentTheme>(readDocumentTheme);
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(readDocumentTheme()));
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-theme"],
+    });
+    return () => observer.disconnect();
+  }, []);
+  return theme;
+}
 // Language *labels* accepted inline; grammars load on demand.
 const SHIKI_LANGS = [
   "ts",
@@ -115,7 +137,10 @@ const languageLoads = new Map<string, Promise<void>>();
 
 function getHighlighter(): Promise<HighlighterCore> {
   highlighterPromise ??= createHighlighterCore({
-    themes: [import("shiki/themes/github-dark-default.mjs")],
+    themes: [
+      import("shiki/themes/github-dark-default.mjs"),
+      import("shiki/themes/github-light-default.mjs"),
+    ],
     langs: [],
     engine: createJavaScriptRegexEngine({ forgiving: true }),
   }).catch((err) => {
@@ -223,9 +248,11 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
   const lastHighlightAt = useRef(0);
   const lastHighlighted = useRef<string | null>(null);
   const plainOnly = useContext(PlainCodeContext);
+  const documentTheme = useDocumentTheme();
+  const shikiTheme = SHIKI_THEMES[documentTheme];
   const label = LANGUAGE_ALIASES[(lang ?? "").toLowerCase()] ?? (lang ?? "").toLowerCase();
   const canHighlight = label !== "" && HIGHLIGHT_LANGS.has(label);
-  const blockKey = `${label}\u0000${code}`;
+  const blockKey = `${shikiTheme}\u0000${label}\u0000${code}`;
 
   // While a fence is still open (or text is settling) keep the plain fallback:
   // Shiki only runs for completed blocks, then at most once per 150ms.
@@ -249,7 +276,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
           await ensureLanguage(highlighter, label);
           if (cancelled) return;
           try {
-            setHtml(highlighter.codeToHtml(code, { lang: label, theme: SHIKI_THEME }));
+            setHtml(highlighter.codeToHtml(code, { lang: label, theme: shikiTheme }));
             lastHighlightAt.current = Date.now();
             lastHighlighted.current = blockKey;
           } catch {
@@ -269,7 +296,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string;
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [code, canHighlight, label, plainOnly, blockKey]);
+  }, [code, canHighlight, label, plainOnly, blockKey, shikiTheme]);
 
   const header = (
     <div className="md-code-header">

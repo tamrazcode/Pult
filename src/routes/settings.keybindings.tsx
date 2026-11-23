@@ -84,6 +84,8 @@ function KeybindingsSettings() {
               <button
                 onClick={() => setCapturing(id)}
                 aria-label={t("settings.keybindings.rebind", { name: label(id) })}
+                aria-keyshortcuts={current.replace("Mod", MOD_KEY === "⌘" ? "Meta" : "Control")}
+                aria-pressed={capturing === id}
                 className="flex min-w-[92px] items-center justify-center gap-1 rounded-(--radius-sm) border border-border-subtle px-2 py-1 font-mono text-xs text-text-secondary transition hover:bg-hover"
               >
                 {capturing === id
