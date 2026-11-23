@@ -89,15 +89,37 @@ fn proxy_line(url: &str, token: &str, line: &str) -> io::Result<Option<String>> 
     let mut stream = TcpStream::connect((host.as_str(), port))?;
     stream.set_read_timeout(Some(IO_TIMEOUT))?;
     stream.set_write_timeout(Some(IO_TIMEOUT))?;
+    // IPv6 literals need brackets in the Host header, not in TcpStream.
+    let authority = if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    };
     let request = format!(
-        "POST {path} HTTP/1.1\r\nHost: {host}:{port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{line}",
+        "POST {path} HTTP/1.1\r\nHost: {authority}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{line}",
         line.len()
     );
     stream.write_all(request.as_bytes())?;
     stream.flush()?;
 
     let mut response = Vec::new();
-    stream.read_to_end(&mut response)?;
+    let mut chunk = [0u8; 8192];
+    loop {
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        if response.len() + read > crate::mcp::security::MAX_MESSAGE_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "orchestrator reply exceeds {} bytes",
+                    crate::mcp::security::MAX_MESSAGE_BYTES
+                ),
+            ));
+        }
+        response.extend_from_slice(&chunk[..read]);
+    }
     let response = String::from_utf8_lossy(&response).into_owned();
     let (head, body) = response
         .split_once("\r\n\r\n")
@@ -120,30 +142,36 @@ fn proxy_line(url: &str, token: &str, line: &str) -> io::Result<Option<String>> 
 }
 
 fn parse_http_url(url: &str) -> io::Result<(String, u16, String)> {
-    let rest = url.strip_prefix("http://").ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "PULT_MCP_URL must start with http://",
-        )
-    })?;
-    let (authority, path) = match rest.split_once('/') {
-        Some((authority, path)) => (authority, format!("/{path}")),
-        None => (rest, "/".to_string()),
-    };
-    let (host, port) = authority.rsplit_once(':').ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "PULT_MCP_URL must include a port",
-        )
-    })?;
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "PULT_MCP_URL has a bad port"))?;
-    if host != "127.0.0.1" && host != "localhost" {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "PULT_MCP_URL must be loopback",
+    let invalid = |message: String| io::Error::new(io::ErrorKind::InvalidInput, message);
+    let parsed = reqwest::Url::parse(url)
+        .map_err(|error| invalid(format!("PULT_MCP_URL is not a valid URL: {error}")))?;
+    if parsed.scheme() != "http" {
+        return Err(invalid("PULT_MCP_URL must start with http://".to_string()));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(invalid(
+            "PULT_MCP_URL must not contain credentials".to_string(),
         ));
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| invalid("PULT_MCP_URL needs a host".to_string()))?;
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    let loopback = host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false);
+    if !loopback {
+        return Err(invalid("PULT_MCP_URL must be loopback".to_string()));
+    }
+    let port = parsed
+        .port()
+        .ok_or_else(|| invalid("PULT_MCP_URL must include a port".to_string()))?;
+    let mut path = parsed.path().to_string();
+    if let Some(query) = parsed.query() {
+        path.push('?');
+        path.push_str(query);
     }
     Ok((host.to_string(), port, path))
 }
@@ -235,9 +263,65 @@ mod tests {
         assert!(parse_http_url("http://example.com:80/mcp").is_err());
         assert!(parse_http_url("http://127.0.0.1/mcp").is_err());
         assert!(parse_http_url("https://127.0.0.1:80/mcp").is_err());
+        assert!(parse_http_url("http://user:pw@127.0.0.1:4321/mcp").is_err());
+        assert!(parse_http_url("http://10.0.0.5:4321/mcp").is_err());
         assert_eq!(
             parse_http_url("http://127.0.0.1:4321/mcp").unwrap(),
             ("127.0.0.1".to_string(), 4321, "/mcp".to_string())
         );
+        assert_eq!(
+            parse_http_url("http://localhost:4321/mcp?x=1").unwrap(),
+            ("localhost".to_string(), 4321, "/mcp?x=1".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_accepts_ipv6_loopback() {
+        assert_eq!(
+            parse_http_url("http://[::1]:4321/mcp").unwrap(),
+            ("::1".to_string(), 4321, "/mcp".to_string())
+        );
+        assert!(parse_http_url("http://[::2]:4321/mcp").is_err());
+    }
+
+    #[test]
+    fn parse_brackets_ipv6_in_the_host_header() {
+        let Ok(listener) = TcpListener::bind((std::net::Ipv6Addr::LOCALHOST, 0)) else {
+            // No IPv6 loopback on this host: nothing to exercise.
+            return;
+        };
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut chunk = [0u8; 2048];
+            let read = stream.read(&mut chunk).unwrap();
+            let text = String::from_utf8_lossy(&chunk[..read]).into_owned();
+            assert!(text.contains(&format!("Host: [::1]:{port}")), "{text}");
+            let reply = "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n";
+            let _ = stream.write_all(reply.as_bytes());
+        });
+        let reply = proxy_line(&format!("http://[::1]:{port}/mcp"), "tok", "{}").unwrap();
+        assert!(reply.is_none());
+    }
+
+    #[test]
+    fn proxy_line_rejects_an_oversized_reply() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut chunk = [0u8; 2048];
+            let _ = stream.read(&mut chunk);
+            let body = vec![b'a'; crate::mcp::security::MAX_MESSAGE_BYTES + 1];
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(head.as_bytes());
+            let _ = stream.write_all(&body);
+        });
+        let error = proxy_line(&format!("http://127.0.0.1:{port}/mcp"), "tok", "{}")
+            .expect_err("oversized reply must be rejected");
+        assert!(error.to_string().contains("exceeds"), "{error}");
     }
 }

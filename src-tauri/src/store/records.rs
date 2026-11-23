@@ -62,6 +62,10 @@ pub struct DelegatedTaskRecord {
     pub started_at: i64,
     pub finished_at: Option<i64>,
     pub usage_json: Option<String>,
+    /// Set once the parent was woken with this task's result (survives a
+    /// restart; the in-memory ledger alone replayed results after boot).
+    #[serde(default, skip_serializing)]
+    pub parent_notified_at: Option<i64>,
 }
 
 /// One agent run within a thread.

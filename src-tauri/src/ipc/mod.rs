@@ -691,7 +691,7 @@ pub async fn runs_queue_steer(
     thread_id: String,
     queue_id: String,
 ) -> Result<(), PultError> {
-    runtime.steer(&thread_id, &queue_id)
+    runtime.steer(&thread_id, &queue_id).await
 }
 
 #[tauri::command]

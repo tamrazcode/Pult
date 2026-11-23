@@ -45,10 +45,10 @@ pub fn tool_specs() -> Value {
                         "type": "object",
                         "properties": {
                             "instanceId": { "type": "string" },
-                            "providerHint": { "type": "string" },
+                            "providerHint": { "type": "string", "description": "Provider id, display name, or driver to use when instanceId is omitted; the child errors if no provider or several providers match." },
                             "model": { "type": "string" },
-                            "mode": { "type": "string" },
-                            "effort": { "type": "string" }
+                            "mode": { "type": "string", "description": "Session mode id for the child thread (see modes in orchestrator_capabilities)." },
+                            "effort": { "type": "string", "description": "Reasoning effort value for the child thread; mapped to the provider's effort config option." }
                         },
                         "additionalProperties": false
                     },

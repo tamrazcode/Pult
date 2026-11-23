@@ -20,6 +20,7 @@ const MIGRATIONS: &[MigrationFn] = &[
     migration_6,
     migration_7,
     migration_8,
+    migration_9,
 ];
 
 /// Applies every migration newer than the stored `user_version`.
@@ -285,4 +286,16 @@ fn migration_8(conn: &Connection) -> Result<(), PultError> {
         "#,
     )
     .map_err(|e| sql("migration 8: provider model preferences", e))
+}
+
+/// Version 9: when a finished task's report was handed to the parent. The
+/// in-memory notified set dies with the process, so a restart replayed every
+/// task result once (duplicate parent wake-ups).
+fn migration_9(conn: &Connection) -> Result<(), PultError> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE delegated_tasks ADD COLUMN parent_notified_at INTEGER NULL;
+        "#,
+    )
+    .map_err(|e| sql("migration 9: delegated task parent notification", e))
 }

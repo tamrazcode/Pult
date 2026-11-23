@@ -14,8 +14,8 @@ use std::time::Duration;
 
 use crate::events::EventKind;
 use crate::runtime::{AgentRuntime, EventSink};
-use crate::store::records::ThreadRecord;
-use crate::store::Store;
+use crate::store::records::{DelegatedTaskRecord, RunRecord, ThreadRecord};
+use crate::store::{DelegatedTaskUpdate, Store};
 
 /// Both runtime tests mutate process env (PULT_MOCK_AGENT / PULT_WORKSPACE);
 /// sends read env synchronously, so a short-held std mutex serializes them.
@@ -95,7 +95,11 @@ fn mock_runtime() -> (Arc<AgentRuntime>, Arc<TestSink>) {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_writer(std::io::stderr)
         .try_init();
-    let store = Arc::new(Store::open_in_memory().expect("in-memory store"));
+    runtime_over(Arc::new(Store::open_in_memory().expect("in-memory store")))
+}
+
+/// A fresh runtime over an existing store: the restart seam these tests use.
+fn runtime_over(store: Arc<Store>) -> (Arc<AgentRuntime>, Arc<TestSink>) {
     let sink = Arc::new(TestSink::default());
     let runtime = Arc::new(AgentRuntime::new(
         store,
@@ -155,6 +159,97 @@ fn thread_record(id: &str) -> ThreadRecord {
     }
 }
 
+fn run_record(id: &str, thread_id: &str, status: &str) -> RunRecord {
+    RunRecord {
+        id: id.to_string(),
+        thread_id: thread_id.to_string(),
+        idx: 0,
+        status: status.to_string(),
+        instance_id: "mock".to_string(),
+        model: None,
+        mode: None,
+        effort: None,
+        started_at: crate::events::now_millis(),
+        stopped_at: None,
+        stop_reason: None,
+        error: None,
+    }
+}
+
+fn task_record(
+    id: &str,
+    parent_thread_id: &str,
+    child_thread_id: &str,
+    parent_run_id: &str,
+    permission_mode: &str,
+) -> DelegatedTaskRecord {
+    DelegatedTaskRecord {
+        id: id.to_string(),
+        parent_thread_id: parent_thread_id.to_string(),
+        parent_run_id: parent_run_id.to_string(),
+        child_thread_id: child_thread_id.to_string(),
+        child_run_id: None,
+        client_request_id: None,
+        title: "Reliability".to_string(),
+        prompt_summary: "do the work".to_string(),
+        role: Some("test".to_string()),
+        target_instance_id: "mock".to_string(),
+        target_model: None,
+        isolation: "shared".to_string(),
+        permission_mode: permission_mode.to_string(),
+        status: "queued".to_string(),
+        summary: None,
+        error: None,
+        started_at: crate::events::now_millis(),
+        finished_at: None,
+        usage_json: None,
+        parent_notified_at: None,
+    }
+}
+
+/// Parent thread + finished run + delegated child thread and task row.
+fn seed_child_task(
+    store: &Store,
+    parent_id: &str,
+    run_id: &str,
+    child_id: &str,
+    task_id: &str,
+    permission_mode: &str,
+) {
+    store.create_thread(&thread_record(parent_id)).unwrap();
+    store.create_run(&run_record(run_id, parent_id, "finished")).unwrap();
+    let mut child = thread_record(child_id);
+    child.parent_thread_id = Some(parent_id.to_string());
+    child.parent_run_id = Some(run_id.to_string());
+    child.depth = 1;
+    store.create_thread(&child).unwrap();
+    store
+        .insert_or_get_delegated_task(&task_record(
+            task_id,
+            parent_id,
+            child_id,
+            run_id,
+            permission_mode,
+        ))
+        .unwrap();
+}
+
+fn complete_task(store: &Store, task_id: &str, summary: &str) {
+    store
+        .update_delegated_task_status(
+            task_id,
+            &DelegatedTaskUpdate {
+                status: "completed",
+                child_run_id: None,
+                summary: Some(summary),
+                error: None,
+                usage_json: None,
+                finished_at: Some(crate::events::now_millis()),
+            },
+        )
+        .unwrap();
+}
+
 /// Polls `f` until it returns true (or the timeout elapses).
 async fn wait_for(timeout: Duration, mut f: impl FnMut() -> bool) {
     let deadline = tokio::time::Instant::now() + timeout;
@@ -175,6 +270,77 @@ fn kinds_of(runtime: &AgentRuntime, run_id: &str) -> Vec<EventKind> {
         .into_iter()
         .map(|e| e.kind)
         .collect()
+}
+
+#[tokio::test]
+async fn delegation_honors_provider_hint_mode_and_effort() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-target"))
+        .unwrap();
+    let root = runtime.store().get_thread("th-target").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let parent_run = runtime.dispatch(&root, "coordinate", &[], "mock").unwrap();
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-target".to_string(),
+        thread_id: "th-target".to_string(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({
+                "title": "Targeted child",
+                "task": "Reply with ok.",
+                "target": {
+                    "providerHint": "Mock agent (dev)",
+                    "mode": "architect",
+                    "effort": "high"
+                }
+            }),
+        )
+        .await
+        .expect("delegate_task with an explicit target");
+    assert_eq!(started["task"]["targetInstanceId"], "mock");
+    let child_thread_id = started["task"]["childThreadId"].as_str().unwrap();
+    assert_eq!(
+        runtime.desired_mode(child_thread_id).as_deref(),
+        Some("architect"),
+        "target.mode must reach the child thread"
+    );
+    assert_eq!(
+        runtime.desired_config(child_thread_id).get("thought_level"),
+        Some(&crate::protocol::types::ConfigOptionValue::String(
+            "high".to_string()
+        )),
+        "target.effort must be forwarded as the advertised effort option"
+    );
+    if let Some(child_run_id) = started["task"]["childRunId"].as_str() {
+        runtime.cancel_with_force(child_run_id, true).ok();
+    }
+
+    let error = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some(&parent_run.id),
+            "delegate_task",
+            &serde_json::json!({
+                "title": "Impossible target",
+                "task": "Never starts.",
+                "target": { "providerHint": "does-not-exist" }
+            }),
+        )
+        .await
+        .expect_err("an unknown providerHint must fail instead of silently picking the parent");
+    assert!(error.contains("providerHint"), "{error}");
 }
 
 #[tokio::test]
@@ -301,6 +467,141 @@ async fn delegation_always_inherits_the_parent_permission_mode() {
     }
 }
 
+#[test]
+fn a_child_keeps_its_permission_ceiling_across_a_restart() {
+    use crate::runtime::permissions::PermissionMode;
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    seed_child_task(&store, "th-parent-mode", "run-parent-mode", "th-child-mode", "task-mode", "supervised");
+
+    let (first, _sink) = runtime_over(Arc::clone(&store));
+    first
+        .set_permission_mode("th-parent-mode", PermissionMode::Supervised)
+        .unwrap();
+    // The user later widens the global default (a new chat's mode).
+    first
+        .set_permission_mode("th-parent-mode", PermissionMode::FullAccess)
+        .unwrap();
+    assert_eq!(
+        first.permission_mode_for("th-child-mode"),
+        PermissionMode::Supervised,
+        "a supervised child keeps its ceiling while the process is up"
+    );
+
+    // Restart: fresh in-RAM map over the same DB, global default full access.
+    let (restarted, _sink) = runtime_over(Arc::clone(&store));
+    assert_eq!(
+        restarted.permission_mode_for("th-child-mode"),
+        PermissionMode::Supervised,
+        "a supervised child must not silently escalate after a restart"
+    );
+}
+
+#[tokio::test]
+async fn a_notified_task_does_not_wake_the_parent_after_restart() {
+    let _env = env_lock();
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let (runtime, _sink) = runtime_over(Arc::clone(&store));
+    runtime.attach_orchestrator();
+    seed_child_task(&store, "th-awake", "run-awake", "th-awake-child", "task-awake", "supervised");
+    complete_task(&store, "task-awake", "already delivered");
+    store
+        .mark_delegated_tasks_notified(&["task-awake".to_string()], crate::events::now_millis())
+        .unwrap();
+    drop(runtime);
+
+    // Restart: the new engine's in-memory ledger is empty, the DB is not.
+    let (restarted, _sink) = runtime_over(Arc::clone(&store));
+    restarted.attach_orchestrator();
+    restarted.orchestrator.wake_parent_if_idle("th-awake");
+    assert_eq!(
+        store.list_runs("th-awake").unwrap().len(),
+        1,
+        "an already-notified task must not re-wake the parent after a restart"
+    );
+}
+
+#[tokio::test]
+async fn a_pending_task_result_wakes_the_parent_after_restart() {
+    let _env = env_lock();
+    let store = Arc::new(Store::open_in_memory().unwrap());
+    let (runtime, _sink) = runtime_over(Arc::clone(&store));
+    runtime.attach_orchestrator();
+    seed_child_task(&store, "th-pending", "run-pending", "th-pending-child", "task-pending", "supervised");
+    complete_task(&store, "task-pending", "fresh result");
+    drop(runtime);
+
+    let (restarted, _sink) = runtime_over(Arc::clone(&store));
+    restarted.attach_orchestrator();
+    restarted.orchestrator.wake_parent_if_idle("th-pending");
+    let runs = store.list_runs("th-pending").unwrap();
+    assert_eq!(runs.len(), 2, "an undelivered result still wakes the parent");
+    assert!(
+        store
+            .get_delegated_task("task-pending")
+            .unwrap()
+            .parent_notified_at
+            .is_some(),
+        "the delivery is stamped in the DB"
+    );
+    if let Some(run) = runs.last() {
+        restarted.cancel_with_force(&run.id, true).ok();
+    }
+}
+
+#[tokio::test]
+async fn a_duplicate_client_request_id_creates_no_spare_thread() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-dedup"))
+        .unwrap();
+    runtime
+        .store()
+        .create_run(&run_record("run-dedup", "th-dedup", "running"))
+        .unwrap();
+    let scope = crate::orchestrator::McpScope {
+        owner_token: "owner-dedup".to_string(),
+        thread_id: "th-dedup".to_string(),
+        depth: 0,
+        can_orchestrate: true,
+    };
+    let arguments = serde_json::json!({
+        "title": "Once only",
+        "task": "Reply with ok.",
+        "clientRequestId": "req-dedup"
+    });
+    let children = || {
+        runtime
+            .store()
+            .list_threads()
+            .unwrap()
+            .into_iter()
+            .filter(|thread| thread.parent_thread_id.as_deref() == Some("th-dedup"))
+            .count()
+    };
+    let first = runtime
+        .orchestrator
+        .call_tool(&scope, Some("run-dedup"), "delegate_task", &arguments)
+        .await
+        .expect("first delegation succeeds");
+    assert_eq!(first["deduplicated"], false);
+    assert_eq!(children(), 1);
+
+    let second = runtime
+        .orchestrator
+        .call_tool(&scope, Some("run-dedup"), "delegate_task", &arguments)
+        .await
+        .expect("duplicate delegation returns the existing task");
+    assert_eq!(second["deduplicated"], true);
+    assert_eq!(second["task"]["taskId"], first["task"]["taskId"]);
+    assert_eq!(children(), 1, "the idempotent path created no spare thread");
+    if let Some(child_run_id) = first["task"]["childRunId"].as_str() {
+        runtime.cancel_with_force(child_run_id, true).ok();
+    }
+}
+
 #[tokio::test]
 async fn orchestrator_cancel_stops_a_blocked_child_run() {
     let _env = env_lock();
@@ -394,22 +695,28 @@ async fn steering_the_parent_keeps_children_running() {
     })
     .await;
 
-    // A new message for the parent queues normally; "send now" (Steer) is a
-    // turn replacement, not a Stop: it must leave the child subtree alone.
+    // A new message for the parent queues normally; "send now" (Steer) is not
+    // a Stop: with no live steering the message waits at the queue head and
+    // the parent turn (and the child subtree under it) keeps running.
     let queued = runtime
         .send(&root, "next turn", &[], "mock", None, &Default::default())
         .expect("queue the next message");
     assert!(queued.queued, "an active parent must queue, not dispatch");
     let queue = runtime.store().list_queue(&root.id).unwrap();
-    runtime.steer(&root.id, &queue[0].id).expect("steer");
+    let queue_id = queue[0].id.clone();
+    runtime.steer(&root.id, &queue_id).await.expect("steer");
 
-    wait_for(Duration::from_secs(10), || {
-        runtime
-            .active_run_for(&root.id)
-            .map(|run_id| run_id != parent_run.id)
-            .unwrap_or(true)
-    })
-    .await;
+    assert_eq!(
+        runtime.active_run_for(&root.id).as_deref(),
+        Some(parent_run.id.as_str()),
+        "steer must not cancel the parent turn"
+    );
+    let queue = runtime.store().list_queue(&root.id).unwrap();
+    assert_eq!(
+        queue.first().map(|item| item.id.as_str()),
+        Some(queue_id.as_str()),
+        "the steered message must be the queue head"
+    );
     let child_task = runtime.store().get_delegated_task(&task_id).unwrap();
     assert_eq!(
         child_task.status, "running",
@@ -1255,6 +1562,117 @@ async fn allow_always_is_remembered_for_next_turn() {
 }
 
 use crate::runtime::write_file_sandboxed;
+
+/// `<pult_instructions>` must survive a slash command without being injected
+/// twice on a later normal prompt or on a pooled session.
+#[test]
+fn instructions_wait_for_the_first_normal_prompt_and_are_sent_once() {
+    let mut state = crate::runtime::InstructionState { injected: false };
+    assert!(
+        !state.needs_injection(true, "/model"),
+        "a slash command must reach the adapter unglued"
+    );
+    assert!(
+        !state.injected,
+        "a slash command does not consume the block"
+    );
+    assert!(state.needs_injection(true, "hello"));
+    state.injected = true;
+    assert!(!state.needs_injection(true, "hello again"));
+    assert!(
+        !crate::runtime::InstructionState { injected: false }.needs_injection(false, "hello"),
+        "a session without the orchestrator never gets the block"
+    );
+}
+
+/// A probe agent dropped before any explicit `kill()` (cancelled preflight or
+/// an early return) must still take its process tree down.
+#[tokio::test]
+async fn dropping_the_probe_guard_kills_the_agent() {
+    let _env = env_lock();
+    let config = crate::drivers::acp::SpawnConfig {
+        command: "node".to_string(),
+        args: vec![fixture_path().to_string_lossy().into_owned()],
+        env: std::collections::HashMap::new(),
+        env_remove: Vec::new(),
+        initialize_timeout: Duration::from_secs(30),
+        cancel_meta: None,
+        driver: "acp".to_string(),
+        cwd: None,
+    };
+    let (conn, _streams) = crate::drivers::AgentConn::spawn(&config).expect("spawn mock agent");
+    let conn = std::sync::Arc::new(conn);
+    {
+        let _guard = crate::runtime::KillOnDrop(std::sync::Arc::clone(&conn));
+    }
+    wait_for(Duration::from_secs(10), || conn.is_dead()).await;
+}
+
+#[test]
+fn reading_a_file_keeps_crlf_and_the_trailing_newline() {
+    let root = std::env::temp_dir().join(format!("pult-eol-{}", crate::events::now_millis()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("crlf.txt"), b"one\r\ntwo\r\n").unwrap();
+    let params = crate::protocol::types::ReadTextFileParams {
+        session_id: "s1".into(),
+        path: "crlf.txt".into(),
+        line: None,
+        limit: None,
+        meta: None,
+    };
+    let content = crate::runtime::read_file_sandboxed(&root, &params).expect("read crlf file");
+    assert_eq!(content["content"], "one\r\ntwo\r\n");
+
+    // A line window keeps the same endings but only the requested lines.
+    let windowed = crate::protocol::types::ReadTextFileParams {
+        line: Some(2),
+        ..params
+    };
+    let value = crate::runtime::read_file_sandboxed(&root, &windowed).expect("read window");
+    assert_eq!(value["content"], "two\r\n");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn writing_over_a_non_utf8_file_is_refused() {
+    let root = std::env::temp_dir().join(format!("pult-binary-{}", crate::events::now_millis()));
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("blob.bin");
+    let original = [0xffu8, 0xfe, 0x00, 0x01];
+    std::fs::write(&path, original).unwrap();
+    let params = crate::protocol::types::WriteTextFileParams {
+        session_id: "s1".into(),
+        path: "blob.bin".into(),
+        content: "text".into(),
+        meta: None,
+    };
+    let (reply, change) = write_file_sandboxed(&root, &params);
+    assert!(reply.is_err(), "a text edit must not clobber binary data");
+    assert!(change.is_none());
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn file_changed_path_is_workspace_relative_with_forward_slashes() {
+    let root = std::env::temp_dir().join(format!("pult-rel-{}", crate::events::now_millis()));
+    std::fs::create_dir_all(&root).unwrap();
+    let absolute = root.join("src").join("nested").join("file.txt");
+    let params = crate::protocol::types::WriteTextFileParams {
+        session_id: "s1".into(),
+        path: absolute.to_string_lossy().into_owned(),
+        content: "hi".into(),
+        meta: None,
+    };
+    let (reply, change) = write_file_sandboxed(&root, &params);
+    assert!(reply.is_ok());
+    let (path, diff, _, _) = change.expect("changed file");
+    assert_eq!(path, "src/nested/file.txt");
+    assert!(diff.contains("+++ b/src/nested/file.txt"));
+    assert!(!path.contains('\\'));
+    assert!(!path.contains(':'), "no drive prefix: {path}");
+    let _ = std::fs::remove_dir_all(&root);
+}
 
 /// The fs sandbox rejects `../` escapes with the typed resource error
 /// (§8 M3 acceptance).
@@ -2350,8 +2768,8 @@ fn caps_change_event_is_emitted_only_on_actual_change() {
         ..Default::default()
     };
 
-    runtime.cache_capabilities("mock", &caps, vec![], vec![]);
-    runtime.cache_capabilities("mock", &caps, vec![], vec![]);
+    runtime.cache_capabilities("mock", &caps, false, vec![], vec![]);
+    runtime.cache_capabilities("mock", &caps, false, vec![], vec![]);
 
     let caps_events: Vec<_> = sink_events(&sink)
         .into_iter()
@@ -2365,7 +2783,7 @@ fn caps_change_event_is_emitted_only_on_actual_change() {
         description: None,
         meta: None,
     }];
-    runtime.cache_capabilities("mock", &caps, modes, vec![]);
+    runtime.cache_capabilities("mock", &caps, false, modes, vec![]);
 
     let caps_events: Vec<_> = sink_events(&sink)
         .into_iter()
@@ -2666,7 +3084,7 @@ fn clear_stale_provider_config_keeps_only_values_the_new_instance_advertises() {
         .merge_desired_config("th", &seed)
         .expect("seed desired config");
 
-    runtime.cache_capabilities("inst-b", &AgentCapabilities::default(), vec![], vec![]);
+    runtime.cache_capabilities("inst-b", &AgentCapabilities::default(), false, vec![], vec![]);
     runtime.update_cached_config_options(
         "inst-b",
         vec![
@@ -2908,70 +3326,85 @@ async fn dispatch_records_effort_for_thinking_level_and_effort_ids() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
-#[tokio::test]
-async fn steer_queue_item_cancels_active_run_and_starts_next() {
-    let (runtime, sink, sandbox, run1, q2_id) = {
-        let _env = env_lock();
-        let sandbox =
-            std::env::temp_dir().join(format!("pult-queue-steer-{}", crate::events::now_millis()));
-        let _ = std::fs::remove_dir_all(&sandbox);
-        std::fs::create_dir_all(&sandbox).unwrap();
-        std::env::set_var("PULT_MOCK_AGENT", fixture_path());
-        std::env::set_var("PULT_WORKSPACE", &sandbox);
+/// Seeds one active mock run plus two queued messages; returns the runtime,
+/// the sink, the sandbox, run 1 and the id of the message that will be steered.
+fn steer_fixture(
+    tag: &str,
+    env: &[(&str, &str)],
+) -> (
+    Arc<AgentRuntime>,
+    Arc<TestSink>,
+    std::path::PathBuf,
+    RunRecord,
+    String,
+) {
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-steer-{tag}-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
 
-        let (runtime, sink) = mock_runtime();
-        runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_DELAY_MS", "200")])]);
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(env)]);
 
-        let mut thread = thread_record("th-steer");
-        thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    let mut thread = thread_record(&format!("th-steer-{tag}"));
+    thread.workspace = Some(sandbox.to_string_lossy().into_owned());
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    let first = runtime
+        .send(
+            &thread,
+            "active run",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send 1");
+    let run1 = first.run.expect("immediate run 1");
+    let second = runtime
+        .send(
+            &thread,
+            "queued first",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send 2");
+    let third = runtime
+        .send(
+            &thread,
+            "steered item",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send 3");
+    assert!(second.queued);
+    assert!(third.queued);
+    (
+        runtime,
+        sink,
+        sandbox,
+        run1,
+        third.queue_id.expect("steered queue id"),
+    )
+}
+
+async fn wait_run_streaming(runtime: &AgentRuntime, run_id: &str) {
+    wait_for(Duration::from_secs(10), || {
         runtime
             .store()
-            .create_thread(&thread)
-            .expect("create thread");
-
-        let first = runtime
-            .send(
-                &thread,
-                "active run",
-                &[],
-                "mock",
-                None,
-                &Default::default(),
-            )
-            .expect("send 1");
-        let run1 = first.run.expect("immediate run 1");
-        let second = runtime
-            .send(
-                &thread,
-                "queued first",
-                &[],
-                "mock",
-                None,
-                &Default::default(),
-            )
-            .expect("send 2");
-        let third = runtime
-            .send(
-                &thread,
-                "steered item",
-                &[],
-                "mock",
-                None,
-                &Default::default(),
-            )
-            .expect("send 3");
-        assert!(second.queued);
-        assert!(third.queued);
-        let q2_id = third.queue_id.expect("q2 id");
-        (runtime, sink, sandbox, run1, q2_id)
-    };
-
-    let pump = spawn_permission_pump(&runtime, &sink);
-    // Wait until run 1 has registered its live connection and started streaming.
-    wait_for(Duration::from_secs(5), || {
-        runtime
-            .store()
-            .load_events(&run1.id)
+            .load_events(run_id)
             .map(|events| {
                 events
                     .iter()
@@ -2980,22 +3413,94 @@ async fn steer_queue_item_cancels_active_run_and_starts_next() {
             .unwrap_or(false)
     })
     .await;
+}
 
-    runtime.steer("th-steer", &q2_id).expect("steer");
+#[tokio::test]
+async fn steer_with_live_steering_injects_without_cancelling_active_run() {
+    let (runtime, sink, sandbox, run1, steered_id) = steer_fixture(
+        "inject",
+        &[("MOCK_DELAY_MS", "200"), ("MOCK_STEERING_SUPPORTED", "1")],
+    );
+    let thread_id = run1.thread_id.clone();
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_run_streaming(&runtime, &run1.id).await;
 
-    wait_for(Duration::from_secs(15), || {
+    runtime.steer(&thread_id, &steered_id).await.expect("steer");
+
+    wait_for(Duration::from_secs(20), || {
         runtime
             .store()
-            .list_runs("th-steer")
+            .list_runs(&thread_id)
+            .map(|runs| runs.len() >= 2 && runs.iter().all(|r| r.status != "running"))
+            .unwrap_or(false)
+    })
+    .await;
+    pump.abort();
+
+    let runs = runtime.store().list_runs(&thread_id).unwrap();
+    let run1_after = runs.iter().find(|r| r.id == run1.id).expect("run 1");
+    assert_eq!(
+        run1_after.status, "finished",
+        "live steering must not cancel the active turn"
+    );
+
+    // The message joined run 1 (not a new run) and was persisted exactly once.
+    let run1_kinds = kinds_of(&runtime, &run1.id);
+    assert!(
+        run1_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "steered item")),
+        "the injected message must belong to run 1; got {run1_kinds:?}"
+    );
+    let all = runtime.store().load_thread_events(&thread_id).unwrap();
+    let persisted = all
+        .iter()
+        .filter(|e| matches!(&e.kind, EventKind::UserMessage { text, .. } if text == "steered item"))
+        .count();
+    assert_eq!(persisted, 1, "the steering bubble must be persisted once");
+
+    let queue = runtime.store().list_queue(&thread_id).unwrap();
+    assert!(
+        !queue.iter().any(|item| item.id == steered_id),
+        "the injected message must leave the queue"
+    );
+
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn steer_without_live_steering_prioritizes_queue_without_cancelling_active_run() {
+    let (runtime, sink, sandbox, run1, steered_id) =
+        steer_fixture("queue", &[("MOCK_DELAY_MS", "200")]);
+    let thread_id = run1.thread_id.clone();
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_run_streaming(&runtime, &run1.id).await;
+
+    runtime.steer(&thread_id, &steered_id).await.expect("steer");
+
+    wait_for(Duration::from_secs(20), || {
+        runtime
+            .store()
+            .list_runs(&thread_id)
             .map(|runs| runs.len() >= 3 && runs.iter().all(|r| r.status != "running"))
             .unwrap_or(false)
     })
     .await;
     pump.abort();
 
-    let runs = runtime.store().list_runs("th-steer").unwrap();
-    let cancelled_run1 = runs.iter().find(|r| r.id == run1.id).expect("run 1");
-    assert_eq!(cancelled_run1.status, "cancelled");
+    let runs = runtime.store().list_runs(&thread_id).unwrap();
+    assert_eq!(
+        runs.iter().find(|r| r.id == run1.id).expect("run 1").status,
+        "finished",
+        "the fallback must not cancel the active turn"
+    );
+    let run1_kinds = kinds_of(&runtime, &run1.id);
+    assert!(
+        !run1_kinds
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "steered item")),
+        "without live steering the message must not join run 1"
+    );
 
     let run2 = runs.iter().find(|r| r.idx == 1).expect("run 2");
     let run2_kinds = kinds_of(&runtime, &run2.id);
@@ -3003,10 +3508,106 @@ async fn steer_queue_item_cancels_active_run_and_starts_next() {
         run2_kinds
             .iter()
             .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "steered item")),
-        "steered item must dispatch next after cancelling active run; got {run2_kinds:?}"
+        "the steered item must run next; got {run2_kinds:?}"
+    );
+    let run3 = runs.iter().find(|r| r.idx == 2).expect("run 3");
+    assert!(
+        kinds_of(&runtime, &run3.id)
+            .iter()
+            .any(|k| matches!(k, EventKind::UserMessage { text, .. } if text == "queued first")),
+        "the earlier queued message must follow the steered one"
     );
 
     let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
+async fn echoed_user_message_chunk_does_not_duplicate_the_user_bubble() {
+    let _env = env_lock();
+    let (runtime, sink) = mock_runtime();
+    runtime.set_instances_in_memory(vec![mock_spec_with_env(&[("MOCK_ECHO_PROMPT", "1")])]);
+    runtime
+        .store()
+        .create_thread(&thread_record("th-echo-once"))
+        .unwrap();
+    let thread = runtime.store().get_thread("th-echo-once").unwrap();
+    let _pump = spawn_permission_pump(&runtime, &sink);
+    let run = runtime
+        .dispatch(&thread, "echo me once", &[], "mock")
+        .unwrap();
+    wait_for(Duration::from_secs(10), || {
+        runtime.active_run_for(&thread.id).is_none()
+    })
+    .await;
+
+    let kinds = kinds_of(&runtime, &run.id);
+    let bubbles = kinds
+        .iter()
+        .filter(|kind| matches!(kind, EventKind::UserMessage { .. }))
+        .count();
+    assert_eq!(
+        bubbles, 1,
+        "the agent's user_message_chunk echo must not become a second bubble; got {kinds:?}"
+    );
+}
+
+#[tokio::test]
+async fn synthetic_instruction_titles_are_ignored_and_user_text_leads_the_prompt() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-title-guard"))
+        .unwrap();
+
+    for title in [
+        "<pult_instructions>\nYou can delegate independent work.",
+        "  <pult_subagent_context>\nRole: review",
+        "prefix <pult_instructions> suffix",
+        "   ",
+    ] {
+        runtime.apply_session_metadata(
+            "th-title-guard",
+            "mock",
+            &EventKind::SessionInfo {
+                title: Some(title.to_string()),
+            },
+        );
+    }
+    assert_eq!(
+        runtime.store().get_thread("th-title-guard").unwrap().title,
+        "Runtime golden",
+        "synthetic instruction titles must never rename the thread"
+    );
+
+    runtime.apply_session_metadata(
+        "th-title-guard",
+        "mock",
+        &EventKind::SessionInfo {
+            title: Some("Real agent title".to_string()),
+        },
+    );
+    assert_eq!(
+        runtime.store().get_thread("th-title-guard").unwrap().title,
+        "Real agent title"
+    );
+
+    // run_turn builds the prompt with the user's text first so an adapter that
+    // auto-titles from the first text block never sees the wire-only block.
+    let instruction = Some("<pult_instructions>\nrules\n</pult_instructions>".to_string());
+    let content = crate::runtime::prompt_content("hello there", &[], instruction);
+    match &content[0] {
+        crate::protocol::types::ContentBlock::Text { text } => assert_eq!(text, "hello there"),
+        other => panic!("first block must be the user's text, got {other:?}"),
+    }
+    assert!(matches!(
+        &content[1],
+        crate::protocol::types::ContentBlock::Text { text } if text.starts_with("<pult_instructions>")
+    ));
+    assert_eq!(
+        crate::runtime::prompt_content("hello there", &[], None).len(),
+        1
+    );
 }
 
 #[tokio::test]
@@ -4001,4 +4602,45 @@ async fn custom_mcp_servers_follow_the_orchestrator_and_honor_scope() {
         .as_str()
         .unwrap()
         .starts_with("http://127.0.0.1:"));
+}
+
+/// Drive-relative paths (`C:foo.txt`) resolve against the process's per-drive
+/// cwd, so the sandbox cannot validate them and must reject them outright.
+#[cfg(windows)]
+#[test]
+fn sandbox_rejects_drive_relative_paths() {
+    use crate::protocol::jsonrpc::ERR_RESOURCE_NOT_FOUND;
+    let root = std::env::temp_dir().join(format!(
+        "pult-sandbox-drive-{}-{}",
+        std::process::id(),
+        crate::events::now_millis()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    let err = crate::runtime::safe_path(&root, "C:secret.txt").unwrap_err();
+    assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
+    let err = crate::runtime::safe_path(&root, r"C:\secret.txt").unwrap_err();
+    assert_eq!(err.code, ERR_RESOURCE_NOT_FOUND);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// `safe_path` rejects traversal and absolute paths outside the root, and keeps
+/// accepting paths that resolve inside it.
+#[test]
+fn sandbox_rejects_traversal_and_accepts_paths_inside_root() {
+    let root = std::env::temp_dir().join(format!(
+        "pult-sandbox-ok-{}-{}",
+        std::process::id(),
+        crate::events::now_millis()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("note.txt"), "hi").unwrap();
+
+    assert!(crate::runtime::safe_path(&root, "note.txt").is_ok());
+    assert!(crate::runtime::safe_path(&root, "./nested/new.txt").is_ok());
+    let inside = root.join("note.txt").to_string_lossy().into_owned();
+    assert!(crate::runtime::safe_path(&root, &inside).is_ok());
+
+    assert!(crate::runtime::safe_path(&root, "../escape.txt").is_err());
+    assert!(crate::runtime::safe_path(&root, "sub/../../escape.txt").is_err());
+    let _ = std::fs::remove_dir_all(&root);
 }

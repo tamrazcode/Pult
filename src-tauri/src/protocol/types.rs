@@ -347,6 +347,46 @@ pub struct SetModeParams {
 }
 
 // ---------------------------------------------------------------------------
+// Live steering (pult extension: `_session/steering`)
+// ---------------------------------------------------------------------------
+
+/// `_session/steering` request params: add a message to the active turn
+/// without cancelling it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerParams {
+    pub session_id: String,
+    pub prompt: Vec<ContentBlock>,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+/// What the agent did with the steered message. Unknown values degrade so a
+/// newer agent never wedges the queue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SteerOutcome {
+    /// The message joined the turn that is already running.
+    Injected,
+    /// The agent is idle and wants a normal `session/prompt`.
+    PromptRequired,
+    /// The agent ended the old turn and started a new one.
+    StartedNewTurn,
+    Failed,
+    #[serde(other)]
+    Unknown,
+}
+
+/// `_session/steering` response (`{ outcome }`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SteerResult {
+    pub outcome: SteerOutcome,
+    #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Value>,
+}
+
+// ---------------------------------------------------------------------------
 // Session config options (§5.4 config pickers)
 // ---------------------------------------------------------------------------
 
@@ -632,6 +672,19 @@ pub struct InitializeResult {
     pub agent_info: Option<Implementation>,
     #[serde(default, rename = "_meta", skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
+}
+
+impl InitializeResult {
+    /// Live steering is advertised in `_meta.steering.supported` (pult
+    /// extension) either at the top level or under `agentCapabilities`.
+    pub fn steering_supported(&self) -> bool {
+        fn advertised(meta: Option<&Value>) -> bool {
+            meta.and_then(|meta| meta.get("steering"))
+                .and_then(|steering| steering.get("supported"))
+                == Some(&Value::Bool(true))
+        }
+        advertised(self.meta.as_ref()) || advertised(self.agent_capabilities.meta.as_ref())
+    }
 }
 
 /// `$defs/SessionMode`.
@@ -1308,6 +1361,44 @@ mod tests {
     fn prompt_result_parses_stop_reason() {
         let r: PromptResult = serde_json::from_value(json!({"stopReason": "end_turn"})).unwrap();
         assert_eq!(r.stop_reason, StopReason::EndTurn);
+    }
+
+    #[test]
+    fn steering_capability_and_result_parse() {
+        let advertised: InitializeResult = serde_json::from_value(json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {"_meta": {"steering": {"supported": true}}}
+        }))
+        .unwrap();
+        assert!(advertised.steering_supported());
+
+        let top_level: InitializeResult = serde_json::from_value(json!({
+            "protocolVersion": 1,
+            "_meta": {"steering": {"supported": true}}
+        }))
+        .unwrap();
+        assert!(top_level.steering_supported());
+
+        let plain: InitializeResult =
+            serde_json::from_value(json!({ "protocolVersion": 1 })).unwrap();
+        assert!(!plain.steering_supported());
+
+        let result: SteerResult =
+            serde_json::from_value(json!({"outcome": "promptRequired"})).unwrap();
+        assert_eq!(result.outcome, SteerOutcome::PromptRequired);
+        let unknown: SteerResult =
+            serde_json::from_value(json!({"outcome": "teleported"})).unwrap();
+        assert_eq!(unknown.outcome, SteerOutcome::Unknown);
+
+        let params = serde_json::to_value(SteerParams {
+            session_id: "s1".into(),
+            prompt: vec![ContentBlock::text("hi")],
+            meta: None,
+        })
+        .unwrap();
+        assert_eq!(params["sessionId"], "s1");
+        assert_eq!(params["prompt"][0]["text"], "hi");
+        assert!(params.get("_meta").is_none());
     }
 
     #[test]

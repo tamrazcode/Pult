@@ -75,6 +75,7 @@ fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
         started_at: 1_200,
         finished_at: None,
         usage_json: None,
+        parent_notified_at: None,
     };
     let (first, deduplicated) = store.insert_or_get_delegated_task(&task).unwrap();
     assert!(!deduplicated);
@@ -82,6 +83,28 @@ fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
     assert!(deduplicated);
     assert_eq!(first.id, second.id);
     assert_eq!(store.list_delegated_tasks("parent").unwrap().len(), 1);
+
+    store
+        .mark_delegated_tasks_notified(&["task-1".to_string()], 5_000)
+        .unwrap();
+    assert_eq!(
+        store
+            .get_delegated_task("task-1")
+            .unwrap()
+            .parent_notified_at,
+        Some(5_000)
+    );
+    // First writer wins: a second wake attempt must not rewrite the stamp.
+    store
+        .mark_delegated_tasks_notified(&["task-1".to_string()], 9_000)
+        .unwrap();
+    assert_eq!(
+        store
+            .get_delegated_task("task-1")
+            .unwrap()
+            .parent_notified_at,
+        Some(5_000)
+    );
 
     store
         .update_delegated_task_status(
@@ -105,6 +128,18 @@ fn migration_6_lineage_and_delegated_tasks_are_idempotent_and_orphaned() {
     assert_eq!(
         store.get_delegated_task("task-1").unwrap().status,
         "orphaned"
+    );
+
+    // Re-arming a task clears the stamp so it may wake the parent again.
+    store
+        .restart_delegated_task("task-1", "child-run-2", 2_000)
+        .unwrap();
+    assert_eq!(
+        store
+            .get_delegated_task("task-1")
+            .unwrap()
+            .parent_notified_at,
+        None
     );
 }
 
@@ -610,7 +645,7 @@ fn reopening_runs_migrations_once() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 8, "migrations applied through v8");
+    assert_eq!(version, 9, "migrations applied through v9");
     drop(first);
 
     let second = Store::open(&path).unwrap();
@@ -896,7 +931,7 @@ fn migration_v3_to_v4_preserves_threads_and_adds_projects_pinned() {
                 .map_err(|e| sql("read user_version", e))
         })
         .unwrap();
-    assert_eq!(version, 8, "migrations v4-v8 should bump user_version to 8");
+    assert_eq!(version, 9, "migrations v4-v9 should bump user_version to 9");
 
     let has_pinned_col: bool = store
         .with_conn(|conn| {

@@ -37,6 +37,8 @@ pub struct IdleConn {
     /// two agent processes can report the same remote id.
     pub owner_token: String,
     pub instance_id: String,
+    /// The agent advertised `_session/steering` for this session.
+    pub steering_supported: bool,
     pub root: PathBuf,
     pub spawn_sig: SpawnSig,
     pub applied_config: DesiredConfigMap,
@@ -358,6 +360,7 @@ mod tests {
             session_id: format!("sess-{thread_id}"),
             owner_token: format!("owner-{thread_id}"),
             instance_id: instance_id.to_string(),
+            steering_supported: false,
             root: root.to_path_buf(),
             spawn_sig: sig.clone(),
             applied_config: DesiredConfigMap::new(),

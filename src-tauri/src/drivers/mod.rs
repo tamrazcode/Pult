@@ -15,7 +15,7 @@ use crate::events::EventKind;
 use crate::protocol::jsonrpc::RequestId;
 use crate::protocol::types::{
     AuthenticateResult, ConfigOptionValue, ContentBlock, InitializeResult, LoadSessionResult,
-    NewSessionResult, PromptResult, SetConfigOptionResult,
+    NewSessionResult, PromptResult, SetConfigOptionResult, SteerResult,
 };
 
 use acp::{AcpConn, ClientReply, ClientRequest, DriverError, SpawnConfig};
@@ -151,6 +151,19 @@ impl AgentConn {
         match self {
             Self::Acp(conn) => conn.cancel(session_id).await,
             Self::Pi(conn) => conn.cancel(session_id).await,
+        }
+    }
+
+    /// Live steering: ACP agents may implement `_session/steering`; Pi RPC has
+    /// no equivalent and answers an explicit unsupported error.
+    pub async fn steer(
+        &self,
+        session_id: &str,
+        content: Vec<ContentBlock>,
+    ) -> Result<SteerResult, DriverError> {
+        match self {
+            Self::Acp(conn) => conn.steer(session_id, content).await,
+            Self::Pi(conn) => conn.steer(session_id, content).await,
         }
     }
 

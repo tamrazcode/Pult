@@ -7,10 +7,12 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::events::{now_millis, EventKind};
+use crate::events::now_millis;
 use crate::orchestrator::instructions::{coordinator_instructions, MAX_DEPTH};
 use crate::orchestrator::{McpScope, OrchestratorHost, OrchestratorMcpServer, ToolFuture};
-use crate::protocol::types::{SessionConfigOptionKind, SessionConfigSelectOptions};
+use crate::protocol::types::{
+    ConfigOptionValue, SessionConfigOption, SessionConfigOptionKind, SessionConfigSelectOptions,
+};
 use crate::runtime::permissions::PermissionMode;
 use crate::runtime::AgentRuntime;
 use crate::store::records::{DelegatedTaskRecord, ThreadRecord};
@@ -19,6 +21,9 @@ use crate::store::Store;
 const MAX_WAIT: Duration = Duration::from_secs(240);
 const MAX_SUBAGENT_QUEUE_DEPTH: usize = 16;
 const STEER_DEDUP_WINDOW_MS: i64 = 5_000;
+/// Parent-facing report budget; the rest of a long child transcript is left in
+/// the child chat instead of being copied into the parent's context.
+const REPORT_LIMIT: usize = 8_000;
 
 pub struct OrchestratorEngine {
     store: Arc<Store>,
@@ -186,6 +191,22 @@ impl OrchestratorEngine {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        // Idempotency before any side effect: a retried MCP call must not
+        // leave a spare thread (or worktree) behind just to drop it again.
+        if let Some(request_id) = client_request_id.as_deref() {
+            let existing = self
+                .store
+                .list_delegated_tasks(&scope.thread_id)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|task| task.client_request_id.as_deref() == Some(request_id));
+            if let Some(record) = existing {
+                return Ok(json!({
+                    "task": task_json(&record),
+                    "deduplicated": true
+                }));
+            }
+        }
         let role = arguments
             .get("role")
             .and_then(Value::as_str)
@@ -264,7 +285,19 @@ impl OrchestratorEngine {
             .get("instanceId")
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty());
-        let target_instance_id = match requested_instance {
+        let provider_hint = target
+            .get("providerHint")
+            .and_then(Value::as_str)
+            .filter(|hint| !hint.trim().is_empty());
+        let resolved_instance =
+            match resolve_target_instance(&instances, requested_instance, provider_hint) {
+                Ok(instance) => instance,
+                Err(error) => {
+                    self.cleanup_worktree(&worktree_cleanup).await;
+                    return Err(error);
+                }
+            };
+        let target_instance_id = match resolved_instance {
             Some(id) => {
                 let instance = instances
                     .iter()
@@ -281,7 +314,7 @@ impl OrchestratorEngine {
                     self.cleanup_worktree(&worktree_cleanup).await;
                     return Err(format!("provider instance is disabled: {id}"));
                 }
-                id.to_string()
+                id
             }
             None => match self.parent_instance(&scope.thread_id, parent_run_id) {
                 Ok(instance) => instance,
@@ -291,14 +324,31 @@ impl OrchestratorEngine {
                 }
             },
         };
+        let target_options = instances
+            .iter()
+            .find(|instance| instance.id == target_instance_id)
+            .map(|instance| instance.config_options.clone())
+            .unwrap_or_default();
         let requested_model = target
             .get("model")
             .and_then(Value::as_str)
             .map(str::to_string);
-        // A child always inherits the parent's current mode. There is no
-        // per-delegation override: the composer's mode is the single source
-        // of truth, so a Full-access parent never gets approval prompts in
-        // its subagents.
+        let requested_mode = target
+            .get("mode")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|mode| !mode.is_empty())
+            .map(str::to_string);
+        let requested_effort = target
+            .get("effort")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|effort| !effort.is_empty())
+            .map(str::to_string);
+        // A child always inherits the parent's approval (permission) mode: the
+        // composer's mode is the single source of truth, so a Full-access parent
+        // never gets approval prompts in its subagents. `target.mode` is the
+        // provider's session mode (e.g. architect) and is applied separately.
         let permission_mode = mode_name(runtime.permission_mode_for(&scope.thread_id));
 
         let child_id = self.next_id("th-sub");
@@ -339,6 +389,7 @@ impl OrchestratorEngine {
             started_at: now_millis(),
             finished_at: None,
             usage_json: None,
+            parent_notified_at: None,
         };
         // The task row references the child thread, so the thread must exist
         // first. If the insert turns out to be a duplicate, drop it again.
@@ -365,12 +416,25 @@ impl OrchestratorEngine {
 
         let ceiling = runtime.permission_mode_for(&scope.thread_id);
         runtime.set_thread_permission_mode(&child_id, ceiling);
+        // `target.mode`/`target.effort` are the child's own picks, remembered on
+        // its thread so its first dispatch applies them like a composer pick.
+        if let Some(mode) = requested_mode {
+            if let Err(error) = runtime.set_mode(&child_id, &mode) {
+                tracing::warn!(target: "pult::orchestrator", mode = %mode,
+                    error = %error, "child session mode was not remembered");
+            }
+        }
+        let mut patch = crate::runtime::DesiredConfigMap::new();
         if let Some(model) = requested_model {
-            let mut patch = crate::runtime::DesiredConfigMap::new();
+            patch.insert("model".to_string(), ConfigOptionValue::String(model));
+        }
+        if let Some(effort) = requested_effort {
             patch.insert(
-                "model".to_string(),
-                crate::protocol::types::ConfigOptionValue::String(model),
+                effort_config_id(&target_options).to_string(),
+                ConfigOptionValue::String(effort),
             );
+        }
+        if !patch.is_empty() {
             let _ = runtime.merge_desired_config(&child_id, &patch);
         }
 
@@ -617,6 +681,13 @@ impl OrchestratorEngine {
             .store
             .get_thread(&task.child_thread_id)
             .map_err(|error| error.to_string())?;
+        // Re-arm the persisted ceiling in RAM: after a restart the child's
+        // mode lives only in the task row, and a follow-up run must not pick
+        // up a wider global default.
+        runtime.set_thread_permission_mode(
+            &task.child_thread_id,
+            runtime.permission_mode_for(&task.child_thread_id),
+        );
         if task_finished(&task.status) {
             // Follow-up turn in the same child thread keeps its context.
             self.store
@@ -815,6 +886,11 @@ impl OrchestratorEngine {
             .store
             .get_thread(&task.child_thread_id)
             .map_err(|error| error.to_string())?;
+        // Same ceiling as a steer: the task row is the durable source.
+        runtime.set_thread_permission_mode(
+            &task.child_thread_id,
+            runtime.permission_mode_for(&task.child_thread_id),
+        );
         // Re-arm first: a run that fails instantly must still be attributed
         // to this task instead of leaving it stuck on the old status.
         self.store
@@ -966,6 +1042,7 @@ impl OrchestratorEngine {
         let finished: Vec<DelegatedTaskRecord> = tasks
             .iter()
             .filter(|task| matches!(task.status.as_str(), "completed" | "failed"))
+            .filter(|task| task.parent_notified_at.is_none())
             .filter(|task| {
                 !self
                     .notified
@@ -1017,10 +1094,14 @@ impl OrchestratorEngine {
     }
 
     fn mark_notified(&self, tasks: &[DelegatedTaskRecord]) {
-        let mut set = self.notified.lock().expect("notified lock poisoned");
-        for task in tasks {
-            set.insert(task.id.clone());
+        let ids: Vec<String> = tasks.iter().map(|task| task.id.clone()).collect();
+        if !ids.is_empty() {
+            let _ = self
+                .store
+                .mark_delegated_tasks_notified(&ids, now_millis());
         }
+        let mut set = self.notified.lock().expect("notified lock poisoned");
+        set.extend(ids);
     }
 
     /// Called by the runtime when a parent run goes idle: deliver a result
@@ -1031,15 +1112,7 @@ impl OrchestratorEngine {
 
     /// Last assistant text of a child run, capped for the parent's context.
     fn run_summary(&self, _thread_id: &str, run_id: &str) -> Option<String> {
-        let events = self.store.load_events(run_id).ok()?;
-        let mut summary = String::new();
-        for event in events {
-            if let EventKind::AgentMessageDelta { delta } = event.kind {
-                summary.push_str(&delta);
-            }
-        }
-        let summary = summary.trim();
-        format_run_summary(summary)
+        format_run_summary(&load_report_tail(&self.store, run_id)?)
     }
 
     /// Task JSON with the child's live queue depth, so a steer response cannot
@@ -1124,6 +1197,110 @@ impl OrchestratorEngine {
     }
 }
 
+/// `target.providerHint` picks a provider when `instanceId` does not: a
+/// configured id, a display name, or a driver id all match. An explicit
+/// `instanceId` that contradicts the hint is a caller bug, not a silent pick.
+fn resolve_target_instance(
+    instances: &[crate::runtime::InstanceInfo],
+    requested: Option<&str>,
+    hint: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(hint) = hint.map(str::trim).filter(|hint| !hint.is_empty()) else {
+        return Ok(requested.map(str::to_string));
+    };
+    let needle = hint.to_ascii_lowercase();
+    let matched: Vec<&crate::runtime::InstanceInfo> = instances
+        .iter()
+        .filter(|instance| {
+            instance.id.eq_ignore_ascii_case(&needle)
+                || instance.display_name.eq_ignore_ascii_case(&needle)
+                || instance.driver.eq_ignore_ascii_case(&needle)
+        })
+        .collect();
+    if let Some(id) = requested {
+        return if matched.iter().any(|instance| instance.id == id) {
+            Ok(Some(id.to_string()))
+        } else if matched.is_empty() {
+            Err(format!("unknown providerHint: {hint}"))
+        } else {
+            Err(format!(
+                "instanceId {id} does not match providerHint {hint}"
+            ))
+        };
+    }
+    match matched.as_slice() {
+        [only] => Ok(Some(only.id.clone())),
+        [] => Err(format!("no provider matches providerHint {hint}")),
+        many => Err(format!(
+            "providerHint {hint} is ambiguous: {}",
+            many.iter()
+                .map(|instance| instance.id.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+    }
+}
+
+/// Config option id that carries reasoning effort for this provider, in the
+/// runtime's preference order. Falls back to the ACP-standard `thought_level`
+/// when capabilities are not cached yet; dispatch drops options the agent does
+/// not advertise.
+fn effort_config_id(options: &[SessionConfigOption]) -> &'static str {
+    const EFFORT_IDS: [&str; 5] = [
+        "thought_level",
+        "thinking_level",
+        "reasoning_effort",
+        "effort",
+        "reasoning",
+    ];
+    EFFORT_IDS
+        .iter()
+        .copied()
+        .find(|id| options.iter().any(|option| option.id == *id))
+        .unwrap_or("thought_level")
+}
+
+/// Assistant text of a run, read straight from SQLite and stopped once the
+/// report budget is exceeded: a long run never loads its whole event log.
+fn load_report_tail(store: &Store, run_id: &str) -> Option<String> {
+    store
+        .with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "SELECT payload FROM events
+                     WHERE run_id = ?1 AND kind = 'agent_message_delta'
+                     ORDER BY seq ASC",
+                )
+                .map_err(|error| {
+                    crate::PultError::store(format!("run_summary prepare: {error}"))
+                })?;
+            let mut rows = stmt
+                .query([run_id])
+                .map_err(|error| crate::PultError::store(format!("run_summary query: {error}")))?;
+            let mut text = String::new();
+            let mut chars = 0usize;
+            while let Some(row) = rows
+                .next()
+                .map_err(|error| crate::PultError::store(format!("run_summary row: {error}")))?
+            {
+                let payload: String = row.get(0).map_err(|error| {
+                    crate::PultError::store(format!("run_summary row: {error}"))
+                })?;
+                let delta = serde_json::from_str::<Value>(&payload)
+                    .ok()
+                    .and_then(|value| value["delta"].as_str().map(str::to_string));
+                let Some(delta) = delta else { continue };
+                chars += delta.chars().count();
+                text.push_str(&delta);
+                if chars > REPORT_LIMIT {
+                    break;
+                }
+            }
+            Ok(text)
+        })
+        .ok()
+}
+
 fn apply_model_prefs(models: &mut Vec<Value>, prefs: &crate::store::ProviderModelPrefs) {
     if prefs.disable_all {
         models.clear();
@@ -1159,11 +1336,10 @@ fn format_run_summary(summary: &str) -> Option<String> {
     if summary.is_empty() {
         return None;
     }
-    const LIMIT: usize = 8_000;
-    Some(if summary.chars().count() > LIMIT {
+    Some(if summary.chars().count() > REPORT_LIMIT {
         format!(
             "{}\n\n[report truncated; open the child chat for the full transcript]",
-            truncate(summary, LIMIT)
+            truncate(summary, REPORT_LIMIT)
         )
     } else {
         summary.to_string()
@@ -1285,6 +1461,88 @@ impl OrchestratorHost for RuntimeHost {
 mod tests {
     use super::*;
 
+    fn instance(
+        id: &str,
+        display: &str,
+        driver: &str,
+        enabled: bool,
+    ) -> crate::runtime::InstanceInfo {
+        crate::runtime::InstanceInfo {
+            id: id.to_string(),
+            display_name: display.to_string(),
+            enabled,
+            driver: driver.to_string(),
+            command: String::new(),
+            args: Vec::new(),
+            env: std::collections::HashMap::new(),
+            secret_env: Vec::new(),
+            home_path: None,
+            shadow_home_path: None,
+            status: "connected".to_string(),
+            prompt_image: false,
+            load_session: false,
+            steering_supported: false,
+            modes: Vec::new(),
+            config_options: Vec::new(),
+            auth_methods: Vec::new(),
+            auth_hint: None,
+        }
+    }
+
+    #[test]
+    fn provider_hint_matches_id_name_or_driver_but_never_overrides_instance_id() {
+        let instances = vec![
+            instance("mock", "Mock agent (dev)", "mock", true),
+            instance("claude", "Claude Code", "acp", true),
+            instance("codex", "Codex", "acp", true),
+        ];
+        assert_eq!(
+            resolve_target_instance(&instances, None, Some("Mock agent (dev)")).unwrap(),
+            Some("mock".to_string())
+        );
+        assert_eq!(
+            resolve_target_instance(&instances, None, Some("MOCK")).unwrap(),
+            Some("mock".to_string())
+        );
+        assert_eq!(
+            resolve_target_instance(&instances, Some("codex"), Some("Codex")).unwrap(),
+            Some("codex".to_string())
+        );
+        // Two enabled providers speak `acp`: the hint must not guess.
+        assert!(resolve_target_instance(&instances, None, Some("acp")).is_err());
+        assert!(resolve_target_instance(&instances, None, Some("nope")).is_err());
+        assert!(resolve_target_instance(&instances, Some("codex"), Some("claude")).is_err());
+        assert_eq!(
+            resolve_target_instance(&instances, None, None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn effort_uses_the_advertised_thought_option() {
+        let option = |id: &str| SessionConfigOption {
+            id: id.to_string(),
+            name: id.to_string(),
+            description: None,
+            category: None,
+            meta: None,
+            kind: SessionConfigOptionKind::Boolean {
+                current_value: false,
+            },
+        };
+        assert_eq!(effort_config_id(&[]), "thought_level");
+        assert_eq!(effort_config_id(&[option("model")]), "thought_level");
+        assert_eq!(
+            effort_config_id(&[option("reasoning_effort")]),
+            "reasoning_effort"
+        );
+        assert_eq!(
+            effort_config_id(&[option("effort"), option("thought_level")]),
+            "thought_level"
+        );
+        assert_eq!(effort_config_id(&[option("effort")]), "effort");
+    }
+
     #[test]
     fn disable_all_and_disabled_models_hide_capability_models() {
         let mut models = vec![
@@ -1338,6 +1596,86 @@ mod tests {
     }
 
     #[test]
+    fn run_summary_reads_only_deltas_and_stops_at_the_report_budget() {
+        use crate::events::{Event, EventKind};
+        use crate::store::records::RunRecord;
+
+        let store = std::sync::Arc::new(Store::open_in_memory().unwrap());
+        store
+            .create_thread(&ThreadRecord {
+                id: "th-sum".into(),
+                project_id: None,
+                title: "summary".into(),
+                status: "draft".into(),
+                pinned: false,
+                created_at: now_millis(),
+                updated_at: now_millis(),
+                workspace: None,
+                main_repo: None,
+                worktree_name: None,
+                parent_thread_id: None,
+                parent_run_id: None,
+                depth: 0,
+                lineage_kind: None,
+                child_role: None,
+            })
+            .unwrap();
+        let run_id = "run-sum";
+        store
+            .create_run(&RunRecord {
+                id: run_id.into(),
+                thread_id: "th-sum".into(),
+                idx: 0,
+                status: "running".into(),
+                instance_id: "mock".into(),
+                model: None,
+                mode: None,
+                effort: None,
+                started_at: now_millis(),
+                stopped_at: None,
+                stop_reason: None,
+                error: None,
+            })
+            .unwrap();
+        let mut seq = 0u64;
+        let mut push = |kind: EventKind| {
+            store
+                .append_event(&Event::new(run_id, seq, kind))
+                .expect("append event");
+            seq += 1;
+        };
+        push(EventKind::Notice {
+            level: "info".into(),
+            message: "not part of the report".into(),
+        });
+        push(EventKind::AgentMessageDelta {
+            delta: "first ".into(),
+        });
+        push(EventKind::AgentMessageDelta {
+            delta: "second".into(),
+        });
+        let engine = OrchestratorEngine::new(std::sync::Arc::clone(&store));
+        assert_eq!(
+            engine.run_summary("th-sum", run_id).as_deref(),
+            Some("first second")
+        );
+
+        // One oversized turn is cut at the budget instead of being loaded whole.
+        for _ in 0..3 {
+            push(EventKind::AgentMessageDelta {
+                delta: "y".repeat(5_000),
+            });
+        }
+        let bounded = engine.run_summary("th-sum", run_id).expect("summary");
+        assert!(bounded.contains("report truncated"));
+        assert!(
+            bounded.chars().count() < 8_500,
+            "{}",
+            bounded.chars().count()
+        );
+    }
+
+    #[test]
     fn task_json_carries_duration_and_lineage() {
         let task = DelegatedTaskRecord {
             id: "task-1".into(),
@@ -1359,6 +1697,7 @@ mod tests {
             started_at: 1000,
             finished_at: Some(2500),
             usage_json: None,
+            parent_notified_at: None,
         };
         let value = task_json(&task);
         assert_eq!(value["taskId"], "task-1");

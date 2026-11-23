@@ -32,6 +32,9 @@ use crate::runtime::terminals::TerminalRegistry;
 use crate::store::records::{ImageInput, QueueItem, RunRecord, ThreadRecord};
 use crate::store::Store;
 
+/// Delegation lineage depth cap for the cold permission-mode lookup.
+const MAX_PERMISSION_LINEAGE_DEPTH: u8 = 8;
+
 /// Event fan-out seam: the production sink is the Tauri app handle; tests
 /// record emissions in memory. Payloads are serialized once here. `notify`
 /// posts an OS notification when the window is unfocused (В§5.5); the focus
@@ -95,6 +98,8 @@ pub struct InstanceInfo {
     pub prompt_image: bool,
     /// From the last initialize: `session/load` supported (resume path).
     pub load_session: bool,
+    /// From the last initialize: `_session/steering` advertised.
+    pub steering_supported: bool,
     /// Session modes the agent advertised (M6 picker; empty until known).
     pub modes: Vec<crate::protocol::types::SessionMode>,
     /// Session config options (model, thought level, toggles) from the cache.
@@ -120,6 +125,8 @@ pub struct SecretEnvMeta {
 struct CachedCaps {
     prompt_image: bool,
     load_session: bool,
+    /// Live `_session/steering` advertised at the last handshake.
+    steering_supported: bool,
     /// Session modes the agent advertised at the last handshake (M6 picker).
     modes: Vec<crate::protocol::types::SessionMode>,
     /// Session config options from the last handshake or update.
@@ -136,6 +143,7 @@ impl CachedCaps {
             instance_id: instance_id.to_string(),
             prompt_image: self.prompt_image,
             load_session: self.load_session,
+            steering_supported: self.steering_supported,
             modes: self.modes.clone(),
             config_options: self.config_options.clone(),
             auth_methods: self.auth_methods.clone(),
@@ -256,6 +264,8 @@ struct RunState {
     owner_token: String,
     /// Which configured instance owns this run (diagnostics, M6).
     instance_id: String,
+    /// The agent advertised `_session/steering` for this session.
+    steering_supported: bool,
 }
 
 /// Pre-initialized agent connection for the selected provider. `session/new`
@@ -332,9 +342,53 @@ pub struct AgentRuntime {
     pub gateway_tokens: Arc<crate::mcp::gateway::GatewayTokens>,
     /// Loopback gateway for user MCP servers; set once at boot.
     pub gateway: std::sync::OnceLock<Arc<crate::mcp::gateway::McpGateway>>,
+    /// Boot gate: runs dispatched before the MCP servers are up wait here.
+    pub readiness: ReadinessGate,
     /// Bumped on any custom MCP config change; warm sessions from an older
     /// generation are discarded instead of serving a stale server list.
     pub mcp_generation: std::sync::atomic::AtomicU64,
+}
+
+/// One-shot boot gate. The window opens while the MCP gateway and the
+/// orchestrator server start in the background; anything that needs those
+/// servers waits on [`ReadinessGate::wait`] instead of racing a half-started
+/// runtime. `mark_ready` is called on every startup outcome, success or not,
+/// so a failed server can never wedge the app.
+#[derive(Clone)]
+pub struct ReadinessGate {
+    ready: tokio::sync::watch::Sender<bool>,
+}
+
+impl ReadinessGate {
+    fn new() -> Self {
+        // Starts open: unit tests and headless runtimes never run the app
+        // startup task. `lib.rs` closes it for the real window and reopens it
+        // when both loopback servers have settled.
+        let (ready, _) = tokio::sync::watch::channel(true);
+        Self { ready }
+    }
+
+    /// Closes the gate while boot starts the MCP servers.
+    pub fn defer(&self) {
+        self.ready.send_replace(false);
+    }
+
+    pub fn mark_ready(&self) {
+        // `send_replace` updates even when nobody is subscribed yet.
+        self.ready.send_replace(true);
+    }
+
+    pub fn is_ready(&self) -> bool {
+        *self.ready.borrow()
+    }
+
+    pub async fn wait(&self) {
+        let mut receiver = self.ready.subscribe();
+        if *receiver.borrow() {
+            return;
+        }
+        let _ = receiver.wait_for(|ready| *ready).await;
+    }
 }
 
 /// `canonicalize()` returns verbatim `\\?\C:\...` paths; agents validate cwd
@@ -617,8 +671,16 @@ impl AgentRuntime {
             mcp_registry,
             gateway_tokens,
             gateway: std::sync::OnceLock::new(),
+            readiness: ReadinessGate::new(),
             mcp_generation: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// Resolves once boot finished starting (or failed to start) the MCP
+    /// servers. Every new run waits here so an early message still gets the
+    /// orchestrator tools instead of a session without them.
+    pub async fn ready(&self) {
+        self.readiness.wait().await;
     }
 
     /// Connects the engine back to this runtime. Called once at boot, after
@@ -915,6 +977,7 @@ impl AgentRuntime {
                     .unwrap_or(CachedCaps {
                         prompt_image: false,
                         load_session: false,
+                        steering_supported: false,
                         modes: Vec::new(),
                         config_options: Vec::new(),
                         auth_methods: Vec::new(),
@@ -961,6 +1024,7 @@ impl AgentRuntime {
                     },
                     prompt_image: caps.prompt_image,
                     load_session: caps.load_session,
+                    steering_supported: caps.steering_supported,
                     modes: caps.modes,
                     config_options: caps.config_options,
                     auth_methods: caps.auth_methods,
@@ -1444,40 +1508,123 @@ impl AgentRuntime {
             .contains(thread_id)
     }
 
-    /// Sends a queued message now: move it ahead of the queue and cancel the
-    /// active run so the queue drain picks it next. Best-effort cancel.
-    pub fn steer(
+    /// Sends a queued message now, without cancelling the active turn.
+    ///
+    /// Agents that advertise `_session/steering` get the message injected into
+    /// the running turn; everyone else gets it moved to the head of the queue
+    /// so it runs next. Neither path sends `session/cancel`.
+    pub async fn steer(
         self: &Arc<Self>,
         thread_id: &str,
         queue_id: &str,
     ) -> Result<(), crate::PultError> {
-        self.store.move_queue_item_to_head(thread_id, queue_id)?;
-        self.emit_queue_updated(thread_id);
-        if let Some(run_id) = self.active_run_for(thread_id) {
-            if let Err(err) = self.cancel_for_steer(&run_id) {
-                tracing::warn!(target: "pult::runtime", error = %err, "steer cancel failed; retrying");
-                // The run may still be finishing its handshake, so its live
-                // connection is not registered yet. Retry off the caller.
-                let runtime = self.clone();
-                let thread_id = thread_id.to_string();
-                tokio::spawn(async move {
-                    for _ in 0..100 {
-                        if runtime.active_run_for(&thread_id).is_none() {
-                            runtime.auto_dispatch_queue(&thread_id);
-                            return;
-                        }
-                        if runtime.cancel_for_steer(&run_id).is_ok() {
-                            return;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    }
-                    tracing::warn!(target: "pult::runtime", "steer could not cancel the active run");
-                });
-            }
-        } else {
+        let Some(run_id) = self.active_run_for(thread_id) else {
+            self.store.move_queue_item_to_head(thread_id, queue_id)?;
+            self.emit_queue_updated(thread_id);
             self.auto_dispatch_queue(thread_id);
+            return Ok(());
+        };
+        // Read the live session under the lock; never hold it across an await.
+        let live = {
+            let inner = self.inner.lock().expect("runtime lock poisoned");
+            inner.runs.get(&run_id).map(|state| {
+                (
+                    Arc::clone(&state.conn),
+                    state.session_id.clone(),
+                    state.steering_supported,
+                )
+            })
+        };
+        let Some((conn, session_id, steering_supported)) = live else {
+            // The run ended between the lookup and now: the queue is free.
+            self.store.move_queue_item_to_head(thread_id, queue_id)?;
+            self.emit_queue_updated(thread_id);
+            if self.active_run_for(thread_id).is_none() {
+                self.auto_dispatch_queue(thread_id);
+            }
+            return Ok(());
+        };
+        if !steering_supported || session_id.is_empty() {
+            // No live steering (e.g. agy_acp_server.exe, or a run that is
+            // still opening its session): prioritize the message; the active
+            // turn keeps going.
+            self.store.move_queue_item_to_head(thread_id, queue_id)?;
+            self.emit_queue_updated(thread_id);
+            if self.active_run_for(thread_id).is_none() {
+                self.auto_dispatch_queue(thread_id);
+            }
+            return Ok(());
         }
-        Ok(())
+
+        // Claim the item so a concurrent queue drain cannot run it twice.
+        self.store.move_queue_item_to_head(thread_id, queue_id)?;
+        let claim = new_row_id("steer", thread_id);
+        let item = match self.store.claim_queue_head(thread_id, &claim)? {
+            Some(item) if item.id == queue_id => item,
+            other => {
+                if let Some(item) = other {
+                    let _ = self.store.release_queue_claim(&item.id);
+                }
+                self.emit_queue_updated(thread_id);
+                return Ok(());
+            }
+        };
+        let mut content = Vec::with_capacity(1 + item.images.len());
+        content.push(crate::protocol::types::ContentBlock::text(item.text.clone()));
+        for image in &item.images {
+            content.push(crate::protocol::types::ContentBlock::Image {
+                data: image.data.clone(),
+                mime_type: image.mime_type.clone(),
+            });
+        }
+        match conn.steer(&session_id, content).await {
+            Ok(result)
+                if matches!(
+                    result.outcome,
+                    crate::protocol::types::SteerOutcome::Injected
+                        | crate::protocol::types::SteerOutcome::StartedNewTurn
+                ) =>
+            {
+                // The active turn owns the message now: show it once, on the
+                // run it joined (the adapter echo is dropped in apply_session_event).
+                let event = Event::new(
+                    run_id.clone(),
+                    self.store.next_seq(&run_id)?,
+                    EventKind::UserMessage {
+                        text: item.text,
+                        images: item.images.clone(),
+                    },
+                );
+                if let Err(err) = self.store.append_event(&event) {
+                    // The agent has the message but the transcript could not
+                    // record it: keep it visible in the queue instead of losing it.
+                    let _ = self.store.release_queue_claim(&item.id);
+                    self.emit_queue_updated(thread_id);
+                    return Err(err);
+                }
+                self.emit_run_event(&run_id, &event);
+                self.store.remove_queue_item(&item.id)?;
+                self.emit_queue_updated(thread_id);
+                Ok(())
+            }
+            failed => {
+                if let Err(err) = &failed {
+                    tracing::warn!(target: "pult::runtime",
+                        error = %err, "steering was not injected");
+                }
+                // Keep the message at the head of the queue for the next turn.
+                self.store.release_queue_claim(&item.id)?;
+                self.emit_queue_updated(thread_id);
+                if self.active_run_for(thread_id).is_none() {
+                    self.auto_dispatch_queue(thread_id);
+                    return Ok(());
+                }
+                match failed {
+                    Err(err) => Err(crate::PultError::internal(format!("steer failed: {err}"))),
+                    Ok(_) => Ok(()),
+                }
+            }
+        }
     }
 
     /// Pushes the thread's current queue to the UI ("queue:update").
@@ -1500,6 +1647,7 @@ impl AgentRuntime {
         &self,
         instance_id: &str,
         caps: &AgentCapabilities,
+        steering_supported: bool,
         modes: Vec<crate::protocol::types::SessionMode>,
         config_options: Vec<SessionConfigOption>,
     ) {
@@ -1527,6 +1675,7 @@ impl AgentRuntime {
             cached = CachedCaps {
                 prompt_image: caps.prompt_capabilities.image,
                 load_session: caps.load_session,
+                steering_supported,
                 modes,
                 config_options,
                 auth_methods: previous
@@ -1565,6 +1714,7 @@ impl AgentRuntime {
                 .or_insert(CachedCaps {
                     prompt_image: false,
                     load_session: false,
+                    steering_supported: false,
                     modes: Vec::new(),
                     config_options: Vec::new(),
                     auth_methods: Vec::new(),
@@ -1889,9 +2039,10 @@ impl AgentRuntime {
         self.cancel_with_opts(run_id, force, true)
     }
 
-    /// Queue Steer replaces the current turn with the next queued message on
-    /// the same thread. It must not cascade: sending a new message to the
-    /// parent is not a Stop, and running subagents keep working.
+    /// Explicit turn replacement for orchestrator `mode: "interrupt"` / urgent
+    /// steering: the queued message runs next on the same thread. It must not
+    /// cascade: sending a new message to the parent is not a Stop, and running
+    /// subagents keep working. Queue Steer from the composer never uses this.
     pub fn cancel_for_steer(self: &Arc<Self>, run_id: &str) -> Result<(), crate::PultError> {
         self.cancel_with_opts(run_id, false, false)
     }
@@ -2044,18 +2195,53 @@ impl AgentRuntime {
 
     /// Permission mode for a thread: override, else the settings default.
     pub fn permission_mode_for(&self, thread_id: &str) -> PermissionMode {
+        self.permission_mode_at(thread_id, 0)
+    }
+
+    /// Cold lookups (e.g. after a restart, when `permission_modes` is empty)
+    /// walk the delegation lineage: a child keeps the mode it was created
+    /// with rather than inheriting a newer, wider global default. The
+    /// depth cap stops a cyclic lineage from recursing forever.
+    fn permission_mode_at(&self, thread_id: &str, depth: u8) -> PermissionMode {
         {
             let inner = self.inner.lock().expect("runtime lock poisoned");
             if let Some(mode) = inner.permission_modes.get(thread_id) {
                 return *mode;
             }
         }
-        self.store
+        let global = self
+            .store
             .get_setting("permission_mode")
             .ok()
             .flatten()
             .and_then(|v| PermissionMode::from_settings_value(&v))
-            .unwrap_or_else(PermissionMode::default_mode)
+            .unwrap_or_else(PermissionMode::default_mode);
+        if depth >= MAX_PERMISSION_LINEAGE_DEPTH {
+            return global;
+        }
+        let stored = self
+            .store
+            .find_delegated_task_by_child_thread(thread_id)
+            .ok()
+            .flatten()
+            .and_then(|task| {
+                PermissionMode::from_settings_value(&serde_json::Value::String(
+                    task.permission_mode,
+                ))
+                .map(|mode| (mode, task.parent_thread_id))
+            });
+        let Some((stored, parent_thread_id)) = stored else {
+            return global;
+        };
+        let mode = stored
+            .min(self.permission_mode_at(&parent_thread_id, depth + 1))
+            .min(global);
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .permission_modes
+            .insert(thread_id.to_string(), mode);
+        mode
     }
 
     /// Per-thread permission mode override ("pill" in the composer chrome).
@@ -2240,8 +2426,10 @@ impl AgentRuntime {
             self.update_cached_config_options(instance_id, options.clone());
         }
         // Agent-chosen session titles rename the thread live (session_info_update).
+        // Adapters that auto-title from the first text block sometimes echo the
+        // wire-only instruction block back; that is not a thread title.
         if let EventKind::SessionInfo { title: Some(title) } = kind {
-            if !title.trim().is_empty() {
+            if !title.trim().is_empty() && !is_synthetic_instruction_title(title) {
                 if let Err(err) = self.store.rename_thread(thread_id, title) {
                     tracing::warn!(target: "pult::runtime",
                         error = %err, "session title rename failed");
@@ -2445,9 +2633,33 @@ fn persist_event_batch(
     if events.is_empty() {
         return Ok(());
     }
-    runtime.store.append_events_batch(&events)?;
+    let events = match runtime.store.append_events_batch(&events) {
+        Ok(()) => events,
+        Err(err) if is_seq_conflict(&err) => {
+            // A live steer appended a user message to this run between
+            // flushes; renumber this batch onto the tail instead of failing it.
+            let mut next = runtime.store.next_seq(run_id)?;
+            let renumbered: Vec<Event> = events
+                .into_iter()
+                .map(|event| {
+                    let event = Event::new(run_id.to_string(), next, event.kind);
+                    next += 1;
+                    event
+                })
+                .collect();
+            runtime.store.append_events_batch(&renumbered)?;
+            renumbered
+        }
+        Err(err) => return Err(err),
+    };
     runtime.emit_run_events(run_id, &events);
     Ok(())
+}
+
+/// The batcher numbered its batch behind a row written by a live steer.
+fn is_seq_conflict(err: &crate::PultError) -> bool {
+    matches!(err, crate::PultError::Store { message }
+        if message.starts_with("append_event: duplicate (run_id, seq)"))
 }
 
 /// Applies one projected agent event to the run: first-delta timing, coalesced
@@ -2465,16 +2677,10 @@ fn apply_session_event(
     prompt_started: std::time::Instant,
     kind: EventKind,
 ) -> Result<(), String> {
-    // Hidden wake prompts are not transcript rows. Agents commonly echo the
-    // prompt back as user_message_chunk; drop that echo at the source.
-    if matches!(&kind, EventKind::UserMessage { .. })
-        && runtime
-            .inner
-            .lock()
-            .expect("runtime lock poisoned")
-            .hidden_runs
-            .contains(run_id)
-    {
+    // The user bubble is persisted by `dispatch_with` (and by a live steer).
+    // Agents echo the prompt back as user_message_chunk; that echo is never a
+    // second transcript row, so every projected UserMessage is dropped here.
+    if matches!(&kind, EventKind::UserMessage { .. }) {
         return Ok(());
     }
     if timing.first_delta_ms.is_none()
@@ -2530,6 +2736,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         config,
         mut answers_rx,
     } = task;
+    // The window opens before the MCP servers finish starting; a run whose
+    // session needs their URLs waits here rather than losing the tools.
+    runtime.ready().await;
     let turn_started = std::time::Instant::now();
     let mut timing = RunTiming {
         run_id: run_id.clone(),
@@ -2581,11 +2790,13 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mut events_rx: mpsc::UnboundedReceiver<EventKind>;
     let mut client_requests_rx: mpsc::UnboundedReceiver<ClientRequest>;
     let session_id: String;
+    // Whether this session accepts `_session/steering` (from the handshake).
+    let steering_supported: bool;
     // Terminals are owned by the connection, not by the ACP session id.
     let owner_token: String;
     let mut applied_config: DesiredConfigMap;
     let mcp_token: Option<String>;
-    let session_context_ready: bool;
+    let mut instructions: InstructionState;
     let session_has_orchestrator: bool;
     let session_mcp_generation: u64;
     let mut context_reset_reason: Option<String> = None;
@@ -2600,6 +2811,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     if let Some(entry) = pooled {
         timing.pooled = true;
         let entry_mcp_generation = entry.mcp_generation;
+        let entry_steering = entry.steering_supported;
         let crate::runtime::pool::IdleConn {
             conn: pooled_conn,
             events_rx: mut pooled_events,
@@ -2608,6 +2820,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             owner_token: pooled_owner,
             applied_config: pooled_config,
             mcp_token: pooled_token,
+            instructions_injected: pooled_instructions,
             ..
         } = entry;
         // Anything buffered after the previous prompt completed is stale.
@@ -2616,12 +2829,16 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         events_rx = pooled_events;
         client_requests_rx = pooled_requests;
         session_id = pooled_session;
+        steering_supported = entry_steering;
         owner_token = pooled_owner;
         applied_config = pooled_config;
         mcp_token = pooled_token;
         session_mcp_generation = entry_mcp_generation;
-        // A parked session already got the instructions on its first prompt.
-        session_context_ready = true;
+        // A parked session that already received the block must not get it
+        // again; one parked after only slash commands still needs it.
+        instructions = InstructionState {
+            injected: pooled_instructions,
+        };
         session_has_orchestrator = mcp_token.is_some();
         {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
@@ -2632,6 +2849,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     session_id: session_id.clone(),
                     owner_token: owner_token.clone(),
                     instance_id: instance_id.clone(),
+                    steering_supported,
                 },
             );
         }
@@ -2690,6 +2908,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     session_id: String::new(),
                     owner_token: owner_token.clone(),
                     instance_id: instance_id.clone(),
+                    steering_supported: false,
                 },
             );
         }
@@ -2736,11 +2955,14 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         timing.handshake_ms = resolved.handshake_ms;
         timing.session_ms = resolved.session_ms;
         session_id = resolved.session_id;
+        steering_supported = resolved.steering_supported;
         context_reset_reason = resolved.context_reset_reason;
         mcp_token = resolved.mcp_token;
         session_mcp_generation = resolved.mcp_generation;
         // A resumed session keeps the context it was given before.
-        session_context_ready = resolved.resumed;
+        instructions = InstructionState {
+            injected: resolved.resumed,
+        };
         session_has_orchestrator = mcp_token.is_some();
         // A resumed session re-announces the prior transcript while `session/load`
         // is in flight. Persisting that replay would duplicate history in this
@@ -2762,6 +2984,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
             let mut guard = runtime.inner.lock().expect("runtime lock poisoned");
             if let Some(state) = guard.runs.get_mut(&run_id) {
                 state.session_id = session_id.clone();
+                state.steering_supported = steering_supported;
             }
         }
         emit_process("running", None);
@@ -2862,22 +3085,22 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     let mut stop_reason: Option<String>;
 
     let mut content = Vec::with_capacity(2 + images.len());
-    // Wire-only block: the transcript still shows just the user's message.
-    // Never glued before a slash command - the adapter must parse it first.
-    if session_has_orchestrator && !session_context_ready && !text.trim_start().starts_with('/') {
-        if let Ok(thread_record) = runtime.store.get_thread(&thread_id) {
-            if let Some(block) = crate::orchestrator::instructions::prompt_context(&thread_record) {
-                content.push(crate::protocol::types::ContentBlock::text(block));
-            }
-        }
+    // Wire-only block rule: the user's text always goes first (adapters that
+    // auto-title a session from the first text block must see the message),
+    // and a slash command is never glued to the block.
+    let instruction = if instructions.needs_injection(session_has_orchestrator, &text) {
+        runtime
+            .store
+            .get_thread(&thread_id)
+            .ok()
+            .and_then(|thread| crate::orchestrator::instructions::prompt_context(&thread))
+    } else {
+        None
+    };
+    if instruction.is_some() {
+        instructions.injected = true;
     }
-    content.push(crate::protocol::types::ContentBlock::text(text.clone()));
-    for image in &images {
-        content.push(crate::protocol::types::ContentBlock::Image {
-            data: image.data.clone(),
-            mime_type: image.mime_type.clone(),
-        });
-    }
+    content.extend(prompt_content(&text, &images, instruction));
     let prompt_started = std::time::Instant::now();
     let prompt_fut = conn.prompt(&session_id, content);
     tokio::pin!(prompt_fut);
@@ -3181,6 +3404,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 session_id: session_id.clone(),
                 owner_token: owner_token.clone(),
                 instance_id: instance_id.clone(),
+                steering_supported,
                 root: root.clone(),
                 spawn_sig,
                 applied_config,
@@ -3189,7 +3413,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 // The token stays valid while the ACP connection lives; the
                 // pool revokes it when this entry is killed or evicted.
                 mcp_token,
-                instructions_injected: false,
+                instructions_injected: instructions.injected,
                 compaction_epoch: 0,
                 mcp_generation: session_mcp_generation,
                 last_used: std::time::Instant::now(),
@@ -3368,6 +3592,8 @@ pub struct PreflightReport {
     pub agent_version: Option<String>,
     pub load_session: bool,
     pub prompt_image: bool,
+    /// Live steering (`_session/steering`) advertised at the handshake.
+    pub steering_supported: bool,
     /// Real auth state: a probe `session/new` succeeded (T3-style
     /// "Authenticated"), not just advertised auth methods.
     pub auth_required: bool,
@@ -3377,6 +3603,17 @@ pub struct PreflightReport {
     pub config_options: Vec<SessionConfigOption>,
     /// Auth methods advertised at the handshake (sign-in actions).
     pub auth_methods: Vec<crate::protocol::types::AuthMethod>,
+}
+
+/// Kills an agent's whole process tree when its owning scope ends — including
+/// early returns and a cancelled preflight/authenticate future, where no
+/// explicit `kill()` runs and `.cmd`/`node` grandchildren would be orphaned.
+struct KillOnDrop(Arc<crate::drivers::AgentConn>);
+
+impl Drop for KillOnDrop {
+    fn drop(&mut self) {
+        self.0.kill();
+    }
 }
 
 impl AgentRuntime {
@@ -3436,6 +3673,10 @@ impl AgentRuntime {
         let (conn, _streams) = crate::drivers::AgentConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
+        let conn = Arc::new(conn);
+        // Every return below — success, error, or a cancelled future — tears the
+        // probe tree down.
+        let _kill_guard = KillOnDrop(Arc::clone(&conn));
         if let Some(pid) = conn.pid() {
             crate::processes::register_process(
                 pid,
@@ -3445,7 +3686,6 @@ impl AgentRuntime {
             );
         }
         let init = conn.initialize().await.map_err(|e| {
-            conn.kill();
             crate::PultError::internal(format!(
                 "{} did not answer the handshake: {e}",
                 spec.display_name
@@ -3459,7 +3699,6 @@ impl AgentRuntime {
             Ok(session) => (false, None, session.config_options),
             Err(err) if err.is_auth_required() => (true, Some(err.to_string()), Vec::new()),
             Err(err) => {
-                conn.kill();
                 return Err(crate::PultError::internal(format!(
                     "{} session probe failed: {err}",
                     spec.display_name
@@ -3470,6 +3709,7 @@ impl AgentRuntime {
         self.cache_capabilities(
             instance_id,
             &init.agent_capabilities,
+            init.steering_supported(),
             Vec::new(),
             config_options.clone(),
         );
@@ -3489,7 +3729,6 @@ impl AgentRuntime {
                 },
             );
         }
-        conn.kill();
         Ok(PreflightReport {
             instance_id: instance_id.to_string(),
             agent_name: init
@@ -3500,6 +3739,7 @@ impl AgentRuntime {
             agent_version: init.agent_info.as_ref().and_then(|i| i.version.clone()),
             load_session: init.agent_capabilities.load_session,
             prompt_image: init.agent_capabilities.prompt_capabilities.image,
+            steering_supported: init.steering_supported(),
             auth_required,
             auth_hint,
             config_options,
@@ -3567,6 +3807,8 @@ impl AgentRuntime {
         let (conn, _streams) = crate::drivers::AgentConn::spawn(&spawn_config).map_err(|e| {
             crate::PultError::internal(format!("{} failed to start: {e}", spec.display_name))
         })?;
+        let conn = Arc::new(conn);
+        let _kill_guard = KillOnDrop(Arc::clone(&conn));
         if let Some(pid) = conn.pid() {
             crate::processes::register_process(
                 pid,
@@ -3576,7 +3818,6 @@ impl AgentRuntime {
             );
         }
         let init = conn.initialize().await.map_err(|e| {
-            conn.kill();
             crate::PultError::internal(format!(
                 "{} did not answer the handshake: {e}",
                 spec.display_name
@@ -3588,14 +3829,12 @@ impl AgentRuntime {
             .find(|m| m.id.as_deref() == Some(method_id))
         {
             Some(method) if !method.is_agent() => {
-                conn.kill();
                 return Err(crate::PultError::internal(
                     "terminal sign-in runs the agent CLI outside pult; use Copy command",
                 ));
             }
             Some(_) => {}
             None => {
-                conn.kill();
                 return Err(crate::PultError::internal(format!(
                     "{} did not advertise auth method {method_id}",
                     spec.display_name
@@ -3603,7 +3842,6 @@ impl AgentRuntime {
             }
         }
         if let Err(err) = conn.authenticate(method_id).await {
-            conn.kill();
             return Err(crate::PultError::internal(format!(
                 "{} sign-in failed: {err}",
                 spec.display_name
@@ -3615,7 +3853,6 @@ impl AgentRuntime {
             Ok(session) => (false, None, session.config_options),
             Err(err) if err.is_auth_required() => (true, Some(err.to_string()), Vec::new()),
             Err(err) => {
-                conn.kill();
                 return Err(crate::PultError::internal(format!(
                     "{} session probe after sign-in failed: {err}",
                     spec.display_name
@@ -3625,6 +3862,7 @@ impl AgentRuntime {
         self.cache_capabilities(
             instance_id,
             &init.agent_capabilities,
+            init.steering_supported(),
             Vec::new(),
             config_options.clone(),
         );
@@ -3644,7 +3882,6 @@ impl AgentRuntime {
                 },
             );
         }
-        conn.kill();
         Ok(PreflightReport {
             instance_id: instance_id.to_string(),
             agent_name: init
@@ -3655,6 +3892,7 @@ impl AgentRuntime {
             agent_version: init.agent_info.as_ref().and_then(|i| i.version.clone()),
             load_session: init.agent_capabilities.load_session,
             prompt_image: init.agent_capabilities.prompt_capabilities.image,
+            steering_supported: init.steering_supported(),
             auth_required,
             auth_hint,
             config_options,
@@ -3666,6 +3904,8 @@ impl AgentRuntime {
 pub(crate) struct ResolvedSession {
     pub session_id: String,
     pub resumed: bool,
+    /// The handshake advertised `_session/steering` for this session.
+    pub steering_supported: bool,
     /// Bearer issued for this session's orchestrator MCP entry.
     pub mcp_token: Option<String>,
     /// Set when the UI history and the agent's context can no longer match.
@@ -3758,6 +3998,7 @@ async fn resolve_session(
                     runtime.cache_capabilities(
                         instance_id,
                         &init.agent_capabilities,
+                        init.steering_supported(),
                         loaded.modes.as_ref().map(collect_modes).unwrap_or_default(),
                         loaded.config_options.clone(),
                     );
@@ -3780,6 +4021,7 @@ async fn resolve_session(
                     runtime.cache_capabilities(
                         instance_id,
                         &init.agent_capabilities,
+                        init.steering_supported(),
                         fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
                         fresh.config_options.clone(),
                     );
@@ -3803,6 +4045,7 @@ async fn resolve_session(
             runtime.cache_capabilities(
                 instance_id,
                 &init.agent_capabilities,
+                init.steering_supported(),
                 fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
                 fresh.config_options.clone(),
             );
@@ -3827,6 +4070,7 @@ async fn resolve_session(
             runtime.cache_capabilities(
                 instance_id,
                 &init.agent_capabilities,
+                init.steering_supported(),
                 fresh.modes.as_ref().map(collect_modes).unwrap_or_default(),
                 fresh.config_options.clone(),
             );
@@ -3836,6 +4080,7 @@ async fn resolve_session(
     Ok(ResolvedSession {
         session_id: session,
         resumed,
+        steering_supported: init.steering_supported(),
         mcp_token,
         context_reset_reason,
         mcp_generation,
@@ -3849,6 +4094,53 @@ fn collect_modes(
     state: &crate::protocol::types::SessionModeState,
 ) -> Vec<crate::protocol::types::SessionMode> {
     state.available_modes.clone()
+}
+
+/// `<pult_instructions>` tracking for one agent session. A slash command must
+/// reach the adapter unglued, so it does not consume the injection: the next
+/// normal prompt still carries the block, and a session that already got it is
+/// never re-injected.
+#[derive(Debug, Clone, Copy)]
+struct InstructionState {
+    injected: bool,
+}
+
+impl InstructionState {
+    fn needs_injection(&self, session_has_orchestrator: bool, text: &str) -> bool {
+        session_has_orchestrator && !self.injected && !text.trim_start().starts_with('/')
+    }
+}
+
+/// Adapters that auto-title from the first text block can echo the wire-only
+/// `<pult_instructions>` / `<pult_subagent_context>` blocks as a session title.
+/// Such a title must never rename the thread.
+fn is_synthetic_instruction_title(title: &str) -> bool {
+    let title = title.trim();
+    title.starts_with("<pult_instructions")
+        || title.starts_with("<pult_subagent_context")
+        || title.contains("<pult_instructions>")
+        || title.contains("<pult_subagent_context>")
+}
+
+/// Prompt blocks for one turn: user text first, then the wire-only
+/// instruction block (if any), then images.
+fn prompt_content(
+    text: &str,
+    images: &[ImageInput],
+    instruction: Option<String>,
+) -> Vec<crate::protocol::types::ContentBlock> {
+    let mut content = Vec::with_capacity(2 + images.len());
+    content.push(crate::protocol::types::ContentBlock::text(text));
+    if let Some(block) = instruction {
+        content.push(crate::protocol::types::ContentBlock::text(block));
+    }
+    for image in images {
+        content.push(crate::protocol::types::ContentBlock::Image {
+            data: image.data.clone(),
+            mime_type: image.mime_type.clone(),
+        });
+    }
+    content
 }
 
 /// String value of a desired config option (booleans never become model/effort).
@@ -4139,7 +4431,9 @@ fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply 
     let path = safe_path(root, &params.path)?;
     let content =
         std::fs::read_to_string(&path).map_err(|e| fs_error(format!("{}: {e}", params.path)))?;
-    let mut lines: Vec<&str> = content.lines().collect();
+    // Keep CRLF and the trailing newline intact: only slice when the agent
+    // asked for a window, never rewrite what it will read back.
+    let mut lines: Vec<&str> = content.split_inclusive('\n').collect();
     if let Some(line) = params.line {
         let start = line.saturating_sub(1) as usize;
         if start >= lines.len() {
@@ -4152,9 +4446,20 @@ fn read_file_sandboxed(root: &Path, params: &ReadTextFileParams) -> ClientReply 
         lines.truncate(limit as usize);
     }
     serde_json::to_value(ReadTextFileResult {
-        content: lines.join("\n"),
+        content: lines.concat(),
     })
     .map_err(|e| fs_error(e.to_string()))
+}
+
+/// `FileChanged` paths are workspace-relative with forward slashes, so the UI
+/// groups changes by project instead of showing a machine-specific absolute path.
+fn relative_display_path(root: &Path, path: &Path) -> String {
+    let root = crate::runtime::clean_verbatim(root.to_path_buf());
+    let path = crate::runtime::clean_verbatim(path.to_path_buf());
+    match path.strip_prefix(&root) {
+        Ok(relative) => relative.to_string_lossy().replace('\\', "/"),
+        Err(_) => path.to_string_lossy().replace('\\', "/"),
+    }
 }
 
 /// `fs/write_text_file`: sandboxed write plus the computed diff (В§5.4) вЂ”
@@ -4167,7 +4472,24 @@ fn write_file_sandboxed(
         Ok(path) => path,
         Err(err) => return (Err(err), None),
     };
-    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    // Missing file → empty old text. An existing non-UTF8 file is NOT empty:
+    // overwriting it as if it were would silently destroy binary content.
+    let old = match std::fs::read(&path) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(text) => text,
+            Err(_) => {
+                return (
+                    Err(fs_error(format!(
+                        "{}: not UTF-8 text; refusing to overwrite",
+                        params.path
+                    ))),
+                    None,
+                )
+            }
+        },
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(err) => return (Err(fs_error(format!("{}: {err}", params.path))), None),
+    };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
             return (Err(fs_error(format!("{}: {e}", params.path))), None);
@@ -4176,7 +4498,7 @@ fn write_file_sandboxed(
     if let Err(e) = std::fs::write(&path, &params.content) {
         return (Err(fs_error(format!("{}: {e}", params.path))), None);
     }
-    let shown_path = params.path.trim_start_matches(['/', '\\']).to_string();
+    let shown_path = relative_display_path(root, &path);
     let diff = unified_diff(&shown_path, &old, &params.content);
     let (added, removed) = diff_stats(&diff);
     let change = (shown_path, diff, added, removed);
@@ -4219,7 +4541,18 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     // is the workspace resolve against the workspace root; drive/UNC paths
     // are taken as-is and must stay inside the root (checked below).
     let joined = match candidate.components().next() {
-        Some(std::path::Component::Prefix(_)) => candidate.to_path_buf(),
+        // Only a fully rooted drive path (`C:\…`) is unambiguous. A
+        // drive-relative path (`C:foo.txt`) resolves against the process's
+        // per-drive cwd, which the sandbox cannot check.
+        Some(std::path::Component::Prefix(_)) => {
+            if !matches!(
+                candidate.components().nth(1),
+                Some(std::path::Component::RootDir)
+            ) {
+                return Err(escape());
+            }
+            candidate.to_path_buf()
+        }
         Some(std::path::Component::RootDir) => {
             let rest: PathBuf = candidate.components().skip(1).collect();
             root.join(rest)
@@ -4259,3 +4592,63 @@ pub mod ptys;
 pub mod terminals;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod readiness_tests {
+    use super::*;
+
+    struct SilentSink;
+
+    impl EventSink for SilentSink {
+        fn emit(&self, _event: &str, _payload: serde_json::Value) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn notify(&self, _title: &str, _body: &str) {}
+    }
+
+    fn gate_only_runtime() -> Arc<AgentRuntime> {
+        let store = Arc::new(Store::open_in_memory().unwrap());
+        Arc::new(AgentRuntime::new(store, Arc::new(SilentSink)))
+    }
+
+    #[tokio::test]
+    async fn early_runs_wait_for_the_boot_gate() {
+        let runtime = gate_only_runtime();
+        assert!(
+            runtime.readiness.is_ready(),
+            "a headless runtime must not block runs"
+        );
+        runtime.readiness.defer();
+        assert!(!runtime.readiness.is_ready());
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(50), runtime.ready())
+                .await
+                .is_err(),
+            "a deferred runtime must not report ready"
+        );
+
+        runtime.readiness.mark_ready();
+        assert!(runtime.readiness.is_ready());
+        tokio::time::timeout(std::time::Duration::from_millis(50), runtime.ready())
+            .await
+            .expect("a marked runtime resolves waiters immediately");
+    }
+
+    #[tokio::test]
+    async fn waiters_are_released_by_mark_ready() {
+        let runtime = gate_only_runtime();
+        runtime.readiness.defer();
+        let waiter = {
+            let runtime = Arc::clone(&runtime);
+            tokio::spawn(async move { runtime.ready().await })
+        };
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!waiter.is_finished());
+        runtime.readiness.mark_ready();
+        tokio::time::timeout(std::time::Duration::from_secs(1), waiter)
+            .await
+            .expect("mark_ready must release the waiter")
+            .unwrap();
+    }
+}

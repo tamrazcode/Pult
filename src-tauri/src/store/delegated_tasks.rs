@@ -9,7 +9,8 @@ use super::{sql, Store};
 
 const TASK_COLUMNS: &str = "id, parent_thread_id, parent_run_id, child_thread_id, child_run_id, \
     client_request_id, title, prompt_summary, role, target_instance_id, target_model, isolation, \
-    permission_mode, status, summary, error, started_at, finished_at, usage_json";
+    permission_mode, status, summary, error, started_at, finished_at, usage_json, \
+    parent_notified_at";
 
 /// Mutable fields of a delegated task's terminal/progress patch.
 pub struct DelegatedTaskUpdate<'a> {
@@ -49,8 +50,8 @@ impl Store {
                     id, parent_thread_id, parent_run_id, child_thread_id, child_run_id,
                     client_request_id, title, prompt_summary, role, target_instance_id,
                     target_model, isolation, permission_mode, status, summary, error,
-                    started_at, finished_at, usage_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                    started_at, finished_at, usage_json, parent_notified_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
                 params![
                     task.id,
                     task.parent_thread_id,
@@ -71,6 +72,7 @@ impl Store {
                     task.started_at,
                     task.finished_at,
                     task.usage_json,
+                    task.parent_notified_at,
                 ],
             )
             .map_err(|e| sql("delegated_tasks insert", e))?;
@@ -89,7 +91,8 @@ impl Store {
             let updated = conn
                 .execute(
                     "UPDATE delegated_tasks SET status = 'running', child_run_id = ?1,
-                        summary = NULL, error = NULL, finished_at = NULL, started_at = ?2
+                        summary = NULL, error = NULL, finished_at = NULL, started_at = ?2,
+                        parent_notified_at = NULL
                      WHERE id = ?3",
                     params![child_run_id, started_at, id],
                 )
@@ -237,6 +240,28 @@ impl Store {
         })
     }
 
+    /// Records that a finished task's report reached the parent. Idempotent:
+    /// the first writer wins, so two engines over one DB cannot both wake it.
+    pub fn mark_delegated_tasks_notified(
+        &self,
+        ids: &[String],
+        notified_at: i64,
+    ) -> Result<(), PultError> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    "UPDATE delegated_tasks SET parent_notified_at = ?1
+                     WHERE id = ?2 AND parent_notified_at IS NULL",
+                )
+                .map_err(|e| sql("delegated_tasks notified prepare", e))?;
+            for id in ids {
+                stmt.execute(params![notified_at, id])
+                    .map_err(|e| sql("delegated_tasks notified", e))?;
+            }
+            Ok(())
+        })
+    }
+
     /// Status/finish patch used by the runtime finalizer and the orphan sweep.
     pub fn update_delegated_task_status(
         &self,
@@ -296,5 +321,6 @@ fn task_from_row(row: &Row<'_>) -> rusqlite::Result<DelegatedTaskRecord> {
         started_at: row.get("started_at")?,
         finished_at: row.get("finished_at")?,
         usage_json: row.get("usage_json")?,
+        parent_notified_at: row.get("parent_notified_at")?,
     })
 }

@@ -54,6 +54,31 @@ pub fn validate_launch_args(args: &[String]) -> Result<(), String> {
 
 type Pending = Arc<Mutex<HashMap<String, oneshot::Sender<Result<Value, DriverError>>>>>;
 
+/// Pi RPC has no equivalent of this ACP operation: an explicit error is honest,
+/// a fake `Ok` would make the runtime report a setting that never landed.
+fn unsupported<T>(feature: &str) -> Result<T, DriverError> {
+    Err(DriverError::Rpc(RpcError::new(
+        -32601,
+        format!("Pi RPC does not support {feature}"),
+    )))
+}
+
+/// A turn whose process disappeared after a cancel was requested ended
+/// cancelled; the same EOF without a cancel is a hangup.
+fn eof_error(aborted: bool) -> Option<DriverError> {
+    (!aborted).then(|| DriverError::HungUp {
+        method: "prompt".to_string(),
+    })
+}
+
+fn same_dir(left: &std::path::Path, right: &std::path::Path) -> bool {
+    left == right
+        || matches!(
+            (left.canonicalize(), right.canonicalize()),
+            (Ok(left), Ok(right)) if left == right
+        )
+}
+
 pub struct PiRpcConn {
     child: Arc<Mutex<Child>>,
     stdin_tx: mpsc::Sender<Value>,
@@ -65,6 +90,8 @@ pub struct PiRpcConn {
     aborted: Arc<AtomicBool>,
     turn_done: Arc<Mutex<Option<oneshot::Sender<StopReason>>>>,
     turn_failed: Arc<AtomicBool>,
+    /// Directory the process was launched in: Pi sessions cannot switch cwd.
+    cwd: Option<std::path::PathBuf>,
     _client_tx: mpsc::UnboundedSender<super::acp::ClientRequest>,
 }
 
@@ -345,6 +372,7 @@ impl PiRpcConn {
                 aborted,
                 turn_done,
                 turn_failed,
+                cwd: config.cwd.clone(),
                 _client_tx: client_tx,
             },
             PiRpcStreams {
@@ -431,9 +459,23 @@ impl PiRpcConn {
 
     pub async fn new_session_with_mcp(
         &self,
-        _cwd: &str,
-        _mcp_servers: Vec<crate::protocol::types::McpServer>,
+        cwd: &str,
+        mcp_servers: Vec<crate::protocol::types::McpServer>,
     ) -> Result<NewSessionResult, DriverError> {
+        if !mcp_servers.is_empty() {
+            return unsupported("per-session MCP servers (configure them in Pi settings)");
+        }
+        if let Some(spawn_cwd) = &self.cwd {
+            if !same_dir(std::path::Path::new(cwd), spawn_cwd) {
+                return Err(DriverError::Rpc(RpcError::new(
+                    -32602,
+                    format!(
+                        "Pi runs in {}; a session cannot switch cwd to {cwd}",
+                        spawn_cwd.display()
+                    ),
+                )));
+            }
+        }
         self.request("new_session", json!({}), Duration::from_secs(30))
             .await?;
         let state = self
@@ -453,15 +495,10 @@ impl PiRpcConn {
     pub async fn load_session_with_mcp(
         &self,
         _session_id: &str,
-        cwd: &str,
-        mcp_servers: Vec<crate::protocol::types::McpServer>,
+        _cwd: &str,
+        _mcp_servers: Vec<crate::protocol::types::McpServer>,
     ) -> Result<LoadSessionResult, DriverError> {
-        let _ = self.new_session_with_mcp(cwd, mcp_servers).await?;
-        Ok(LoadSessionResult {
-            modes: None,
-            config_options: Vec::new(),
-            meta: None,
-        })
+        unsupported("session/load (Pi sessions resume inside the Pi CLI)")
     }
 
     pub async fn prompt(
@@ -495,6 +532,14 @@ impl PiRpcConn {
             .await
         {
             self.turn_done.lock().expect("turn lock poisoned").take();
+            // The process may have died while answering an abort: that is the
+            // cancellation the caller asked for, not a crash.
+            if self.aborted.load(Ordering::Relaxed) {
+                return Ok(PromptResult {
+                    stop_reason: StopReason::Cancelled,
+                    meta: None,
+                });
+            }
             return Err(error);
         }
         let result = match tokio::time::timeout(Duration::from_secs(600), rx).await {
@@ -508,9 +553,9 @@ impl PiRpcConn {
             }),
         };
         if self.turn_failed.swap(false, Ordering::Relaxed) {
-            return Err(DriverError::HungUp {
-                method: "prompt".to_string(),
-            });
+            if let Some(error) = eof_error(self.aborted.load(Ordering::Relaxed)) {
+                return Err(error);
+            }
         }
         result
     }
@@ -522,8 +567,16 @@ impl PiRpcConn {
             .map(|_| ())
     }
 
+    pub async fn steer(
+        &self,
+        _session_id: &str,
+        _content: Vec<ContentBlock>,
+    ) -> Result<crate::protocol::types::SteerResult, DriverError> {
+        unsupported("live steering (_session/steering)")
+    }
+
     pub async fn set_mode(&self, _session_id: &str, _mode_id: &str) -> Result<Value, DriverError> {
-        Ok(Value::Null)
+        unsupported("ACP session modes")
     }
 
     pub async fn set_config_option(
@@ -532,14 +585,11 @@ impl PiRpcConn {
         _config_id: &str,
         _value: crate::protocol::types::ConfigOptionValue,
     ) -> Result<crate::protocol::types::SetConfigOptionResult, DriverError> {
-        Ok(crate::protocol::types::SetConfigOptionResult {
-            config_options: Vec::new(),
-            meta: None,
-        })
+        unsupported("ACP config options")
     }
 
     pub async fn authenticate(&self, _method_id: &str) -> Result<AuthenticateResult, DriverError> {
-        Ok(AuthenticateResult::default())
+        unsupported("ACP authentication methods (sign in with the Pi CLI)")
     }
 
     pub async fn respond_client(
@@ -547,7 +597,7 @@ impl PiRpcConn {
         _id: RequestId,
         _reply: super::acp::ClientReply,
     ) -> Result<(), DriverError> {
-        Ok(())
+        unsupported("client requests (Pi RPC never sends them)")
     }
 
     pub fn diagnostics_frames(&self) -> Vec<String> {
@@ -632,6 +682,71 @@ mod tests {
             );
         }
         assert!(validate_launch_args(&["--model".to_string(), "x".to_string()]).is_ok());
+    }
+
+    #[test]
+    fn eof_after_an_abort_is_a_cancellation_not_a_hangup() {
+        assert!(
+            eof_error(true).is_none(),
+            "a requested cancel must not be reported as HungUp"
+        );
+        assert!(matches!(eof_error(false), Some(DriverError::HungUp { .. })));
+    }
+
+    #[tokio::test]
+    async fn pi_session_rejects_cwd_switches_and_per_session_mcp_servers() {
+        if !fixture_path().is_file() {
+            return;
+        }
+        let cwd = std::env::temp_dir();
+        let mut config = mock_config();
+        config.cwd = Some(cwd.clone());
+        let (conn, _streams) = PiRpcConn::spawn(&config).expect("spawn mock pi");
+        let session = conn
+            .new_session_with_mcp(&cwd.to_string_lossy(), Vec::new())
+            .await
+            .expect("the spawn cwd is fine");
+        assert_eq!(session.session_id, "pi-mock");
+
+        let server = crate::protocol::types::McpServer::Stdio {
+            extra: json!({ "name": "pult_orchestrator" }),
+        };
+        assert!(
+            conn.new_session_with_mcp(&cwd.to_string_lossy(), vec![server])
+                .await
+                .is_err(),
+            "Pi cannot take per-session MCP servers"
+        );
+        assert!(
+            conn.new_session_with_mcp("C:\\pult-other-cwd", Vec::new())
+                .await
+                .is_err(),
+            "Pi cannot switch a session cwd"
+        );
+        conn.kill();
+    }
+
+    #[tokio::test]
+    async fn unsupported_operations_report_an_error_instead_of_fake_success() {
+        if !fixture_path().is_file() {
+            return;
+        }
+        let (conn, _streams) = PiRpcConn::spawn(&mock_config()).expect("spawn mock pi");
+        assert!(conn.set_mode("pi-mock", "architect").await.is_err());
+        assert!(conn
+            .set_config_option(
+                "pi-mock",
+                "thought_level",
+                crate::protocol::types::ConfigOptionValue::String("high".into()),
+            )
+            .await
+            .is_err());
+        assert!(conn.authenticate("any").await.is_err());
+        assert!(conn
+            .load_session_with_mcp("pi-mock", ".", Vec::new())
+            .await
+            .is_err());
+        conn.kill();
     }
 
     #[tokio::test]

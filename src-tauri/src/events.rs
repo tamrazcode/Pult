@@ -207,6 +207,9 @@ pub struct AgentCapsPayload {
     pub instance_id: String,
     pub prompt_image: bool,
     pub load_session: bool,
+    /// Agent accepts live `_session/steering` messages mid-turn.
+    #[serde(default)]
+    pub steering_supported: bool,
     pub modes: Vec<crate::protocol::types::SessionMode>,
     pub config_options: Vec<SessionConfigOption>,
     pub auth_methods: Vec<crate::protocol::types::AuthMethod>,

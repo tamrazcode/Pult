@@ -31,8 +31,8 @@ use crate::protocol::types::{
     LoadSessionResult, NewSessionParams, NewSessionResult, PromptParams, PromptResult,
     ReadTextFileParams, RequestPermissionOutcome, RequestPermissionOutcomeKind,
     RequestPermissionParams, SessionNotification, SessionUpdate, SetConfigOptionParams,
-    SetConfigOptionResult, SetModeParams, TerminalRefParams, ToolCallStatus, ToolCallUpdateData,
-    ToolKind, WriteTextFileParams,
+    SetConfigOptionResult, SetModeParams, SteerParams, SteerResult, TerminalRefParams,
+    ToolCallStatus, ToolCallUpdateData, ToolKind, WriteTextFileParams,
 };
 use crate::protocol::LATEST_PROTOCOL_VERSION;
 
@@ -553,6 +553,31 @@ impl AcpConn {
                 // still ends on end_turn, Stop, or the process dying, so this is
                 // only a guard against a wedged CLI.
                 std::time::Duration::from_secs(24 * 60 * 60),
+            )
+            .await?;
+        Ok(serde_json::from_value(value)?)
+    }
+
+    /// Live steering (`_session/steering`, pult extension): adds a message to
+    /// the turn that is already running instead of cancelling it. Agents that
+    /// do not implement it answer method-not-found.
+    pub async fn steer(
+        &self,
+        session_id: &str,
+        content: Vec<ContentBlock>,
+    ) -> Result<SteerResult, DriverError> {
+        let params = SteerParams {
+            session_id: session_id.to_string(),
+            prompt: content,
+            meta: Some(serde_json::json!({
+                "steering": { "idleBehavior": "promptRequired" }
+            })),
+        };
+        let value = self
+            .request(
+                "_session/steering",
+                serde_json::to_value(params)?,
+                std::time::Duration::from_secs(30),
             )
             .await?;
         Ok(serde_json::from_value(value)?)
