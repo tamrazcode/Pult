@@ -133,7 +133,7 @@ export function applyTextareaEdit(
 ): void {
   el.focus();
   el.setSelectionRange(result.replaceStart, result.replaceEnd);
-  let applied = false;
+  let applied: boolean;
   try {
     applied = document.execCommand?.("insertText", false, result.replacement) === true;
   } catch {
