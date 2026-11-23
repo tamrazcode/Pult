@@ -5,6 +5,15 @@ export interface HistoryTick {
   key: string;
   label: string; // trimmed first 80 chars of user message
   globalIndex: number; // index in unwindowed merged timeline
+  kind?: "user" | "edit" | "error";
+}
+
+/** Hairline width/colour says what the turn did; hover still expands it. */
+function tickClass(tick: HistoryTick, active: boolean): string {
+  if (active) return "w-3 bg-accent";
+  if (tick.kind === "error") return "w-2 bg-danger/75 group-hover:w-3 group-hover:bg-danger";
+  if (tick.kind === "edit") return "w-2 bg-success/75 group-hover:w-3 group-hover:bg-accent";
+  return "w-1.5 bg-text-tertiary/60 group-hover:w-3 group-hover:bg-accent";
 }
 
 /**
@@ -95,11 +104,8 @@ export function HistoryTicks({
             className="group flex h-3 w-5 shrink-0 items-center justify-end"
           >
             <span
-              className={`h-px rounded-full transition-all ${
-                activeKey === tick.key
-                  ? "w-3 bg-accent"
-                  : "w-1.5 bg-text-tertiary/60 group-hover:w-3 group-hover:bg-accent"
-              }`}
+              data-tick-kind={tick.kind ?? "user"}
+              className={`h-px rounded-full transition-all ${tickClass(tick, activeKey === tick.key)}`}
             />
           </button>
         ))}

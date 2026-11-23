@@ -83,6 +83,9 @@ import Markdown from "./Markdown";
 import { ThreadSearchBar } from "./ThreadSearchBar";
 import { HistoryTicks, type HistoryTick } from "./HistoryTicks";
 
+/** Tool kinds that change the worktree: the scrubber marks those turns. */
+const HISTORY_EDIT_KINDS = new Set(["edit", "delete", "move"]);
+
 const TOOL_ICONS: Record<string, LucideIcon> = {
   read: Eye,
   edit: Pencil,
@@ -171,6 +174,20 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     () => new Map((runs ?? []).map((run) => [run.id, run.startedAt])),
     [runs],
   );
+  // Tick hairline: an error or an edit is worth seeing before jumping there.
+  const tickKindByRun = useMemo(() => {
+    const kinds = new Map<string, HistoryTick["kind"]>();
+    for (const run of runs ?? []) {
+      const runView = views[run.id];
+      const failed =
+        Boolean(runView?.error) || runView?.stopReason === "failed" || run.status === "failed";
+      const edited = runView?.items.some(
+        (item) => item.type === "tool" && HISTORY_EDIT_KINDS.has(normalizeToolKind(item)),
+      );
+      kinds.set(run.id, failed ? "error" : edited ? "edit" : "user");
+    }
+    return kinds;
+  }, [runs, views]);
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
@@ -179,6 +196,14 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (threadId) void useGitStore.getState().loadCheckpoints?.(threadId);
   }, [threadId, activeRun?.status]);
   const hasView = view !== undefined;
+  const hasContent =
+    pendingUser !== undefined ||
+    entries.length > 0 ||
+    subagents.length > 0 ||
+    nativeGroups.length > 0 ||
+    (view?.plan?.length ?? 0) > 0 ||
+    view?.pendingApproval !== undefined ||
+    view?.error !== undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   // Find-in-thread searches only the rendered transcript content.
@@ -238,16 +263,17 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   // before paint: the first layout fires its own scroll event from 0, which
   // cleared the at-bottom flag before a deferred pin could run.
   useLayoutEffect(() => {
-    if (!threadId || !hasView) return;
+    if (!threadId || !hasView || !hasContent) return;
     const container = scrollRef.current;
     if (!container) return;
     container.scrollTop = container.scrollHeight;
     isAtBottomRef.current = true;
     setShowScrollToEnd(false);
     // Tables, code blocks and images settle a frame or two later; keep the
-    // opening position at the bottom through that window. A reader who scrolls
-    // away wins immediately — distance beats the flag that the scroll handler
-    // has already cleared against the taller content.
+    // opening position at the bottom until the reader takes over. A wheel, a
+    // press or a key is explicit intent and releases the pin; the 160px gate
+    // covers the scroll handler that already cleared the at-bottom flag
+    // against the taller content.
     const content = contentRef.current;
     if (!content || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(() => {
@@ -258,12 +284,14 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       setShowScrollToEnd(false);
     });
     observer.observe(content);
-    const timer = window.setTimeout(() => observer.disconnect(), 2000);
+    const release = () => observer.disconnect();
+    const events = ["wheel", "pointerdown", "touchstart", "keydown"] as const;
+    for (const name of events) container.addEventListener(name, release, { passive: true });
     return () => {
-      window.clearTimeout(timer);
       observer.disconnect();
+      for (const name of events) container.removeEventListener(name, release);
     };
-  }, [threadId, hasView]);
+  }, [threadId, hasView, hasContent]);
 
   // Mod+F opens find-in-thread; the bar owns Enter/Escape once it is focused.
   useEffect(() => {
@@ -343,15 +371,6 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     );
   }
 
-  const hasContent =
-    pendingUser !== undefined ||
-    entries.length > 0 ||
-    subagents.length > 0 ||
-    nativeGroups.length > 0 ||
-    (view.plan?.length ?? 0) > 0 ||
-    view.pendingApproval !== undefined ||
-    view.error !== undefined;
-
   if (!hasContent && !view.streaming) return <EmptyState />;
 
   const crashed = view.error !== undefined || view.stopReason === "failed";
@@ -366,6 +385,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         key: entry.key,
         label: entry.item.text.trim().slice(0, 80) || t("chat.imagePrompt"),
         globalIndex,
+        kind: tickKindByRun.get(entry.runId) ?? "user",
       });
     }
   });

@@ -1402,7 +1402,19 @@ pub async fn checkpoint_restore(dir: &Path, run_id: &str) -> Result<(), PultErro
                 Ok(()) => prune_empty_parents(&repo, &abs).await,
                 Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
                 Err(err) => {
-                    return Err(internal(format!("restore remove {}: {err}", abs.display())))
+                    // Windows refuses remove_file on a directory symlink; the
+                    // link itself goes through remove_dir (the target stays).
+                    let is_link = tokio::fs::symlink_metadata(&abs)
+                        .await
+                        .map(|meta| meta.file_type().is_symlink())
+                        .unwrap_or(false);
+                    if !is_link {
+                        return Err(internal(format!("restore remove {}: {err}", abs.display())));
+                    }
+                    tokio::fs::remove_dir(&abs).await.map_err(|link_err| {
+                        internal(format!("restore remove {}: {link_err}", abs.display()))
+                    })?;
+                    prune_empty_parents(&repo, &abs).await;
                 }
             }
         }

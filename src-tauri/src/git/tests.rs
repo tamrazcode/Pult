@@ -23,6 +23,17 @@ fn git_sync(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Directory symlink for the restore tests; Windows needs a privilege for it.
+#[cfg(unix)]
+fn make_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn make_dir_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
 struct Fixture(PathBuf);
 
 impl Fixture {
@@ -688,6 +699,9 @@ async fn checkpoint_restore_resets_worktree_without_touching_ignored_or_head() {
     std::fs::create_dir_all(fx.path().join("scratch").join("deep")).unwrap();
     std::fs::write(fx.path().join("scratch").join("deep").join("x.txt"), "x\n").unwrap();
     std::fs::write(ignored_dir.join("keep.txt"), "still here\n").unwrap();
+    // A stale symlink to an ignored directory: the link goes, the target stays.
+    let stale_link = fx.path().join("stale-link");
+    let linked = make_dir_symlink(&ignored_dir, &stale_link).is_ok();
 
     checkpoint_restore(fx.path(), "run-1").await.unwrap();
 
@@ -706,6 +720,17 @@ async fn checkpoint_restore_resets_worktree_without_touching_ignored_or_head() {
         "still here\n",
         "ignored files must survive the restore"
     );
+    if linked {
+        assert!(
+            std::fs::symlink_metadata(&stale_link).is_err(),
+            "a stale symlink must be removed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(ignored_dir.join("keep.txt")).unwrap(),
+            "still here\n",
+            "removing the link must not touch its target"
+        );
+    }
     assert_eq!(
         git_sync(fx.path(), &["rev-parse", "HEAD"]).trim(),
         head_before,

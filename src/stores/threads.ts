@@ -14,6 +14,7 @@ import {
 import { isTauri } from "../lib/tauri";
 import { useDraftsStore } from "./drafts";
 import { useGitStore } from "./git";
+import { useRunsStore } from "./runs";
 import { useSubagentsStore } from "./subagents";
 import { useTerminalsStore } from "./terminals";
 import { useUiStore } from "../stores/ui";
@@ -172,6 +173,7 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     useDraftsStore.getState().clearDraft(threadId);
     useDraftsStore.getState().clearAttachments(threadId);
     useSubagentsStore.getState().clearThread(threadId);
+    useRunsStore.getState().dropThreadState(threadId);
     useGitStore.getState().clearThread(threadId);
     useUiStore.getState().clearThreadState(threadId);
     useTerminalsStore.getState().clearThread(threadId);
