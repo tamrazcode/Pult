@@ -1662,7 +1662,7 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
   useEffect(() => {
     if (src || !candidate.path) return;
     let cancelled = false;
-    readImageDataUrl(candidate.path)
+    readImageDataUrl(candidate.path, useThreadsStore.getState().activeThreadId ?? "")
       .then((url) => {
         if (!cancelled) {
           if (tooLarge(url)) setFailed(true);

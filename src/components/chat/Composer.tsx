@@ -581,6 +581,8 @@ export function Composer({ threadId }: { threadId?: string }) {
     // Chips write their `name size` token into the draft. That token is not
     // prose: strip it before the title, or every attachment names the thread.
     const titleText = [...chips, ...fileChips]
+      // Longest first: one token can be a prefix of another (`a.txt 5 B`).
+      .sort((a, b) => b.token.length - a.token.length)
       .reduce((acc, chip) => acc.split(chip.token).join(" "), text)
       .replace(/\s+/g, " ")
       .trim();
@@ -832,6 +834,10 @@ export function Composer({ threadId }: { threadId?: string }) {
     // Backspace at the very start reaches the attachment before the text.
     if (
       e.key === "Backspace" &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      !awaitingDecision &&
       textarea.selectionStart === 0 &&
       textarea.selectionEnd === 0 &&
       (fileChips.length > 0 || chips.length > 0)
