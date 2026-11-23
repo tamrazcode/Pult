@@ -318,6 +318,10 @@ export function Composer({ threadId }: { threadId?: string }) {
   // promptCapabilities.image show the chip affordance.
   const imageCapable = selectedInstance?.promptImage === true;
 
+  // Live steer is capability-gated too: without it the queue row can only
+  // wait its turn, never cancel the run someone is watching.
+  const canLiveSteer = selectedInstance?.steeringSupported === true;
+
   // Slash menu: active while the draft is a "/command…" query. Agent commands
   // merge with pult's built-ins (/commit).
   const slashQuery = value.startsWith("/") && !value.includes("\n") ? value.slice(1) : null;
@@ -1057,16 +1061,32 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <p className="min-w-0 flex-1 truncate text-sm text-text-secondary">{item.text}</p>
                   <button
                     type="button"
-                    aria-label={t("composer.queue.steerAria")}
-                    title={t("composer.queue.steerTitle")}
-                    onClick={() =>
-                      runsQueueSteer(threadId, item.id).catch((err) =>
-                        setError(localizeIpcError(err)),
-                      )
+                    aria-label={
+                      index === 0 ? t("composer.queue.steerAria") : t("composer.queue.moveToFront")
                     }
-                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+                    title={
+                      index > 0
+                        ? t("composer.queue.moveToFront")
+                        : canLiveSteer
+                          ? t("composer.queue.steerTitle")
+                          : t("composer.queue.steerQueuedTitle")
+                    }
+                    disabled={index === 0 && !canLiveSteer}
+                    onClick={() => {
+                      if (index === 0) {
+                        runsQueueSteer(threadId, item.id).catch((err) =>
+                          setError(localizeIpcError(err)),
+                        );
+                      } else {
+                        // Reordering never cancels the live turn: the row
+                        // simply runs next.
+                        moveQueueItem(index, 0);
+                      }
+                    }}
+                    className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
                   >
-                    <CornerUpRight size={11} /> {t("composer.queue.steerButton")}
+                    <CornerUpRight size={11} />{" "}
+                    {index === 0 ? t("composer.queue.steerButton") : t("composer.queue.moveToFront")}
                   </button>
                   <button
                     type="button"

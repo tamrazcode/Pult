@@ -78,6 +78,7 @@ import {
 } from "../../lib/toolDetails";
 import { Button } from "../ui/button";
 import { matchesBinding } from "../../lib/hotkeys";
+import { useGitStore } from "../../stores/git";
 import Markdown from "./Markdown";
 import { ThreadSearchBar } from "./ThreadSearchBar";
 import { HistoryTicks, type HistoryTick } from "./HistoryTicks";
@@ -173,6 +174,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   useEffect(() => {
     if (threadId) void useSubagentsStore.getState().load(threadId);
   }, [threadId]);
+  // Checkpoints arrive with the run and stay valid for finished turns.
+  useEffect(() => {
+    if (threadId) void useGitStore.getState().loadCheckpoints?.(threadId);
+  }, [threadId, activeRun?.status]);
   const hasView = view !== undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -184,6 +189,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const [activeHistoryKey, setActiveHistoryKey] = useState<string | null>(null);
   const [showScrollToEnd, setShowScrollToEnd] = useState(false);
   const followStreaming = useSettingsStore((s) => s.followStreaming);
+  const checkpoints =
+    useGitStore((s) => (threadId ? s.byThread[threadId]?.checkpoints : undefined)) ?? [];
+  const restoringCheckpoint =
+    useGitStore((s) => (threadId ? s.byThread[threadId]?.restoringCheckpoint : undefined)) ?? null;
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
   // One pending pin frame at a time: repeated deltas must not queue up and
@@ -413,6 +422,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           )}
           {windowedEntries.length > 0 && (
             <TimelineRows
+              threadId={threadId}
               entries={windowedEntries}
               allEntries={entries}
               hiddenCount={hiddenCount}
@@ -423,6 +433,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               clampMaxPx={clampMaxPx}
               activeRunId={activeRun?.id}
               streaming={view.streaming}
+              checkpoints={checkpoints}
+              restoringCheckpoint={restoringCheckpoint}
             />
           )}
 
@@ -634,6 +646,7 @@ function entryTimestamp(entry: TimelineEntry): number | undefined {
 
 /** Messages keep their order; each run's action row renders after its last message. */
 function TimelineRows({
+  threadId,
   entries,
   allEntries,
   hiddenCount,
@@ -644,7 +657,10 @@ function TimelineRows({
   clampMaxPx,
   activeRunId,
   streaming,
+  checkpoints,
+  restoringCheckpoint,
 }: {
+  threadId: string;
   entries: TimelineEntry[];
   allEntries: TimelineEntry[];
   hiddenCount: number;
@@ -655,6 +671,8 @@ function TimelineRows({
   clampMaxPx: number;
   activeRunId?: string;
   streaming?: boolean;
+  checkpoints: string[];
+  restoringCheckpoint: string | null;
 }) {
   const rows: ReactNode[] = [];
   const renderedNative = new Set<string>();
@@ -792,6 +810,18 @@ function TimelineRows({
         </div>,
       );
     }
+    // A finished turn with a checkpoint can be reviewed or undone in place.
+    const finished = segment.runId !== activeRunId || streaming !== true;
+    if (finished && checkpoints.includes(segment.runId)) {
+      rows.push(
+        <RunActions
+          key={`run-actions-${segment.runId}`}
+          threadId={threadId}
+          runId={segment.runId}
+          restoring={restoringCheckpoint === segment.runId}
+        />,
+      );
+    }
   });
 
   for (const item of floating) {
@@ -799,6 +829,98 @@ function TimelineRows({
   }
   if (!activePushed) pushActiveGroups();
   return <>{rows}</>;
+}
+
+/**
+ * Turn-level actions for a finished run: review its diff, or restore the
+ * workspace to that checkpoint with an inline two-step confirmation.
+ */
+function RunActions({
+  threadId,
+  runId,
+  restoring,
+}: {
+  threadId: string;
+  runId: string;
+  restoring: boolean;
+}) {
+  const t = useT();
+  const [armed, setArmed] = useState(false);
+  const [restored, setRestored] = useState(false);
+
+  useEffect(() => {
+    if (!restored) return;
+    const timer = window.setTimeout(() => setRestored(false), 2500);
+    return () => window.clearTimeout(timer);
+  }, [restored]);
+
+  useEffect(() => {
+    if (!armed) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setArmed(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [armed]);
+
+  const openDiff = () => {
+    void useGitStore.getState().viewCheckpointDiff?.(threadId, runId);
+    useUiStore.getState().setRightPanelTab("diff");
+  };
+
+  const confirmRollback = () => {
+    setArmed(false);
+    void (async () => {
+      const ok = await useGitStore.getState().restoreCheckpoint?.(threadId, runId);
+      if (ok) setRestored(true);
+    })();
+  };
+
+  return (
+    <div className="group flex min-h-6 flex-wrap items-center gap-3 py-0.5 text-xs text-text-tertiary">
+      {restoring ? (
+        <span className="activity-shimmer">{t("chat.turn.rollingBack")}</span>
+      ) : armed ? (
+        <>
+          <span className="text-text-secondary">{t("chat.turn.rollbackConfirm")}</span>
+          <button
+            type="button"
+            onClick={confirmRollback}
+            className="text-text-secondary transition hover:text-text-primary"
+          >
+            {t("common.yes")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setArmed(false)}
+            className="text-text-tertiary transition hover:text-text-primary"
+          >
+            {t("common.cancel")}
+          </button>
+        </>
+      ) : (
+        <span className="flex items-center gap-3 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+          <button
+            type="button"
+            onClick={openDiff}
+            className="text-text-tertiary transition hover:text-text-primary"
+          >
+            {t("chat.turn.diff")}
+          </button>
+          <button
+            type="button"
+            onClick={() => setArmed(true)}
+            className="text-text-tertiary transition hover:text-text-primary"
+          >
+            {t("chat.turn.rollback")}
+          </button>
+        </span>
+      )}
+      {restored && <span className="text-success">{t("chat.turn.restored")}</span>}
+    </div>
+  );
 }
 
 /** One tool payload cannot monopolize the DOM; the Raw toggle shows the rest. */

@@ -53,6 +53,7 @@ function FileCard({
   patch,
   viewMode,
   reviewed,
+  reviewable = true,
   open,
   onToggle,
   onToggleReviewed,
@@ -61,6 +62,7 @@ function FileCard({
   patch: FilePatchState | undefined;
   viewMode: "unified" | "split";
   reviewed: boolean;
+  reviewable?: boolean;
   open: boolean;
   onToggle: () => void;
   onToggleReviewed: () => void;
@@ -94,19 +96,21 @@ function FileCard({
           )}
         </button>
         <Diffstat added={file.added} removed={file.removed} />
-        <button
-          onClick={onToggleReviewed}
-          title={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
-          aria-label={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
-          aria-pressed={reviewed}
-          className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) border transition ${
-            reviewed
-              ? "border-success bg-diff-add-bg text-success"
-              : "border-border-strong text-transparent hover:text-text-tertiary"
-          }`}
-        >
-          <Check size={12} />
-        </button>
+        {reviewable && (
+          <button
+            onClick={onToggleReviewed}
+            title={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
+            aria-label={reviewed ? t("panels.diff.unmarkReviewed") : t("panels.diff.markReviewed")}
+            aria-pressed={reviewed}
+            className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-(--radius-sm) border transition ${
+              reviewed
+                ? "border-success bg-diff-add-bg text-success"
+                : "border-border-strong text-transparent hover:text-text-tertiary"
+            }`}
+          >
+            <Check size={12} />
+          </button>
+        )}
       </div>
       {open && (
         <div className="border-t border-border-subtle bg-canvas">
@@ -218,6 +222,11 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   const setCommitMessage = useGitStore((s) => s.setCommitMessage);
   const toggleReviewed = useGitStore((s) => s.toggleReviewed);
   const loadFileDiff = useGitStore((s) => s.loadFileDiff);
+  const loadCheckpointFileDiff = useGitStore((s) => s.loadCheckpointFileDiff);
+  const clearCheckpointView = useGitStore((s) => s.clearCheckpointView);
+  const activeCheckpoint = useGitStore((s) =>
+    threadId ? (s.byThread[threadId]?.activeCheckpoint ?? null) : null,
+  );
   const ghAvailable = useGitStore((s) => s.ghAvailable);
   const loadGhAvailability = useGitStore((s) => s.loadGhAvailability);
   const threadTitle = useThreadsStore((s) =>
@@ -226,9 +235,17 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   const suggested = useSuggestedCommitMessage(threadId);
   const [openDirs, setOpenDirs] = useState<Record<string, boolean>>({});
   const [openFiles, setOpenFiles] = useState<Record<string, boolean>>({});
+  const [openCheckpointFiles, setOpenCheckpointFiles] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const files = useMemo(() => state?.diff?.files ?? [], [state?.diff?.files]);
+  const checkpointRunId = activeCheckpoint?.runId ?? null;
+  // A different checkpoint starts with every row collapsed.
+  useEffect(() => setOpenCheckpointFiles({}), [checkpointRunId]);
+
+  const files = useMemo(
+    () => activeCheckpoint?.diff.files ?? state?.diff?.files ?? [],
+    [activeCheckpoint?.diff.files, state?.diff?.files],
+  );
   const groups = useMemo(() => groupByDir(files), [files]);
   const rows = useMemo(() => {
     const next: Array<
@@ -277,12 +294,13 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   }, [threadId, refresh]);
 
   // A refresh evicts patches whose hash changed; reload any still-open row.
+  // Historical checkpoints cache their own patches and are never refreshed.
   useEffect(() => {
-    if (!threadId) return;
+    if (!threadId || activeCheckpoint) return;
     for (const [path, open] of Object.entries(openFiles)) {
       if (open && !state?.filePatches[path]) void loadFileDiff(threadId, path);
     }
-  }, [openFiles, state?.filePatches, threadId, loadFileDiff]);
+  }, [openFiles, state?.filePatches, threadId, loadFileDiff, activeCheckpoint]);
 
   if (!threadId) return null;
 
@@ -305,8 +323,14 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   }
 
   const diff = state.diff;
-  const totalAdded = diff?.totalAdded ?? files.reduce((acc, file) => acc + file.added, 0);
-  const totalRemoved = diff?.totalRemoved ?? files.reduce((acc, file) => acc + file.removed, 0);
+  const totalAdded =
+    activeCheckpoint?.diff.totalAdded ??
+    diff?.totalAdded ??
+    files.reduce((acc, file) => acc + file.added, 0);
+  const totalRemoved =
+    activeCheckpoint?.diff.totalRemoved ??
+    diff?.totalRemoved ??
+    files.reduce((acc, file) => acc + file.removed, 0);
   const reviewedCount = files.filter((f) => state.reviewed[f.path] !== undefined).length;
   const hasChanges = files.length > 0;
   const commitReady = hasChanges && state.commitMessage.trim().length > 0;
@@ -346,9 +370,11 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           )}
         </span>
         {hasChanges && <Diffstat added={totalAdded} removed={totalRemoved} />}
-        <span className="tnum shrink-0 text-xs whitespace-nowrap text-text-tertiary">
-          {t("panels.diff.reviewed", { reviewed: reviewedCount, total: files.length })}
-        </span>
+        {!activeCheckpoint && (
+          <span className="tnum shrink-0 text-xs whitespace-nowrap text-text-tertiary">
+            {t("panels.diff.reviewed", { reviewed: reviewedCount, total: files.length })}
+          </span>
+        )}
         <div className="flex-1" />
         <button
           onClick={() => void refresh(threadId)}
@@ -376,7 +402,34 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
         </div>
       </div>
 
+      {/* checkpoint mode: a historical turn diff, never the live worktree */}
+      {activeCheckpoint && (
+        <div className="flex items-center gap-2 border-b border-border-subtle bg-accent/8 px-2.5 py-1.5 text-xs">
+          <span className="min-w-0 flex-1 truncate text-text-secondary">
+            {t("panels.diff.checkpointBanner", { runId: activeCheckpoint.runId.slice(0, 8) })}
+          </span>
+          <button
+            type="button"
+            onClick={() => clearCheckpointView(threadId)}
+            className="shrink-0 rounded-(--radius-sm) px-2 py-0.5 text-accent transition hover:bg-hover"
+          >
+            {t("panels.diff.returnToWorktree")}
+          </button>
+        </div>
+      )}
+      {activeCheckpoint?.loading && (
+        <p className="border-b border-border-subtle px-2.5 py-1.5 text-xs text-text-tertiary">
+          {t("panels.diff.loading")}
+        </p>
+      )}
+      {activeCheckpoint?.error && (
+        <p className="border-b border-border-subtle bg-diff-del-bg px-2.5 py-1.5 text-xs text-diff-del-fg">
+          {activeCheckpoint.error}
+        </p>
+      )}
+
       {/* actions: commit ▸ push ▸ PR */}
+      {!activeCheckpoint && (
       <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
         <input
           value={state.commitMessage}
@@ -422,8 +475,9 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
           busy={state.busy === "pr"}
         />
       </div>
+      )}
 
-      {state.lastCommit && (
+      {!activeCheckpoint && state.lastCommit && (
         <div className="flex items-center gap-2 border-b border-border-subtle px-2.5 py-1 text-xs text-text-tertiary">
           <span className="font-mono">{state.lastCommit.sha.slice(0, 7)}</span>
           <span>{plural("panels.diff.committed", state.lastCommit.filesCommitted)}</span>
@@ -439,7 +493,7 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
         </div>
       )}
 
-      {state.error && (
+      {!activeCheckpoint && state.error && (
         <p className="border-b border-border-subtle bg-diff-del-bg px-2.5 py-1.5 text-xs text-diff-del-fg">
           {state.error}
         </p>
@@ -449,7 +503,11 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto p-2">
         {files.length === 0 ? (
           <p className="px-2 py-6 text-center text-xs text-text-tertiary">
-            {t("panels.diff.clean", { base: diff?.base ?? "HEAD" })}
+            {activeCheckpoint?.loading
+              ? t("panels.diff.reading")
+              : t("panels.diff.clean", {
+                  base: activeCheckpoint?.diff.base ?? diff?.base ?? "HEAD",
+                })}
           </p>
         ) : (
           <div style={{ height: totalHeight, position: "relative" }}>
@@ -475,21 +533,46 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
                   ) : (
                     <FileCard
                       file={row.file}
-                      patch={state.filePatches[row.file.path]}
+                      patch={
+                        activeCheckpoint
+                          ? activeCheckpoint.filePatches[row.file.path]
+                          : state.filePatches[row.file.path]
+                      }
                       viewMode={viewMode}
-                      reviewed={state.reviewed[row.file.path] !== undefined}
-                      open={openFiles[row.file.path] === true}
+                      reviewed={!activeCheckpoint && state.reviewed[row.file.path] !== undefined}
+                      reviewable={!activeCheckpoint}
+                      open={
+                        activeCheckpoint
+                          ? openCheckpointFiles[row.file.path] === true
+                          : openFiles[row.file.path] === true
+                      }
                       onToggle={() => {
-                        const open = openFiles[row.file.path] !== true;
+                        const open = activeCheckpoint
+                          ? openCheckpointFiles[row.file.path] !== true
+                          : openFiles[row.file.path] !== true;
+                        if (activeCheckpoint) {
+                          setOpenCheckpointFiles((current) => ({
+                            ...current,
+                            [row.file.path]: open,
+                          }));
+                          if (open)
+                            void loadCheckpointFileDiff(
+                              threadId,
+                              activeCheckpoint.runId,
+                              row.file.path,
+                            );
+                          return;
+                        }
                         setOpenFiles((current) => ({
                           ...current,
                           [row.file.path]: open,
                         }));
                         if (open) void loadFileDiff(threadId, row.file.path);
                       }}
-                      onToggleReviewed={() =>
-                        toggleReviewed(threadId, row.file.path, row.file.patchHash)
-                      }
+                      onToggleReviewed={() => {
+                        if (!activeCheckpoint)
+                          toggleReviewed(threadId, row.file.path, row.file.patchHash);
+                      }}
                     />
                   )}
                 </div>
