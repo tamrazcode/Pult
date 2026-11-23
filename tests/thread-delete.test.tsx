@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type * as IpcModule from "../src/lib/ipc";
-import type { Project, Thread, WorktreeDirtyStatus } from "../src/lib/types";
+import type { Project, Run, Thread, WorktreeDirtyStatus } from "../src/lib/types";
 
 const {
   navigate,
@@ -141,6 +141,24 @@ describe("Sidebar dirty worktree delete confirmation", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it("drops the thread's run state when the thread is removed", () => {
+    const run: Run = {
+      id: "r1",
+      threadId: "t1",
+      idx: 0,
+      status: "finished",
+      instanceId: "mock",
+      startedAt: 0,
+    };
+    useRunsStore.getState().registerRun(run);
+    expect(useRunsStore.getState().runsByThread["t1"]).toHaveLength(1);
+
+    useThreadsStore.getState().removeThread("t1");
+
+    expect(useRunsStore.getState().runsByThread["t1"]).toBeUndefined();
+    expect(useRunsStore.getState().viewsByRun["r1"]).toBeUndefined();
   });
 
   it("shows workspace path and dirty entries, supports keep and force_remove, and cancels without deleting", async () => {

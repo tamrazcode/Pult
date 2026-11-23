@@ -220,6 +220,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     useGitStore((s) => (threadId ? s.byThread[threadId]?.restoringCheckpoint : undefined)) ?? null;
   // Follow the stream only while the reader is already at the bottom.
   const isAtBottomRef = useRef(true);
+  // Opening-pin observer: released on real input or once the reader scrolls up.
+  const openingPinReleaseRef = useRef<(() => void) | null>(null);
   // One pending pin frame at a time: repeated deltas must not queue up and
   // fight the reader's wheel.
   const pinFrameRef = useRef(0);
@@ -246,7 +248,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     const observer = new ResizeObserver(update);
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasView, threadId]);
+  }, [hasView, hasContent, threadId]);
   const clampMaxPx = computeUserClampHeight(viewportHeight);
 
   // Reset the window when switching threads, not when a new run starts: the
@@ -284,13 +286,15 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       setShowScrollToEnd(false);
     });
     observer.observe(content);
-    const release = () => observer.disconnect();
     const events = ["wheel", "pointerdown", "touchstart", "keydown"] as const;
-    for (const name of events) container.addEventListener(name, release, { passive: true });
-    return () => {
+    const release = () => {
       observer.disconnect();
       for (const name of events) container.removeEventListener(name, release);
+      if (openingPinReleaseRef.current === release) openingPinReleaseRef.current = null;
     };
+    for (const name of events) container.addEventListener(name, release, { passive: true });
+    openingPinReleaseRef.current = release;
+    return release;
   }, [threadId, hasView, hasContent]);
 
   // Mod+F opens find-in-thread; the bar owns Enter/Escape once it is focused.
@@ -339,7 +343,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     });
     observer.observe(container);
     return () => observer.disconnect();
-  }, [hasView, threadId, pinToBottom]);
+  }, [hasView, hasContent, threadId, pinToBottom]);
 
   if (!threadId) return <EmptyState />;
 
@@ -408,6 +412,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     if (!container) return;
     isAtBottomRef.current =
       container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+    // A scrollbar drag or a tick jump never fires wheel/pointerdown on the
+    // container; leaving the bottom is intent enough to drop the opening pin.
+    if (!isAtBottomRef.current) openingPinReleaseRef.current?.();
     setShowScrollToEnd(!isAtBottomRef.current);
     const top = container.getBoundingClientRect().top;
     let current: string | null = null;
