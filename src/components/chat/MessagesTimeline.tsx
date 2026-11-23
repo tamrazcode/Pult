@@ -77,7 +77,9 @@ import {
   toolQuery,
 } from "../../lib/toolDetails";
 import { Button } from "../ui/button";
+import { matchesBinding } from "../../lib/hotkeys";
 import Markdown from "./Markdown";
+import { ThreadSearchBar } from "./ThreadSearchBar";
 import { HistoryTicks, type HistoryTick } from "./HistoryTicks";
 
 const TOOL_ICONS: Record<string, LucideIcon> = {
@@ -174,6 +176,8 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   const hasView = view !== undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  // Find-in-thread searches only the rendered transcript content.
+  const [searchOpen, setSearchOpen] = useState(false);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
@@ -217,6 +221,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     setWindowSize(TRANSCRIPT_WINDOW);
     setActiveHistoryKey(null);
     setShowScrollToEnd(false);
+    setSearchOpen(false);
     isAtBottomRef.current = true;
   }, [threadId]);
 
@@ -250,6 +255,18 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
       observer.disconnect();
     };
   }, [threadId, hasView]);
+
+  // Mod+F opens find-in-thread; the bar owns Enter/Escape once it is focused.
+  useEffect(() => {
+    if (!threadId) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!matchesBinding(event, "Mod+f")) return;
+      event.preventDefault();
+      setSearchOpen(true);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [threadId]);
 
   // Follow the stream: pin only while the reader is at the bottom.
   useEffect(() => {
@@ -454,6 +471,9 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           )}
         </div>
       </div>
+      {searchOpen && (
+        <ThreadSearchBar containerRef={contentRef} onClose={() => setSearchOpen(false)} />
+      )}
       {showScrollToEnd && (
         <button
           type="button"

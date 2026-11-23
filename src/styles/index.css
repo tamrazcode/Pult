@@ -341,3 +341,14 @@
     transition: none;
   }
 }
+
+/* Native Custom Highlight API: thread search (Mod+F). */
+::highlight(pult-search) {
+  background-color: color-mix(in oklab, var(--accent) 26%, transparent);
+  color: var(--text-primary);
+}
+
+::highlight(pult-search-active) {
+  background-color: color-mix(in oklab, var(--accent) 52%, transparent);
+  color: var(--text-primary);
+}

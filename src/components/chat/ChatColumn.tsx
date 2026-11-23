@@ -1,4 +1,5 @@
 import { ChatHeader } from "./ChatHeader";
+import { FleetStrip } from "./FleetStrip";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { Composer } from "./Composer";
 import { NewChatEmptyState } from "./NewChatEmptyState";
@@ -55,6 +56,7 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
       <ChatHeader title={title} threadId={threadId} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative flex min-h-0 flex-1 flex-col">
+          <FleetStrip threadId={threadId} />
           <MessagesTimeline threadId={threadId} />
           {projectWidgetOpen && !rightPanelOpen && <ProjectInfoWidget threadId={threadId} />}
         </div>

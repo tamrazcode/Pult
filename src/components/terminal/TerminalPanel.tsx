@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Plus, SquareTerminal, X } from "lucide-react";
 import { terminalPtyCreate, terminalPtyKill, terminalPtyList } from "../../lib/ipc";
 import { localizeIpcError, useT } from "../../lib/i18n";
@@ -12,14 +12,17 @@ import { TerminalPane } from "./TerminalPane";
 function useAgentTerminals(threadId: string | null): ToolChatItem[] {
   const runs = useRunsStore((s) => (threadId ? s.runsByThread[threadId] : undefined));
   const views = useRunsStore((s) => s.viewsByRun);
-  if (!threadId) return [];
-  const rows: ToolChatItem[] = [];
-  for (const run of runs ?? []) {
-    for (const item of views[run.id]?.items ?? []) {
-      if (item.type === "tool" && item.kind === "execute") rows.push(item);
+  // Memoized: literal arrays would re-render every row on any store write.
+  return useMemo(() => {
+    if (!threadId) return [];
+    const rows: ToolChatItem[] = [];
+    for (const run of runs ?? []) {
+      for (const item of views[run.id]?.items ?? []) {
+        if (item.type === "tool" && item.kind === "execute") rows.push(item);
+      }
     }
-  }
-  return rows;
+    return rows;
+  }, [threadId, runs, views]);
 }
 
 function AgentTerminalRow({ item }: { item: ToolChatItem }) {
@@ -34,7 +37,10 @@ function AgentTerminalRow({ item }: { item: ToolChatItem }) {
       ? String((item.rawOutput as { text?: unknown }).text ?? "")
       : "";
   return (
-    <div className="rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1.5">
+    <div
+      data-agent-terminal={item.toolCallId}
+      className="rounded-(--radius-sm) border border-border-subtle bg-surface px-2 py-1.5"
+    >
       <div className="flex items-center gap-1.5">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusColor}`} />
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-text-secondary">
@@ -219,9 +225,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
           {agentTerminals.length === 0 ? (
             <p className="px-0.5 text-xs text-text-tertiary">{t("panels.terminal.agentEmpty")}</p>
           ) : (
-            agentTerminals.map((item) => (
-              <AgentTerminalRow key={`${item.toolCallId}-${item.status}`} item={item} />
-            ))
+            agentTerminals.map((item) => <AgentTerminalRow key={item.toolCallId} item={item} />)
           )}
         </div>
       </div>

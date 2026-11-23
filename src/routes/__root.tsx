@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Outlet, createRootRoute, useRouter, useRouterState } from "@tanstack/react-router";
 import { Sidebar } from "../components/layout/Sidebar";
+import { BottomTerminalDrawer } from "../components/terminal/BottomTerminalDrawer";
 import { RightPanel } from "../components/layout/RightPanel";
 import { ElicitationModal } from "../components/chat/ElicitationModal";
 import { CommandPalette, useGlobalHotkeys } from "../components/ui/CommandPalette";
@@ -408,6 +409,7 @@ function RootLayout() {
         )}
         <main className="flex min-w-0 flex-1 flex-col">
           <Outlet />
+          {!onboarding && <BottomTerminalDrawer threadId={activeThreadId} />}
         </main>
         {rightPanelOpen && !onboarding && (
           <ResizeHandle

@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { ModePill, ProviderModelPicker, configValueValid } from "./ComposerControls";
+import { ContextRing } from "./ContextRing";
 import {
   runsCancel,
   runsDispatch,
@@ -924,6 +925,21 @@ export function Composer({ threadId }: { threadId?: string }) {
     }
   };
 
+  const compactContext = () => {
+    if (!isTauri() || !threadId) return;
+    const store = useUiStore.getState();
+    const instanceId = store.instanceByThread[threadId] ?? store.selectedInstanceId;
+    if (!instanceId) return;
+    void (async () => {
+      try {
+        const outcome = await runsDispatch(threadId, "/compact", instanceId, []);
+        if (outcome.run) useRunsStore.getState().registerRun(outcome.run);
+      } catch (err) {
+        store.setGlobalError({ kind: "protocol", message: localizeIpcError(err) });
+      }
+    })();
+  };
+
   return (
     <div className="shrink-0 px-6 pb-5">
       {pendingApproval && (
@@ -1278,6 +1294,7 @@ export function Composer({ threadId }: { threadId?: string }) {
             </label>
             <ModePill threadId={threadId} />
             <div className="flex-1" />
+            {threadId && <ContextRing threadId={threadId} onCompact={compactContext} />}
             <ProviderModelPicker threadId={threadId} />
             {editingQueueId ? (
               <button
