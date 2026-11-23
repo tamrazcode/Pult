@@ -17,12 +17,9 @@ export function NewChatEmptyState() {
   const noAgent = enabled.length === 0;
   const onlyMock = enabled.length > 0 && enabled.every((i) => i.driver === "mock");
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden">
+    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto">
       <LivingAscii />
-      {/* The prompt sits in the space above the composer, and the composer is
-          docked to the bottom of the panel here exactly as it is in an open
-          thread — the two states must not put it in different places. */}
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto py-10">
+      <div className="relative z-10 w-full -translate-y-3 py-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-6 text-center">
           <h1 className="text-2xl font-medium tracking-tight text-text-primary">
             {t("chat.firstRun.title")}
@@ -57,9 +54,9 @@ export function NewChatEmptyState() {
             </button>
           )}
         </div>
-      </div>
-      <div className="relative z-10 w-full shrink-0">
-        <Composer />
+        <div className="mt-7">
+          <Composer />
+        </div>
       </div>
     </div>
   );
