@@ -290,7 +290,9 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
   // First open of the panel (or first visit of the thread) loads git state.
   useEffect(() => {
     if (!threadId) return;
-    if (!useGitStore.getState().byThread[threadId]) void refresh(threadId);
+    // loadCheckpoints may have created a shell without a worktree diff yet.
+    const current = useGitStore.getState().byThread[threadId];
+    if (!current || (!current.diff && !current.notRepo && !current.loading)) void refresh(threadId);
   }, [threadId, refresh]);
 
   // A refresh evicts patches whose hash changed; reload any still-open row.
@@ -430,51 +432,51 @@ export function DiffPanel({ threadId }: { threadId: string | null }) {
 
       {/* actions: commit ▸ push ▸ PR */}
       {!activeCheckpoint && (
-      <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
-        <input
-          value={state.commitMessage}
-          onChange={(e) => setCommitMessage(threadId, e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && commitReady) void commit(threadId);
-          }}
-          placeholder={t("panels.diff.commitPlaceholder")}
-          aria-label={t("panels.diff.commitMessage")}
-          className="h-7 min-w-[120px] flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
-        />
-        {suggested && !state.commitMessage && (
-          <button
-            onClick={() => setCommitMessage(threadId, suggested)}
-            title={t("panels.diff.suggested", { message: suggested })}
-            className="flex h-7 shrink-0 items-center rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
-          >
-            {t("panels.diff.useSuggested")}
-          </button>
-        )}
-        <ActionButton
-          onClick={() => void commit(threadId)}
-          disabled={!commitReady}
-          tooltip={commitTooltip}
-          icon={Check}
-          label={t("panels.diff.commit")}
-          busy={state.busy === "commit"}
-        />
-        <ActionButton
-          onClick={() => void push(threadId)}
-          disabled={!pushReady}
-          tooltip={pushTooltip}
-          icon={Upload}
-          label={t("panels.diff.push")}
-          busy={state.busy === "push"}
-        />
-        <ActionButton
-          onClick={() => void createPr(threadId, threadTitle ?? "thread")}
-          disabled={!prReady}
-          tooltip={prTooltip}
-          icon={GitPullRequest}
-          label={t("panels.diff.createPr")}
-          busy={state.busy === "pr"}
-        />
-      </div>
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-border-subtle px-2.5 py-1.5">
+          <input
+            value={state.commitMessage}
+            onChange={(e) => setCommitMessage(threadId, e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && commitReady) void commit(threadId);
+            }}
+            placeholder={t("panels.diff.commitPlaceholder")}
+            aria-label={t("panels.diff.commitMessage")}
+            className="h-7 min-w-[120px] flex-1 rounded-(--radius-sm) border border-border-subtle bg-(--input) px-2 text-xs text-text-primary placeholder:text-text-tertiary focus:border-border-strong focus:outline-none"
+          />
+          {suggested && !state.commitMessage && (
+            <button
+              onClick={() => setCommitMessage(threadId, suggested)}
+              title={t("panels.diff.suggested", { message: suggested })}
+              className="flex h-7 shrink-0 items-center rounded-(--radius-sm) border border-border-subtle bg-surface px-2 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
+            >
+              {t("panels.diff.useSuggested")}
+            </button>
+          )}
+          <ActionButton
+            onClick={() => void commit(threadId)}
+            disabled={!commitReady}
+            tooltip={commitTooltip}
+            icon={Check}
+            label={t("panels.diff.commit")}
+            busy={state.busy === "commit"}
+          />
+          <ActionButton
+            onClick={() => void push(threadId)}
+            disabled={!pushReady}
+            tooltip={pushTooltip}
+            icon={Upload}
+            label={t("panels.diff.push")}
+            busy={state.busy === "push"}
+          />
+          <ActionButton
+            onClick={() => void createPr(threadId, threadTitle ?? "thread")}
+            disabled={!prReady}
+            tooltip={prTooltip}
+            icon={GitPullRequest}
+            label={t("panels.diff.createPr")}
+            busy={state.busy === "pr"}
+          />
+        </div>
       )}
 
       {!activeCheckpoint && state.lastCommit && (

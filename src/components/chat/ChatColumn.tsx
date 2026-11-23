@@ -35,8 +35,7 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
       .reverse()
       .find(
         (item) =>
-          (item.type === "tool" &&
-            (item.status === "pending" || item.status === "in_progress")) ||
+          (item.type === "tool" && (item.status === "pending" || item.status === "in_progress")) ||
           (item.type === "thought" && item.streaming),
       );
     if (current?.type === "tool") ambientKind = normalizeToolKind(current);

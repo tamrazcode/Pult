@@ -71,9 +71,7 @@ async function waitForThreadReady(page: Page, events: string[]) {
           invokes.some((call) => call.cmd === "threads_get") &&
           invokes.some((call) => call.cmd === "providers_instances_list") &&
           invokes.some((call) => call.cmd === "providers_model_prefs_list");
-        const listenersReady = requiredEvents.every(
-          (ev) => (w.__PULT_LISTENERS__?.(ev) ?? 0) > 0,
-        );
+        const listenersReady = requiredEvents.every((ev) => (w.__PULT_LISTENERS__?.(ev) ?? 0) > 0);
         return loaded && listenersReady;
       }, events);
     })

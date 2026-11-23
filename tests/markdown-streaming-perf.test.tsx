@@ -143,9 +143,7 @@ describe("markdown streaming performance", () => {
       });
 
       const highlightedWhileStreaming = mockCodeToHtml.mock.calls.map((call) => call[0]);
-      expect(highlightedWhileStreaming.some((code) => code.includes("stillStreaming"))).toBe(
-        false,
-      );
+      expect(highlightedWhileStreaming.some((code) => code.includes("stillStreaming"))).toBe(false);
       const callsBeforeEnd = mockCodeToHtml.mock.calls.length;
 
       view(full, false);

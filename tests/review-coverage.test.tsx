@@ -291,9 +291,7 @@ describe("Scope B: provider home paths, model prefs, and unfiltered model picker
     expect(within(dialog).queryByRole("button", { name: "GPT-5" })).toBeNull();
 
     // Runtime instance list itself remains unfiltered.
-    expect(
-      useUiStore.getState().instances[0]?.configOptions[0],
-    ).toMatchObject({
+    expect(useUiStore.getState().instances[0]?.configOptions[0]).toMatchObject({
       options: [
         { value: "gpt-6", name: "GPT-6" },
         { value: "gpt-5", name: "GPT-5" },

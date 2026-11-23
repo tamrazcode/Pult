@@ -64,9 +64,7 @@ beforeEach(() => {
     latencyMs: 4,
   });
   mocks.mcpImportJson.mockResolvedValue([{ name: "filesystem", status: "imported" }]);
-  mocks.mcpExportJson.mockResolvedValue(
-    '{"mcpServers":{"filesystem":{"command":"npx"}}}',
-  );
+  mocks.mcpExportJson.mockResolvedValue('{"mcpServers":{"filesystem":{"command":"npx"}}}');
 });
 
 describe("custom MCP UI", () => {
@@ -122,9 +120,7 @@ describe("custom MCP UI", () => {
   it("imports and exports the mcpServers document", async () => {
     const user = userEvent.setup();
     const onImported = vi.fn();
-    render(
-      <McpImportExportModal open serverIds={[]} onClose={() => {}} onImported={onImported} />,
-    );
+    render(<McpImportExportModal open serverIds={[]} onClose={() => {}} onImported={onImported} />);
     const box = screen.getByRole("textbox");
     fireEvent.change(box, { target: { value: '{"mcpServers":{}}' } });
     await user.click(screen.getByRole("button", { name: "Import" }));

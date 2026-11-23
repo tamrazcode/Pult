@@ -49,9 +49,7 @@ describe("AddProviderDialog", () => {
   });
 
   it("walks provider → identity → config and saves the ACP command", async () => {
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
 
     fireEvent.click(screen.getByRole("button", { name: /Grok/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -77,9 +75,7 @@ describe("AddProviderDialog", () => {
   });
 
   it("prefills the default Codex selection before any card click", () => {
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(screen.getByDisplayValue("Codex")).toBeInTheDocument();
     expect(screen.getByDisplayValue("codex")).toBeInTheDocument();
@@ -90,9 +86,7 @@ describe("AddProviderDialog", () => {
   });
 
   it("saves an API key into the instance environment", async () => {
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole("button", { name: /Claude/ }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -113,9 +107,7 @@ describe("AddProviderDialog", () => {
 
   it("does not save when the CLI installer fails", async () => {
     providersInstall.mockRejectedValueOnce(new Error("npm failed"));
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Install & connect" }));
@@ -127,9 +119,7 @@ describe("AddProviderDialog", () => {
 
   it("rolls back an instance whose connection probe fails", async () => {
     providersPreflight.mockRejectedValueOnce(new Error("binary not found"));
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     fireEvent.click(screen.getByRole("button", { name: "Install & connect" }));
@@ -176,9 +166,7 @@ describe("AddProviderDialog", () => {
   });
 
   it("lets Pi advance through the wizard and saves driver='pi_rpc'", async () => {
-    render(
-      <AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />,
-    );
+    render(<AddProviderDialog detected={[]} instances={[]} onClose={onClose} onAdded={onAdded} />);
     fireEvent.click(screen.getByRole("button", { name: /Pi/ }));
     expect(screen.queryByText(/needs a dedicated Pult adapter/)).toBeNull();
 

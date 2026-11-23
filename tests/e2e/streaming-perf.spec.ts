@@ -44,7 +44,9 @@ function perfMarkdown(): string {
       );
     }
     if (i % 20 === 7) {
-      parts.push(`\nInline $a_${i} + b_${i} = c_${i}$ and display:\n\n$$\n\\sum_{k=1}^{${i}} k\n$$`);
+      parts.push(
+        `\nInline $a_${i} + b_${i} = c_${i}$ and display:\n\n$$\n\\sum_{k=1}^{${i}} k\n$$`,
+      );
     }
   }
   return parts.join("\n\n");
@@ -136,113 +138,115 @@ test("streams 600 deltas within frame and long-task budgets", async ({ page }) =
   await expect(page.locator(".katex").first()).toBeVisible({ timeout: 30_000 });
   await page.waitForFunction(
     () =>
-      (window as unknown as { __PULT_LISTENERS__?: (event: string) => number })
-        .__PULT_LISTENERS__?.("run:event") ?? 0,
+      (
+        window as unknown as { __PULT_LISTENERS__?: (event: string) => number }
+      ).__PULT_LISTENERS__?.("run:event") ?? 0,
   );
 
   await page.evaluate(async () => {
     await document.fonts.ready;
-    await new Promise((resolve) =>
-      requestAnimationFrame(() => requestAnimationFrame(resolve)),
-    );
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   });
 
-  const result = await page.evaluate(async ({ markdown, runId }) => {
-    const emit = (
-      window as unknown as { __PULT_EMIT__: (event: string, payload: unknown) => number }
-    ).__PULT_EMIT__;
-    const baseline = {
-      tables: document.querySelectorAll("table").length,
-      katex: document.querySelectorAll(".katex").length,
-      highlighted: document.querySelectorAll("pre.shiki").length,
-    };
-    const deltas = 600;
-    const size = Math.ceil(markdown.length / deltas);
-    const chunks: string[] = [];
-    for (let i = 0; i < deltas; i += 1) {
-      chunks.push(markdown.slice(i * size, (i + 1) * size));
-    }
-    const firstPrefix = chunks[0].slice(0, 16);
-
-    const gaps: number[] = [];
-    let sampling = true;
-    let lastFrame = performance.now();
-    const sampleFrame = (now: number) => {
-      gaps.push(now - lastFrame);
-      lastFrame = now;
-      if (sampling) requestAnimationFrame(sampleFrame);
-    };
-    requestAnimationFrame(sampleFrame);
-
-    let resolveFirstPaint: (ms: number) => void = () => {};
-    const firstPaint = new Promise<number>((resolve) => {
-      resolveFirstPaint = resolve;
-    });
-    const longTasks: Array<{ start: number; duration: number }> = [];
-    const observer = new PerformanceObserver((list) => {
-      for (const entry of list.getEntries()) {
-        longTasks.push({ start: entry.startTime, duration: entry.duration });
+  const result = await page.evaluate(
+    async ({ markdown, runId }) => {
+      const emit = (
+        window as unknown as { __PULT_EMIT__: (event: string, payload: unknown) => number }
+      ).__PULT_EMIT__;
+      const baseline = {
+        tables: document.querySelectorAll("table").length,
+        katex: document.querySelectorAll(".katex").length,
+        highlighted: document.querySelectorAll("pre.shiki").length,
+      };
+      const deltas = 600;
+      const size = Math.ceil(markdown.length / deltas);
+      const chunks: string[] = [];
+      for (let i = 0; i < deltas; i += 1) {
+        chunks.push(markdown.slice(i * size, (i + 1) * size));
       }
-    });
-    try {
-      observer.observe({ type: "longtask", buffered: false });
-    } catch {
-      // Older engines without the longtask entry type: frame gaps still count.
-    }
+      const firstPrefix = chunks[0].slice(0, 16);
 
-    const started = performance.now();
-    for (let i = 0; i < chunks.length; i += 1) {
-      emit("run:event", {
-        runId,
-        event: {
-          id: `${runId}-d${i}`,
-          runId,
-          seq: i + 2,
-          ts: started + i * 16,
-          kind: "agent_message_delta",
-          payload: { delta: chunks[i] },
-        },
+      const gaps: number[] = [];
+      let sampling = true;
+      let lastFrame = performance.now();
+      const sampleFrame = (now: number) => {
+        gaps.push(now - lastFrame);
+        lastFrame = now;
+        if (sampling) requestAnimationFrame(sampleFrame);
+      };
+      requestAnimationFrame(sampleFrame);
+
+      let resolveFirstPaint: (ms: number) => void = () => {};
+      const firstPaint = new Promise<number>((resolve) => {
+        resolveFirstPaint = resolve;
       });
-      if (i === 0) {
-        const waitFirstPaint = () => {
-          if (document.body.textContent?.includes(firstPrefix)) {
-            resolveFirstPaint(performance.now() - started);
-          } else {
-            requestAnimationFrame(waitFirstPaint);
-          }
-        };
-        requestAnimationFrame(waitFirstPaint);
+      const longTasks: Array<{ start: number; duration: number }> = [];
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) {
+          longTasks.push({ start: entry.startTime, duration: entry.duration });
+        }
+      });
+      try {
+        observer.observe({ type: "longtask", buffered: false });
+      } catch {
+        // Older engines without the longtask entry type: frame gaps still count.
       }
-      await new Promise((resolve) => setTimeout(resolve, 16));
-    }
-    // Trailing throttle flush + streaming code highlight.
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    sampling = false;
-    observer.disconnect();
-    const painted = await Promise.race([
-      firstPaint,
-      new Promise<number>((resolve) => setTimeout(() => resolve(9_999), 2_000)),
-    ]);
-    const sorted = [...gaps].sort((a, b) => a - b);
-    const over50 = longTasks.filter((t) => t.duration > 50);
-    const maxLongTaskMs = over50.reduce((max, t) => Math.max(max, t.duration), 0);
-    return {
-      firstTokenPaintMs: painted,
-      p95FrameGapMs: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
-      maxFrameGapMs: sorted[sorted.length - 1] ?? 0,
-      longTasksOver50ms: over50.length,
-      maxLongTaskMs: Math.round(maxLongTaskMs * 10) / 10,
-      longTasksDetail: over50.map((t) => ({
-        offsetMs: Math.round(t.start - started),
-        durationMs: Math.round(t.duration * 10) / 10,
-      })),
-      deltas: chunks.length,
-      bytes: markdown.length,
-      tables: document.querySelectorAll("table").length - baseline.tables,
-      katex: document.querySelectorAll(".katex").length - baseline.katex,
-      highlighted: document.querySelectorAll("pre.shiki").length - baseline.highlighted,
-    };
-  }, { markdown: text, runId: "perf-run" });
+
+      const started = performance.now();
+      for (let i = 0; i < chunks.length; i += 1) {
+        emit("run:event", {
+          runId,
+          event: {
+            id: `${runId}-d${i}`,
+            runId,
+            seq: i + 2,
+            ts: started + i * 16,
+            kind: "agent_message_delta",
+            payload: { delta: chunks[i] },
+          },
+        });
+        if (i === 0) {
+          const waitFirstPaint = () => {
+            if (document.body.textContent?.includes(firstPrefix)) {
+              resolveFirstPaint(performance.now() - started);
+            } else {
+              requestAnimationFrame(waitFirstPaint);
+            }
+          };
+          requestAnimationFrame(waitFirstPaint);
+        }
+        await new Promise((resolve) => setTimeout(resolve, 16));
+      }
+      // Trailing throttle flush + streaming code highlight.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      sampling = false;
+      observer.disconnect();
+      const painted = await Promise.race([
+        firstPaint,
+        new Promise<number>((resolve) => setTimeout(() => resolve(9_999), 2_000)),
+      ]);
+      const sorted = [...gaps].sort((a, b) => a - b);
+      const over50 = longTasks.filter((t) => t.duration > 50);
+      const maxLongTaskMs = over50.reduce((max, t) => Math.max(max, t.duration), 0);
+      return {
+        firstTokenPaintMs: painted,
+        p95FrameGapMs: sorted[Math.floor(sorted.length * 0.95)] ?? 0,
+        maxFrameGapMs: sorted[sorted.length - 1] ?? 0,
+        longTasksOver50ms: over50.length,
+        maxLongTaskMs: Math.round(maxLongTaskMs * 10) / 10,
+        longTasksDetail: over50.map((t) => ({
+          offsetMs: Math.round(t.start - started),
+          durationMs: Math.round(t.duration * 10) / 10,
+        })),
+        deltas: chunks.length,
+        bytes: markdown.length,
+        tables: document.querySelectorAll("table").length - baseline.tables,
+        katex: document.querySelectorAll(".katex").length - baseline.katex,
+        highlighted: document.querySelectorAll("pre.shiki").length - baseline.highlighted,
+      };
+    },
+    { markdown: text, runId: "perf-run" },
+  );
 
   console.log("streaming perf:", JSON.stringify(result));
   expect(pageErrors).toEqual([]);

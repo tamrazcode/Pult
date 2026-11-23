@@ -168,10 +168,7 @@ function escapeRegExp(value: string): string {
 }
 
 /** Renders the caret-line text; attachment tokens become inline links. */
-function highlightInlineTokens(
-  text: string,
-  tokens: Map<string, { name: string; size: string }>,
-) {
+function highlightInlineTokens(text: string, tokens: Map<string, { name: string; size: string }>) {
   if (tokens.size === 0) return text;
   const pattern = new RegExp(`(${[...tokens.keys()].map(escapeRegExp).join("|")})`, "g");
   return text.split(pattern).map((part, index) => {
@@ -420,7 +417,12 @@ export function Composer({ threadId }: { threadId?: string }) {
   const removeAttachmentToken = useCallback(
     (token: string) => {
       const current = useDraftsStore.getState().byThread[draftKey] ?? "";
-      setValue(current.replace(token, "").replace(/[ \t]{2,}/g, " ").trimEnd());
+      setValue(
+        current
+          .replace(token, "")
+          .replace(/[ \t]{2,}/g, " ")
+          .trimEnd(),
+      );
     },
     [draftKey, setValue],
   );
@@ -572,9 +574,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     setError(null);
     const images: ImageInput[] = chips.map(({ data, mimeType }) => ({ data, mimeType }));
     const attachedNames = [...chips, ...fileChips].map((attachment) => attachment.name).join(", ");
-    const attachedFallback = attachedNames
-      ? t("composer.attached", { files: attachedNames })
-      : "";
+    const attachedFallback = attachedNames ? t("composer.attached", { files: attachedNames }) : "";
     // Image-only sends still need a non-empty title and queue label.
     const promptText = withFileAttachments(text, fileChips) || attachedFallback;
     const pendingText = text || attachedFallback;
@@ -907,8 +907,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     }
     if (e.key === "Enter") {
       const shouldSend =
-        !e.shiftKey &&
-        (sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey);
+        !e.shiftKey && (sendKey === "enter" ? !e.metaKey && !e.ctrlKey : e.metaKey || e.ctrlKey);
       if (shouldSend) {
         e.preventDefault();
         handlePrimary();
@@ -1086,7 +1085,9 @@ export function Composer({ threadId }: { threadId?: string }) {
                     className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
                   >
                     <CornerUpRight size={11} />{" "}
-                    {index === 0 ? t("composer.queue.steerButton") : t("composer.queue.moveToFront")}
+                    {index === 0
+                      ? t("composer.queue.steerButton")
+                      : t("composer.queue.moveToFront")}
                   </button>
                   <button
                     type="button"
@@ -1189,9 +1190,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <img
                     src={chip.preview}
                     alt={t("chat.attached")}
-                    onClick={() =>
-                      useUiStore.getState().openImagePreview(chip.preview, chip.name)
-                    }
+                    onClick={() => useUiStore.getState().openImagePreview(chip.preview, chip.name)}
                     className="h-[18px] w-[18px] shrink-0 cursor-zoom-in rounded-[3px] object-cover"
                   />
                   <span className="min-w-0 truncate text-accent">{chip.name}</span>
@@ -1226,9 +1225,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   </span>
                   <span className="min-w-0 truncate text-accent">{file.name}</span>
                   <span className="shrink-0 text-text-tertiary">
-                    {file.truncated
-                      ? t("composer.truncated")
-                      : formatAttachmentSize(file.size)}
+                    {file.truncated ? t("composer.truncated") : formatAttachmentSize(file.size)}
                   </span>
                   <button
                     type="button"

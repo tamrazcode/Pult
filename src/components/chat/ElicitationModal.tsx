@@ -190,144 +190,144 @@ export function ElicitationModal({
           : "w-full max-w-lg overflow-hidden rounded-2xl border border-border-strong bg-(--surface-raised) shadow-(--shadow-composer)"
       }
     >
-        <div className="bg-warning/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-warning">
-          {t("chat.elicitation.request")}
-        </div>
-        <div className="space-y-4 px-4 py-3">
-          <p className="text-sm text-text-primary">{message}</p>
+      <div className="bg-warning/10 px-4 py-2 text-xs font-semibold uppercase tracking-wider text-warning">
+        {t("chat.elicitation.request")}
+      </div>
+      <div className="space-y-4 px-4 py-3">
+        <p className="text-sm text-text-primary">{message}</p>
 
-          {isForm &&
-            fields.map((field) => {
-              const id = `elicitation-${field.name}`;
-              const value = values[field.name];
-              const help = field.description ? (
-                <p className="text-xs text-text-tertiary">{field.description}</p>
-              ) : null;
-              if (field.kind === "boolean") {
-                return (
-                  <div key={field.name} className="space-y-1">
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        id={id}
-                        type="checkbox"
-                        className="size-3.5 accent-accent"
-                        checked={value === true}
-                        onChange={(e) => setValue(field.name, e.target.checked)}
-                      />
-                      <label htmlFor={id} className="text-xs text-text-secondary">
-                        {field.label}
-                      </label>
-                      <RequiredMark required={field.required} />
-                    </div>
-                    {help}
-                  </div>
-                );
-              }
-              if (field.kind === "array") {
-                const selected = Array.isArray(value) ? value : [];
-                return (
-                  <div key={field.name} className="space-y-1">
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-xs text-text-secondary">{field.label}</span>
-                      <RequiredMark required={field.required} />
-                    </div>
-                    <div
-                      role="group"
-                      aria-label={field.label}
-                      className="flex flex-wrap gap-x-4 gap-y-1.5"
-                    >
-                      {(field.options ?? []).map((option) => (
-                        <label
-                          key={option}
-                          className="flex items-center gap-1.5 text-xs text-text-secondary"
-                        >
-                          <input
-                            type="checkbox"
-                            className="size-3.5 accent-accent"
-                            checked={selected.includes(option)}
-                            onChange={() => toggleOption(field.name, option)}
-                          />
-                          {option}
-                        </label>
-                      ))}
-                    </div>
-                    {help}
-                  </div>
-                );
-              }
+        {isForm &&
+          fields.map((field) => {
+            const id = `elicitation-${field.name}`;
+            const value = values[field.name];
+            const help = field.description ? (
+              <p className="text-xs text-text-tertiary">{field.description}</p>
+            ) : null;
+            if (field.kind === "boolean") {
               return (
                 <div key={field.name} className="space-y-1">
-                  <div className="flex items-baseline gap-1">
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      id={id}
+                      type="checkbox"
+                      className="size-3.5 accent-accent"
+                      checked={value === true}
+                      onChange={(e) => setValue(field.name, e.target.checked)}
+                    />
                     <label htmlFor={id} className="text-xs text-text-secondary">
                       {field.label}
                     </label>
                     <RequiredMark required={field.required} />
                   </div>
-                  {field.kind === "enum" ? (
-                    <select
-                      id={id}
-                      className={INPUT_CLASS}
-                      value={typeof value === "string" ? value : ""}
-                      onChange={(e) => setValue(field.name, e.target.value)}
-                    >
-                      <option value="">{t("chat.elicitation.selectValue")}</option>
-                      {(field.options ?? []).map((option) => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                      id={id}
-                      type={field.kind === "string" ? "text" : "number"}
-                      step={field.kind === "integer" ? "1" : undefined}
-                      className={INPUT_CLASS}
-                      value={typeof value === "string" ? value : ""}
-                      onChange={(e) => setValue(field.name, e.target.value)}
-                    />
-                  )}
                   {help}
                 </div>
               );
-            })}
+            }
+            if (field.kind === "array") {
+              const selected = Array.isArray(value) ? value : [];
+              return (
+                <div key={field.name} className="space-y-1">
+                  <div className="flex items-baseline gap-1">
+                    <span className="text-xs text-text-secondary">{field.label}</span>
+                    <RequiredMark required={field.required} />
+                  </div>
+                  <div
+                    role="group"
+                    aria-label={field.label}
+                    className="flex flex-wrap gap-x-4 gap-y-1.5"
+                  >
+                    {(field.options ?? []).map((option) => (
+                      <label
+                        key={option}
+                        className="flex items-center gap-1.5 text-xs text-text-secondary"
+                      >
+                        <input
+                          type="checkbox"
+                          className="size-3.5 accent-accent"
+                          checked={selected.includes(option)}
+                          onChange={() => toggleOption(field.name, option)}
+                        />
+                        {option}
+                      </label>
+                    ))}
+                  </div>
+                  {help}
+                </div>
+              );
+            }
+            return (
+              <div key={field.name} className="space-y-1">
+                <div className="flex items-baseline gap-1">
+                  <label htmlFor={id} className="text-xs text-text-secondary">
+                    {field.label}
+                  </label>
+                  <RequiredMark required={field.required} />
+                </div>
+                {field.kind === "enum" ? (
+                  <select
+                    id={id}
+                    className={INPUT_CLASS}
+                    value={typeof value === "string" ? value : ""}
+                    onChange={(e) => setValue(field.name, e.target.value)}
+                  >
+                    <option value="">{t("chat.elicitation.selectValue")}</option>
+                    {(field.options ?? []).map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    id={id}
+                    type={field.kind === "string" ? "text" : "number"}
+                    step={field.kind === "integer" ? "1" : undefined}
+                    className={INPUT_CLASS}
+                    value={typeof value === "string" ? value : ""}
+                    onChange={(e) => setValue(field.name, e.target.value)}
+                  />
+                )}
+                {help}
+              </div>
+            );
+          })}
 
-          {isUrl && (
-            <>
-              <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs break-all whitespace-pre-wrap text-text-secondary">
-                {url}
-              </pre>
-              {urlError && (
-                <p role="alert" className="text-xs text-danger">
-                  {urlError}
-                </p>
-              )}
-            </>
-          )}
+        {isUrl && (
+          <>
+            <pre className="overflow-x-auto rounded-(--radius-sm) bg-code-bg p-2 font-mono text-xs break-all whitespace-pre-wrap text-text-secondary">
+              {url}
+            </pre>
+            {urlError && (
+              <p role="alert" className="text-xs text-danger">
+                {urlError}
+              </p>
+            )}
+          </>
+        )}
 
-          {!isForm && !isUrl && (
-            <p className="text-xs text-text-tertiary">{t("chat.elicitation.unknownMode")}</p>
-          )}
-        </div>
-        <div className="flex justify-end gap-2 px-4 pb-4">
-          {isForm && (
-            <Button variant="primary" onClick={accept} disabled={!canAccept}>
-              {t("chat.elicitation.accept")}
-            </Button>
-          )}
-          {isUrl && (
-            <Button variant="primary" onClick={() => void openUrl()}>
-              {t("chat.elicitation.openUrl")}
-            </Button>
-          )}
-          <Button variant="secondary" onClick={() => onSubmit("decline")}>
-            {t("chat.elicitation.decline")}
-          </Button>
-          <Button variant="ghost" onClick={() => onSubmit("cancel")}>
-            {t("common.cancel")}
-          </Button>
-        </div>
+        {!isForm && !isUrl && (
+          <p className="text-xs text-text-tertiary">{t("chat.elicitation.unknownMode")}</p>
+        )}
       </div>
+      <div className="flex justify-end gap-2 px-4 pb-4">
+        {isForm && (
+          <Button variant="primary" onClick={accept} disabled={!canAccept}>
+            {t("chat.elicitation.accept")}
+          </Button>
+        )}
+        {isUrl && (
+          <Button variant="primary" onClick={() => void openUrl()}>
+            {t("chat.elicitation.openUrl")}
+          </Button>
+        )}
+        <Button variant="secondary" onClick={() => onSubmit("decline")}>
+          {t("chat.elicitation.decline")}
+        </Button>
+        <Button variant="ghost" onClick={() => onSubmit("cancel")}>
+          {t("common.cancel")}
+        </Button>
+      </div>
+    </div>
   );
   if (inline) return <div className="mx-auto mb-2 w-full max-w-3xl">{card}</div>;
   return (

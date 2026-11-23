@@ -124,6 +124,9 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 /** One gh probe per session wave; parallel panel mounts share the result. */
 let ghInFlight: Promise<void> | null = null;
 
+/** Guards a checkpoint view against a clear/switch while its diff loads. */
+const viewSeqByThread = new Map<string, number>();
+
 /** Debounced refresh — file_changed events arrive per write mid-turn. */
 export function scheduleGitRefresh(threadId: string, delayMs = 600): void {
   const existing = debounceTimers.get(threadId);
@@ -414,10 +417,14 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   viewCheckpointDiff: async (threadId, runId) => {
+    const seq = (viewSeqByThread.get(threadId) ?? 0) + 1;
+    viewSeqByThread.set(threadId, seq);
     // The parent run comes from the ordered list; a cold panel has none yet.
     if ((get().byThread[threadId]?.checkpoints.length ?? 0) === 0) {
       await get().loadCheckpoints(threadId);
     }
+    // The reader closed the checkpoint or opened another one while loading.
+    if (viewSeqByThread.get(threadId) !== seq) return;
     const baseRunId = baseRunIdFor(get().byThread[threadId]?.checkpoints ?? [], runId);
     set((s) => ({
       byThread: {
@@ -539,14 +546,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
-  clearCheckpointView: (threadId) =>
+  clearCheckpointView: (threadId) => {
+    viewSeqByThread.set(threadId, (viewSeqByThread.get(threadId) ?? 0) + 1);
     set((s) => {
       const prev = s.byThread[threadId];
       if (!prev) return s;
       return { byThread: { ...s.byThread, [threadId]: { ...prev, activeCheckpoint: null } } };
-    }),
+    });
+  },
 
   restoreCheckpoint: async (threadId, runId) => {
+    if (get().byThread[threadId]?.restoringCheckpoint) return false;
     set((s) => ({
       byThread: {
         ...s.byThread,

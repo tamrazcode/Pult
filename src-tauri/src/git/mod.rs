@@ -1114,6 +1114,7 @@ pub async fn worktree_remove(repo_dir: &Path, name: &str, force: bool) -> Result
 /// Hidden checkpoint ref `refs/pult/checkpoints/<run_id>` (§4.4) — commit-tree
 /// through a scratch index so the user's real index is untouched.
 pub async fn checkpoint(dir: &Path, run_id: &str) -> Result<String, PultError> {
+    validate_run_id(run_id)?;
     let repo = resolve_repo(dir).await?;
     let (temp, _copied) = temp_index_for(&repo).await?;
     let outcome = checkpoint_with_temp_index(&repo, &temp, run_id).await;

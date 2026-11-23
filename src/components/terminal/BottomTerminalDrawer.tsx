@@ -39,8 +39,11 @@ export function BottomTerminalDrawer({ threadId }: { threadId: string | null }) 
           setHeight(clamp(drag.startHeight + (drag.startY - event.clientY)));
         }}
         onPointerUp={(event) => {
+          if (!dragRef.current) return;
           dragRef.current = null;
-          event.currentTarget.releasePointerCapture(event.pointerId);
+          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
         }}
         onPointerCancel={() => {
           dragRef.current = null;

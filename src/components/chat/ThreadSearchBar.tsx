@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { ChevronDown, ChevronUp, X } from "lucide-react";
 import { useT } from "../../lib/i18n";
+import { useUiStore } from "../../stores/ui";
 
 const ALL_KEY = "pult-search";
 const ACTIVE_KEY = "pult-search-active";
@@ -56,6 +57,8 @@ export function ThreadSearchBar({
   onClose: () => void;
 }) {
   const t = useT();
+  // ProjectInfoWidget owns the top-right corner when the right panel is shut.
+  const widgetOpen = useUiStore((s) => s.projectWidgetOpen && !s.rightPanelOpen);
   const [query, setQuery] = useState("");
   const [matches, setMatches] = useState<Range[]>([]);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -73,8 +76,24 @@ export function ThreadSearchBar({
       setActiveIndex(0);
       return;
     }
-    setMatches(findMatches(root, trimmed));
-    setActiveIndex(0);
+    let frame = 0;
+    const run = () => {
+      frame = 0;
+      setMatches(findMatches(root, trimmed));
+      setActiveIndex(0);
+    };
+    run();
+    // The transcript keeps mutating while the run streams: re-walk it without
+    // keeping ranges that point at replaced text nodes.
+    if (typeof MutationObserver === "undefined") return;
+    const observer = new MutationObserver(() => {
+      if (!frame) frame = requestAnimationFrame(run);
+    });
+    observer.observe(root, { childList: true, subtree: true, characterData: true });
+    return () => {
+      observer.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, [containerRef, query]);
 
   // Highlights follow the match set; every exit path clears them.
@@ -107,7 +126,11 @@ export function ThreadSearchBar({
   };
 
   return (
-    <div className="absolute top-3 right-10 z-20 flex items-center gap-1.5 rounded-(--radius-md) border border-border-strong bg-surface-raised px-2.5 py-1.5 shadow-lg">
+    <div
+      className={`absolute top-3 z-30 flex items-center gap-1.5 rounded-(--radius-md) border border-border-strong bg-surface-raised px-2.5 py-1.5 shadow-lg ${
+        widgetOpen ? "right-[19.5rem]" : "right-10"
+      }`}
+    >
       <input
         ref={inputRef}
         value={query}

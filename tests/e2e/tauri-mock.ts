@@ -19,8 +19,7 @@ export interface TauriFixtures {
 export async function installTauriMock(page: Page, fixtures: TauriFixtures = {}) {
   await page.addInitScript((data) => {
     const invokes: Array<{ cmd: string; args: unknown }> = [];
-    (window as unknown as { __PULT_INVOKES__: typeof invokes }).__PULT_INVOKES__ =
-      invokes;
+    (window as unknown as { __PULT_INVOKES__: typeof invokes }).__PULT_INVOKES__ = invokes;
     let nextCallback = 0;
     const callbacks = new Map<number, (...args: unknown[]) => void>();
     const listeners = new Map<string, Set<number>>();
@@ -81,9 +80,7 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
           case "providers_authenticate":
             return Promise.resolve(null);
           case "settings_get":
-            return Promise.resolve(
-              args.key === "onboarding_completed" ? true : null,
-            );
+            return Promise.resolve(args.key === "onboarding_completed" ? true : null);
           case "settings_set":
             return Promise.resolve(null);
           case "projects_list":
@@ -153,8 +150,7 @@ export async function installTauriMock(page: Page, fixtures: TauriFixtures = {})
         }
       },
     };
-    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ =
-      internals;
+    (window as unknown as { __TAURI_INTERNALS__: unknown }).__TAURI_INTERNALS__ = internals;
     (
       window as unknown as {
         __TAURI_EVENT_PLUGIN_INTERNALS__: {

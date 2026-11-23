@@ -44,6 +44,10 @@ export function ContextRing({ threadId, onCompact }: { threadId: string; onCompa
   }, [threadId, instanceId]);
 
   useEffect(() => {
+    if (mcpServers.length === 0) setMcpOpen(false);
+  }, [mcpServers.length]);
+
+  useEffect(() => {
     if (!mcpOpen) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;

@@ -10,9 +10,7 @@ const server = {
     command: "node",
     args: ["mock.mjs"],
     env: { LOG_LEVEL: "debug" },
-    secretEnvKeys: [
-      { key: "API_TOKEN", hasValue: true, masked: "••••3456" },
-    ],
+    secretEnvKeys: [{ key: "API_TOKEN", hasValue: true, masked: "••••3456" }],
   },
   scope: "global",
   projectId: null,

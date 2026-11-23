@@ -54,8 +54,7 @@ test("process tree collapses and kills a registered child", async ({ page }) => 
       );
       return calls.some(
         (call) =>
-          call.cmd === "diagnostics_kill_process" &&
-          (call.args as { pid?: number }).pid === 200,
+          call.cmd === "diagnostics_kill_process" && (call.args as { pid?: number }).pid === 200,
       );
     })
     .toBe(true);

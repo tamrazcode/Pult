@@ -75,8 +75,7 @@ export function handleMarkdownNewline(
   const prefix = line.slice(0, caret);
   const suffix = line.slice(caret);
 
-  const finish = () =>
-    edit(text, lineStart, lineEnd, "", lineStart);
+  const finish = () => edit(text, lineStart, lineEnd, "", lineStart);
 
   const checkbox = /^(\s*)([-*])\s+\[(?: |x|X)\]\s+(.*)$/.exec(prefix);
   if (checkbox) {
