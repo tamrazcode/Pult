@@ -578,6 +578,13 @@ export function Composer({ threadId }: { threadId?: string }) {
     // Image-only sends still need a non-empty title and queue label.
     const promptText = withFileAttachments(text, fileChips) || attachedFallback;
     const pendingText = text || attachedFallback;
+    // Chips write their `name size` token into the draft. That token is not
+    // prose: strip it before the title, or every attachment names the thread.
+    const titleText = [...chips, ...fileChips]
+      .reduce((acc, chip) => acc.split(chip.token).join(" "), text)
+      .replace(/\s+/g, " ")
+      .trim();
+    const threadTitle = (titleText || attachedFallback).slice(0, 40);
     void (async () => {
       try {
         if (!threadId) {
@@ -600,7 +607,7 @@ export function Composer({ threadId }: { threadId?: string }) {
           const targetWorktree = project?.worktreeStrategy === "worktree";
           const thread = await useThreadsStore
             .getState()
-            .createThread(project?.id ?? null, pendingText.slice(0, 40), {
+            .createThread(project?.id ?? null, threadTitle, {
               workspace: targetWorkspace,
               worktree: targetWorktree,
             });
@@ -822,6 +829,26 @@ export function Composer({ threadId }: { threadId?: string }) {
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     const textarea = e.currentTarget;
+    // Backspace at the very start reaches the attachment before the text.
+    if (
+      e.key === "Backspace" &&
+      textarea.selectionStart === 0 &&
+      textarea.selectionEnd === 0 &&
+      (fileChips.length > 0 || chips.length > 0)
+    ) {
+      e.preventDefault();
+      if (fileChips.length > 0) {
+        const last = fileChips[fileChips.length - 1]!;
+        removeAttachmentToken(last.token);
+        setFileChips((prev) => prev.slice(0, -1));
+      } else {
+        const last = chips[chips.length - 1]!;
+        removeAttachmentToken(last.token);
+        setChips((prev) => prev.slice(0, -1));
+      }
+      requestAnimationFrame(autosize);
+      return;
+    }
     if (!mentionOpen && !slashOpen && !awaitingDecision) {
       if (e.key === " " && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const edit = handleMarkdownSpace(
@@ -1016,7 +1043,11 @@ export function Composer({ threadId }: { threadId?: string }) {
                   onPointerDown={(event) => {
                     if (editingQueueId !== null) return;
                     const target = event.target as HTMLElement;
-                    if (target.closest("button, input, select, textarea, a")) return;
+                    if (
+                      !target.closest("[data-drag-handle]") &&
+                      target.closest("button, input, select, textarea, a")
+                    )
+                      return;
                     event.preventDefault();
                     event.currentTarget.setPointerCapture?.(event.pointerId);
                     setDragState({ id: item.id, startY: event.clientY, offset: 0, index });
@@ -1051,6 +1082,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                 >
                   <button
                     type="button"
+                    data-drag-handle
                     aria-label={t("composer.queue.reorderAria")}
                     title={t("composer.queue.dragTitle")}
                     className="flex h-5 w-4 cursor-grab touch-none items-center justify-center text-text-tertiary active:cursor-grabbing"

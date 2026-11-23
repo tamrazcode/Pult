@@ -35,6 +35,8 @@ export function CommandPalette({ open, onClose }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  /** Set when a command runs: its navigation/mount owns focus, not the trigger. */
+  const executedRef = useRef(false);
 
   const navigate = useMemo(() => (path: string) => void router.navigate({ to: path }), [router]);
 
@@ -60,12 +62,20 @@ export function CommandPalette({ open, onClose }: Props) {
 
   useEffect(() => {
     if (open) {
+      executedRef.current = false;
       previousFocusRef.current = document.activeElement as HTMLElement | null;
       setQuery("");
       setCursor(0);
       // focus after the modal mounts
       requestAnimationFrame(() => inputRef.current?.focus());
-      return () => previousFocusRef.current?.focus();
+      return () => {
+        const previous = previousFocusRef.current;
+        // A command may have navigated or unmounted the trigger; restoring
+        // focus then scrolls the page or hits a detached node.
+        if (!executedRef.current && previous?.isConnected) {
+          previous.focus({ preventScroll: true });
+        }
+      };
     }
   }, [open]);
 
@@ -79,6 +89,7 @@ export function CommandPalette({ open, onClose }: Props) {
   if (!open) return null;
 
   const runCommand = (cmd: Command) => {
+    executedRef.current = true;
     onClose();
     cmd.run({ navigate });
   };

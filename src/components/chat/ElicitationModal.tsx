@@ -1,4 +1,4 @@
-import { memo, useMemo, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../ui/button";
 import { ipcErrorMessage, openExternalUrl } from "../../lib/ipc";
 import { useT } from "../../lib/i18n";
@@ -138,6 +138,51 @@ export function ElicitationModal({
     initialValues(fields ?? []),
   );
   const [urlError, setUrlError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const cancelRef = useRef(onSubmit);
+  cancelRef.current = onSubmit;
+
+  // Focus stays inside the request until it is answered: Tab cycles, Escape
+  // cancels, and closing hands focus back where it came from (P3-3 / D03).
+  // The inline dock is not a modal: the user may be mid-sentence in the
+  // composer, so it never takes focus, traps Tab or swallows Escape.
+  useEffect(() => {
+    if (inline) return;
+    const node = dialogRef.current;
+    if (!node) return;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusable = () =>
+      [
+        ...node.querySelectorAll<HTMLElement>(
+          'button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])',
+        ),
+      ].filter((el) => !el.hasAttribute("disabled") && el.tabIndex >= 0);
+    focusable()[0]?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        cancelRef.current("cancel");
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const list = focusable();
+      if (list.length === 0) return;
+      const first = list[0]!;
+      const last = list[list.length - 1]!;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    node.addEventListener("keydown", onKey);
+    return () => {
+      node.removeEventListener("keydown", onKey);
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [inline]);
 
   const url = typeof detail.url === "string" && detail.url !== "" ? detail.url : null;
   const isForm = fields !== null;
@@ -181,7 +226,8 @@ export function ElicitationModal({
 
   const card = (
     <div
-      role="dialog"
+      ref={dialogRef}
+      role={inline ? "region" : "dialog"}
       aria-modal={inline ? undefined : true}
       aria-label={message}
       className={
