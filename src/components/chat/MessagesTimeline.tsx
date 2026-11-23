@@ -840,6 +840,7 @@ function TimelineRows({
           <ActionGroupRow
             entries={actions}
             streaming={streaming === true && segment.runId === activeRunId}
+            threadId={threadId}
           />
         </div>,
       );
@@ -963,7 +964,15 @@ const MAX_DETAIL_CHARS = 12_000;
 const clipDetail = (text: string): string =>
   text.length > MAX_DETAIL_CHARS ? `${text.slice(0, MAX_DETAIL_CHARS)}\n…` : text;
 
-function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; streaming?: boolean }) {
+function ActionGroupRow({
+  entries,
+  streaming,
+  threadId,
+}: {
+  entries: TimelineEntry[];
+  streaming?: boolean;
+  threadId: string;
+}) {
   const t = useT();
   const items = entries.map((entry) => entry.item);
   const last = items[items.length - 1];
@@ -1033,16 +1042,18 @@ function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; stre
       </button>
       {open && (
         <div className="space-y-2 py-1 pl-5">
-          {quiet ? quietActionRows(entries) : entries.map(actionDetailRow)}
+          {quiet
+            ? quietActionRows(entries, threadId)
+            : entries.map((entry) => actionDetailRow(entry, threadId))}
         </div>
       )}
     </div>
   );
 }
 
-function actionDetailRow(entry: TimelineEntry): ReactNode {
+function actionDetailRow(entry: TimelineEntry, threadId: string): ReactNode {
   return entry.item.type === "tool" ? (
-    <ActionDetail key={entry.key} item={entry.item} />
+    <ActionDetail key={entry.key} item={entry.item} threadId={threadId} />
   ) : entry.item.type === "thought" ? (
     <ThoughtDetail key={entry.key} item={entry.item} />
   ) : entry.item.type === "trace" ? (
@@ -1054,25 +1065,26 @@ function actionDetailRow(entry: TimelineEntry): ReactNode {
  * Quiet transcript: consecutive reads/searches collapse into one compact
  * sub-row; edits, commands, thoughts and traces stay directly visible.
  */
-function quietActionRows(entries: TimelineEntry[]): ReactNode[] {
+function quietActionRows(entries: TimelineEntry[], threadId: string): ReactNode[] {
   const rows: ReactNode[] = [];
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     if (!isExploreTool(entry.item)) {
-      rows.push(actionDetailRow(entry));
+      rows.push(actionDetailRow(entry, threadId));
       continue;
     }
     let end = index + 1;
     while (end < entries.length && isExploreTool(entries[end].item)) end += 1;
     const group = entries.slice(index, end);
-    if (group.length > 1) rows.push(<QuietExploreGroup key={group[0].key} entries={group} />);
-    else rows.push(actionDetailRow(entry));
+    if (group.length > 1)
+      rows.push(<QuietExploreGroup key={group[0].key} entries={group} threadId={threadId} />);
+    else rows.push(actionDetailRow(entry, threadId));
     index = end - 1;
   }
   return rows;
 }
 
-function QuietExploreGroup({ entries }: { entries: TimelineEntry[] }) {
+function QuietExploreGroup({ entries, threadId }: { entries: TimelineEntry[]; threadId: string }) {
   const [open, setOpen] = useState(false);
   let reads = 0;
   for (const entry of entries) {
@@ -1096,7 +1108,11 @@ function QuietExploreGroup({ entries }: { entries: TimelineEntry[] }) {
         />
         <span className="min-w-0 flex-1 truncate">{parts.join(" · ")}</span>
       </button>
-      {open && <div className="space-y-2 py-1 pl-5">{entries.map(actionDetailRow)}</div>}
+      {open && (
+        <div className="space-y-2 py-1 pl-5">
+          {entries.map((entry) => actionDetailRow(entry, threadId))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1143,7 +1159,13 @@ function ThoughtDetail({ item }: { item: ThoughtChatItem }) {
 
 const DIFF_KINDS = new Set(["edit", "write", "move", "delete"]);
 
-const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }) {
+const ActionDetail = memo(function ActionDetail({
+  item,
+  threadId,
+}: {
+  item: ToolChatItem;
+  threadId: string;
+}) {
   const t = useT();
   const [raw, setRaw] = useState(false);
   const kind = normalizeToolKind(item);
@@ -1253,7 +1275,7 @@ const ActionDetail = memo(function ActionDetail({ item }: { item: ToolChatItem }
           ) : null}
           {image && (
             <div className="mt-1">
-              <ToolImage candidate={image} />
+              <ToolImage candidate={image} threadId={threadId} />
             </div>
           )}
           {hasRaw && (
@@ -1652,17 +1674,20 @@ function findImageCandidate(value: unknown, depth = 0): ImageCandidate | null {
   return null;
 }
 
-function ToolImage({ candidate }: { candidate: ImageCandidate }) {
+function ToolImage({ candidate, threadId }: { candidate: ImageCandidate; threadId: string }) {
   const t = useT();
   const tooLarge = (value: string) => value.length > 2_500_000;
-  const [src, setSrc] = useState<string | null>(
-    candidate.dataUrl && !tooLarge(candidate.dataUrl) ? candidate.dataUrl : null,
-  );
+  const inline = candidate.dataUrl && !tooLarge(candidate.dataUrl) ? candidate.dataUrl : null;
+  const [src, setSrc] = useState<string | null>(inline);
   const [failed, setFailed] = useState(false);
+  // The thread id scopes the workspace root the backend may read from, so a
+  // path or thread change must drop the previous image and load again.
   useEffect(() => {
-    if (src || !candidate.path) return;
+    setSrc(inline);
+    setFailed(false);
+    if (inline || !candidate.path) return;
     let cancelled = false;
-    readImageDataUrl(candidate.path, useThreadsStore.getState().activeThreadId ?? "")
+    readImageDataUrl(candidate.path, threadId)
       .then((url) => {
         if (!cancelled) {
           if (tooLarge(url)) setFailed(true);
@@ -1675,7 +1700,8 @@ function ToolImage({ candidate }: { candidate: ImageCandidate }) {
     return () => {
       cancelled = true;
     };
-  }, [candidate.path, src]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- inline is derived from the two deps
+  }, [candidate.path, candidate.dataUrl, threadId]);
   if (candidate.dataUrl && tooLarge(candidate.dataUrl)) {
     return <span className="text-xs text-text-tertiary">{t("chat.imageTooLarge")}</span>;
   }

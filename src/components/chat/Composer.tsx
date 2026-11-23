@@ -820,12 +820,13 @@ export function Composer({ threadId }: { threadId?: string }) {
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      if (awaitingDecision || busy) return;
       const files = Array.from(e.clipboardData.files);
       if (files.length === 0) return;
       e.preventDefault();
       void attachFiles(files);
     },
-    [attachFiles],
+    [attachFiles, awaitingDecision, busy],
   );
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -1241,6 +1242,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                       removeAttachmentToken(chip.token);
                       setChips((prev) => prev.filter((_, index) => index !== i));
                     }}
+                    disabled={awaitingDecision || busy}
                     aria-label={t("composer.removeImage")}
                     className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
                   >
@@ -1268,6 +1270,7 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <button
                     type="button"
                     aria-label={t("composer.removeAttachment", { name: file.name })}
+                    disabled={awaitingDecision || busy}
                     onClick={() => {
                       removeAttachmentToken(file.token);
                       setFileChips((prev) => prev.filter((_, index) => index !== i));
@@ -1340,6 +1343,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               <input
                 type="file"
                 multiple
+                disabled={awaitingDecision || busy}
                 className="hidden"
                 onChange={(e) => {
                   void attachFiles(e.target.files);

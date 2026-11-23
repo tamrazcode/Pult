@@ -967,6 +967,38 @@ describe("MessagesTimeline", () => {
     expect(screen.getByText("Thinking…")).toBeVisible();
   });
 
+  it("shows ThinkingRow below pendingUser on a finished run", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            { type: "user", text: "first prompt", images: [] },
+            { type: "assistant", text: "first answer", streaming: false },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+      },
+      pendingUserByThread: {
+        th: { type: "user", text: "follow up", images: [], ts: 2 },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    const pendingBubble = screen.getByText("follow up");
+    const thinking = screen.getByText("Thinking…");
+    expect(screen.getByText("first prompt")).toBeVisible();
+    expect(screen.getByText("first answer")).toBeVisible();
+    expect(pendingBubble).toBeVisible();
+    expect(thinking).toBeVisible();
+    expect(
+      pendingBubble.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByText(/Working/)).toBeNull();
+  });
+
   it("does not show ThinkingRow during a streaming run and replaces it with WorkingTimer", () => {
     useRunsStore.setState({
       runsByThread: {},
@@ -1447,7 +1479,7 @@ describe("MessagesTimeline", () => {
     expect(screen.queryByRole("dialog", { name: "Image preview" })).toBeNull();
   });
 
-  it("passes the active thread id to readImageDataUrl for a tool image path", async () => {
+  it("scopes readImageDataUrl to the rendered thread, not the active one", async () => {
     readImageDataUrl.mockReset().mockResolvedValue("data:image/png;base64,TOOLIMG");
     useThreadsStore.setState({ threads: [], activeThreadId: "th-img" });
     useRunsStore.setState({
@@ -1477,7 +1509,7 @@ describe("MessagesTimeline", () => {
     fireEvent.click(screen.getByRole("button", { name: "Generate image" }));
 
     await waitFor(() =>
-      expect(readImageDataUrl).toHaveBeenCalledWith("C:\\ws\\outputs\\cat.png", "th-img"),
+      expect(readImageDataUrl).toHaveBeenCalledWith("C:\\ws\\outputs\\cat.png", "th"),
     );
   });
 

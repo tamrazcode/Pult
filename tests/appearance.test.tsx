@@ -55,7 +55,9 @@ describe("AppearanceSettings", () => {
   it("renders a Glass opacity range input defaulting to 100 and persists changes", () => {
     render(<AppearanceSettings />);
 
-    const slider = screen.getByLabelText("Glass opacity") as HTMLInputElement;
+    const slider = screen.getByLabelText(
+      translate("settings.appearance.glass"),
+    ) as HTMLInputElement;
     expect(slider.type).toBe("range");
     expect(slider.value).toBe("100");
     expect(useSettingsStore.getState().glassOpacity).toBe(100);
