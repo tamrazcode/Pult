@@ -173,6 +173,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
   }, [threadId]);
   const hasView = view !== undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   // Windowing (§6.5): a 10k-event thread must scroll at 60 fps — render the
   // tail window only, expandable in chunks ("Earlier messages").
   const [windowSize, setWindowSize] = useState(TRANSCRIPT_WINDOW);
@@ -218,6 +219,37 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
     setShowScrollToEnd(false);
     isAtBottomRef.current = true;
   }, [threadId]);
+
+  // Opening a thread lands on the newest message. Runs in the layout pass,
+  // before paint: the first layout fires its own scroll event from 0, which
+  // cleared the at-bottom flag before a deferred pin could run.
+  useLayoutEffect(() => {
+    if (!threadId || !hasView) return;
+    const container = scrollRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    isAtBottomRef.current = true;
+    setShowScrollToEnd(false);
+    // Tables, code blocks and images settle a frame or two later; keep the
+    // opening position at the bottom through that window. A reader who scrolls
+    // away wins immediately — distance beats the flag that the scroll handler
+    // has already cleared against the taller content.
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distance > 160) return;
+      container.scrollTop = container.scrollHeight;
+      isAtBottomRef.current = true;
+      setShowScrollToEnd(false);
+    });
+    observer.observe(content);
+    const timer = window.setTimeout(() => observer.disconnect(), 2000);
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, [threadId, hasView]);
 
   // Follow the stream: pin only while the reader is at the bottom.
   useEffect(() => {
@@ -350,7 +382,10 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
         onScroll={trackActiveTick}
         className="flex min-h-0 flex-1 flex-col overflow-y-auto"
       >
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-7">
+        <div
+          ref={contentRef}
+          className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pt-6 pb-7"
+        >
           {hiddenCount > 0 && (
             <button
               onClick={() => setWindowSize((n) => n + TRANSCRIPT_WINDOW)}
