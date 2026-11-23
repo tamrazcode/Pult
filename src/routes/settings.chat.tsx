@@ -10,6 +10,8 @@ function ChatSettings() {
   const setSendKey = useSettingsStore((s) => s.setSendKey);
   const followStreaming = useSettingsStore((s) => s.followStreaming);
   const setFollowStreaming = useSettingsStore((s) => s.setFollowStreaming);
+  const transcriptVerbosity = useSettingsStore((s) => s.transcriptVerbosity);
+  const setTranscriptVerbosity = useSettingsStore((s) => s.setTranscriptVerbosity);
   const showTimestamps = useSettingsStore((s) => s.showTimestamps);
   const setShowTimestamps = useSettingsStore((s) => s.setShowTimestamps);
   const notificationsEnabled = useSettingsStore((s) => s.notificationsEnabled);
@@ -49,6 +51,38 @@ function ChatSettings() {
         ))}
       </div>
       <p className="mt-1 text-xs text-text-tertiary">{t("settings.chat.sendWithHint")}</p>
+
+      <h3 className="mt-6 text-xs font-semibold tracking-wider text-text-tertiary uppercase">
+        {t("settings.chat.verbosity")}
+      </h3>
+      <div
+        role="radiogroup"
+        aria-label={t("settings.chat.verbosity")}
+        className="mt-2 flex gap-1.5"
+      >
+        {(
+          [
+            ["full", t("settings.chat.verbosityFull")],
+            ["quiet", t("settings.chat.verbosityQuiet")],
+          ] as const
+        ).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            role="radio"
+            aria-checked={transcriptVerbosity === value}
+            onClick={() => setTranscriptVerbosity(value)}
+            className={`rounded-(--radius-sm) border px-3 py-1 text-xs transition ${
+              transcriptVerbosity === value
+                ? "border-accent/50 bg-accent/10 text-text-primary"
+                : "border-border-subtle bg-surface text-text-tertiary hover:bg-hover"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <p className="mt-1 text-xs text-text-tertiary">{t("settings.chat.verbosityHint")}</p>
 
       <div className="mt-6 divide-y divide-border-subtle border-y border-border-subtle">
         <div className="flex items-center gap-4 py-3">

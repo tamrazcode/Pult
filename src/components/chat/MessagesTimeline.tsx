@@ -580,6 +580,13 @@ function isActionItem(item: ChatItem): boolean {
   return item.type === "tool" || item.type === "thought" || item.type === "trace";
 }
 
+/** Reads and searches are exploration; quiet mode folds them away. */
+function isExploreTool(item: ChatItem): boolean {
+  if (item.type !== "tool") return false;
+  const kind = normalizeToolKind(item);
+  return kind === "read" || kind === "search";
+}
+
 function summarizeActionGroup(items: ChatItem[]): string {
   let files = 0;
   let commands = 0;
@@ -946,15 +953,20 @@ function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; stre
   const spinning = active;
   // A manual open survives individual completions and folds only with the run.
   const runActive = Boolean(streaming) || active;
+  const verbosity = useSettingsStore((s) => s.transcriptVerbosity);
+  const quiet = verbosity === "quiet";
   const [open, setOpen] = useState(false);
   useEffect(() => {
     if (!runActive) setOpen(false);
   }, [runActive]);
+  const allExplore = items.length > 0 && items.every(isExploreTool);
   let label: string;
   if (activeItem?.type === "thought") {
     label = thoughtPreview(activeItem.text) ?? t("chat.thinking");
   } else if (activeItem?.type === "tool") {
     label = deriveToolTitle(activeItem, "present");
+  } else if (quiet && !runActive && allExplore) {
+    label = plural("chat.quietSummary", items.length);
   } else if (items.length === 1 && last.type === "thought") {
     label = thoughtPreview(last.text) ?? summarizeActionGroup(items);
   } else if (items.length === 1 && last.type === "trace") {
@@ -994,17 +1006,70 @@ function ActionGroupRow({ entries, streaming }: { entries: TimelineEntry[]; stre
       </button>
       {open && (
         <div className="space-y-2 py-1 pl-5">
-          {entries.map((entry) =>
-            entry.item.type === "tool" ? (
-              <ActionDetail key={entry.key} item={entry.item} />
-            ) : entry.item.type === "thought" ? (
-              <ThoughtDetail key={entry.key} item={entry.item} />
-            ) : entry.item.type === "trace" ? (
-              <TraceRow key={entry.key} optionId={entry.item.optionId} />
-            ) : null,
-          )}
+          {quiet ? quietActionRows(entries) : entries.map(actionDetailRow)}
         </div>
       )}
+    </div>
+  );
+}
+
+function actionDetailRow(entry: TimelineEntry): ReactNode {
+  return entry.item.type === "tool" ? (
+    <ActionDetail key={entry.key} item={entry.item} />
+  ) : entry.item.type === "thought" ? (
+    <ThoughtDetail key={entry.key} item={entry.item} />
+  ) : entry.item.type === "trace" ? (
+    <TraceRow key={entry.key} optionId={entry.item.optionId} />
+  ) : null;
+}
+
+/**
+ * Quiet transcript: consecutive reads/searches collapse into one compact
+ * sub-row; edits, commands, thoughts and traces stay directly visible.
+ */
+function quietActionRows(entries: TimelineEntry[]): ReactNode[] {
+  const rows: ReactNode[] = [];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    if (!isExploreTool(entry.item)) {
+      rows.push(actionDetailRow(entry));
+      continue;
+    }
+    let end = index + 1;
+    while (end < entries.length && isExploreTool(entries[end].item)) end += 1;
+    const group = entries.slice(index, end);
+    if (group.length > 1) rows.push(<QuietExploreGroup key={group[0].key} entries={group} />);
+    else rows.push(actionDetailRow(entry));
+    index = end - 1;
+  }
+  return rows;
+}
+
+function QuietExploreGroup({ entries }: { entries: TimelineEntry[] }) {
+  const [open, setOpen] = useState(false);
+  let reads = 0;
+  for (const entry of entries) {
+    if (entry.item.type === "tool" && normalizeToolKind(entry.item) === "read") reads += 1;
+  }
+  const searches = entries.length - reads;
+  const parts: string[] = [];
+  if (reads > 0) parts.push(plural("chat.quietSummary.read", reads));
+  if (searches > 0) parts.push(plural("chat.quietSummary.search", searches));
+  return (
+    <div>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex min-h-6 w-full items-center gap-1.5 text-left text-xs text-text-tertiary"
+      >
+        <ChevronRight
+          size={12}
+          className={`shrink-0 text-text-tertiary transition-transform ${open ? "rotate-90" : ""}`}
+        />
+        <span className="min-w-0 flex-1 truncate">{parts.join(" · ")}</span>
+      </button>
+      {open && <div className="space-y-2 py-1 pl-5">{entries.map(actionDetailRow)}</div>}
     </div>
   );
 }
