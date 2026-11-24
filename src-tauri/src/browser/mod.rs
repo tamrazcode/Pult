@@ -329,8 +329,11 @@ fn resolve_local(
         .and_then(|thread| runtime.workspace_root_for(&thread).ok())
         .and_then(|root| root.canonicalize().ok());
     let root = match workspace {
+        // Never widen the served area to the file's parent: a path outside the
+        // project must be opened explicitly, not silently expose its directory.
         Some(workspace) if candidate.starts_with(&workspace) => workspace,
-        _ => candidate
+        Some(_) => return Err("file is outside the project workspace".to_string()),
+        None => candidate
             .parent()
             .ok_or_else(|| "file has no parent".to_string())?
             .to_path_buf(),
