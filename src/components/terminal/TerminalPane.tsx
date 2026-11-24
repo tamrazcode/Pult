@@ -19,7 +19,13 @@ function toBase64Utf8(text: string): string {
  * session-start cursor-position request is answered HERE through the same
  * write path — xterm knows the true cursor position.
  */
-export function TerminalPane({ terminalId }: { terminalId: string }) {
+export function TerminalPane({
+  threadId,
+  terminalId,
+}: {
+  threadId: string;
+  terminalId: string;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -66,7 +72,7 @@ export function TerminalPane({ terminalId }: { terminalId: string }) {
       .subscribeData(terminalId, (data) => term.write(data));
 
     const sendResize = () => {
-      void terminalPtyResize(terminalId, term.rows, term.cols).catch(() => {});
+      void terminalPtyResize(threadId, terminalId, term.rows, term.cols).catch(() => {});
     };
     // Initial size + follow container resizes (panel width, maximization).
     sendResize();
@@ -77,7 +83,7 @@ export function TerminalPane({ terminalId }: { terminalId: string }) {
     const resizeSub = term.onResize(sendResize);
 
     term.onData((data) => {
-      void terminalPtyWrite(terminalId, toBase64Utf8(data)).catch(() => {});
+      void terminalPtyWrite(threadId, terminalId, toBase64Utf8(data)).catch(() => {});
     });
 
     // Copy/paste: Ctrl+Shift+C copies, Ctrl+C copies when a selection

@@ -404,3 +404,17 @@ fn npm_package_specs_are_allowlisted() {
         assert!(!super::valid_npm_package(bad), "{bad} must be rejected");
     }
 }
+
+#[test]
+fn generic_settings_reject_internal_keys() {
+    assert!(super::require_public_setting("theme").is_ok());
+    assert!(super::require_public_setting("unread_threads").is_ok());
+    for key in [
+        "remembered_permissions",
+        "thread_mode:t1",
+        "thread_config:t1",
+        "plugins_state",
+    ] {
+        assert!(super::require_public_setting(key).is_err(), "{key}");
+    }
+}

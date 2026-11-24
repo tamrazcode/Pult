@@ -273,6 +273,21 @@ impl PtyRegistry {
     }
 
     /// Writes raw user input into the PTY (xterm.js `onData`).
+    /// The UI may only mutate a PTY through its owning thread; a crossed id
+    /// from a bug (or another surface) must not reach a foreign terminal.
+    pub fn ensure_owner(&self, terminal_id: &str, thread_id: &str) -> Result<(), PultError> {
+        let state = self.get(terminal_id)?;
+        let guard = state.lock().expect("pty lock poisoned");
+        if guard.thread_id == thread_id {
+            Ok(())
+        } else {
+            Err(PultError::with_code(
+                "terminal.foreign_owner",
+                "terminal belongs to another thread",
+            ))
+        }
+    }
+
     pub fn write(&self, terminal_id: &str, data: &[u8]) -> Result<(), PultError> {
         let state = self.get(terminal_id)?;
         let mut guard = state.lock().expect("pty lock poisoned");
@@ -619,6 +634,11 @@ mod tests {
         let live = registry
             .create(&params(&std::env::temp_dir(), vec!["cmd".to_string()]))
             .unwrap();
+        registry.ensure_owner(&live.terminal_id, &live.thread_id).unwrap();
+        let err = registry
+            .ensure_owner(&live.terminal_id, "foreign-thread")
+            .expect_err("another thread must not drive this PTY");
+        assert_eq!(err.code(), "terminal.foreign_owner");
         registry.resize(&live.terminal_id, 30, 120).unwrap();
         registry.kill(&live.terminal_id).unwrap();
     }

@@ -934,22 +934,63 @@ pub fn diagnostics_kill_process(pid: u32) -> Result<(), PultError> {
     crate::processes::kill_process(pid)
 }
 
+/// Keys the UI may touch through the generic settings bridge. Internal state
+/// (`remembered_permissions`, `thread_mode:*`, `thread_config:*`,
+/// `plugins_state`) is reachable only through its own typed commands.
+const PUBLIC_SETTING_KEYS: &[&str] = &[
+    "onboarding_completed",
+    "theme",
+    "accent_hue",
+    "permission_mode",
+    "keybindings",
+    "favorite_models",
+    "disabled_models",
+    "model_order",
+    "confirm_delete_thread",
+    "send_key",
+    "show_timestamps",
+    "notifications_enabled",
+    "notification_sound",
+    "follow_streaming",
+    "diff_view_mode",
+    "preferred_editor",
+    "glass_opacity",
+    "time_format",
+    "transcript_verbosity",
+    "language",
+    "profile",
+    "unread_threads",
+    "layout",
+];
+
+fn require_public_setting(key: &str) -> Result<(), PultError> {
+    if PUBLIC_SETTING_KEYS.contains(&key) {
+        Ok(())
+    } else {
+        Err(PultError::internal(format!(
+            "setting {key:?} is not part of the public settings API"
+        )))
+    }
+}
+
 /// Reads one JSON setting (§4.5: theme, keybindings, notifications, …).
 #[tauri::command]
 pub fn settings_get(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     key: String,
 ) -> Result<Option<serde_json::Value>, PultError> {
+    require_public_setting(&key)?;
     runtime.store().get_setting(&key)
 }
 
-/// Writes one JSON setting of any shape.
+/// Writes one public JSON setting.
 #[tauri::command]
 pub fn settings_set(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     key: String,
     value: serde_json::Value,
 ) -> Result<(), PultError> {
+    require_public_setting(&key)?;
     runtime.store().set_setting(&key, &value)
 }
 
@@ -1197,11 +1238,13 @@ pub async fn terminal_pty_create(
 #[tauri::command]
 pub async fn terminal_pty_write(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
     terminal_id: String,
     data: String,
 ) -> Result<(), PultError> {
     // Input arrives base64-encoded so arbitrary bytes (arrow keys, pastes)
     // survive the JSON bridge.
+    runtime.ptys().ensure_owner(&terminal_id, &thread_id)?;
     let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data.as_bytes())
         .map_err(|e| PultError::internal(format!("terminal input: {e}")))?;
     runtime.ptys().write(&terminal_id, &bytes)
@@ -1210,18 +1253,22 @@ pub async fn terminal_pty_write(
 #[tauri::command]
 pub async fn terminal_pty_resize(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
     terminal_id: String,
     rows: u16,
     cols: u16,
 ) -> Result<(), PultError> {
+    runtime.ptys().ensure_owner(&terminal_id, &thread_id)?;
     runtime.ptys().resize(&terminal_id, rows, cols)
 }
 
 #[tauri::command]
 pub async fn terminal_pty_kill(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
+    thread_id: String,
     terminal_id: String,
 ) -> Result<(), PultError> {
+    runtime.ptys().ensure_owner(&terminal_id, &thread_id)?;
     runtime.ptys().kill(&terminal_id)
 }
 

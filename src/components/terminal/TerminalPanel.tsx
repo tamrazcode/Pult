@@ -106,7 +106,7 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
   const kill = async (id: string) => {
     if (!threadId) return;
     try {
-      await terminalPtyKill(id);
+      await terminalPtyKill(threadId, id);
       setError(null);
       // Only forget the tab once the backend confirmed the kill: otherwise it
       // looks stopped while the process is still alive.
@@ -205,8 +205,8 @@ export function TerminalPanel({ threadId }: { threadId: string | null }) {
               </div>
             ))}
           </div>
-          {active && active.exit === null ? (
-            <TerminalPane terminalId={active.terminalId} />
+          {active && active.exit === null && threadId ? (
+            <TerminalPane threadId={threadId} terminalId={active.terminalId} />
           ) : (
             <div className="flex flex-1 items-center justify-center px-8 text-center text-xs text-text-tertiary">
               {active

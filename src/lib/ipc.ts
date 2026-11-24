@@ -711,16 +711,25 @@ export function terminalPtyCreate(
 }
 
 /** Writes raw user input (base64 of the UTF-8 bytes) into the PTY. */
-export function terminalPtyWrite(terminalId: string, dataB64: string): Promise<void> {
-  return invokeRequired<void>("terminal_pty_write", { terminalId, data: dataB64 });
+export function terminalPtyWrite(
+  threadId: string,
+  terminalId: string,
+  dataB64: string,
+): Promise<void> {
+  return invokeRequired<void>("terminal_pty_write", { threadId, terminalId, data: dataB64 });
 }
 
-export function terminalPtyResize(terminalId: string, rows: number, cols: number): Promise<void> {
-  return invokeRequired<void>("terminal_pty_resize", { terminalId, rows, cols });
+export function terminalPtyResize(
+  threadId: string,
+  terminalId: string,
+  rows: number,
+  cols: number,
+): Promise<void> {
+  return invokeRequired<void>("terminal_pty_resize", { threadId, terminalId, rows, cols });
 }
 
-export function terminalPtyKill(terminalId: string): Promise<void> {
-  return invokeRequired<void>("terminal_pty_kill", { terminalId });
+export function terminalPtyKill(threadId: string, terminalId: string): Promise<void> {
+  return invokeRequired<void>("terminal_pty_kill", { threadId, terminalId });
 }
 
 export function terminalPtyList(threadId: string): Promise<PtyInfo[]> {
