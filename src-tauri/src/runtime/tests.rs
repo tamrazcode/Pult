@@ -262,6 +262,15 @@ async fn wait_for(timeout: Duration, mut f: impl FnMut() -> bool) {
     }
 }
 
+/// Finalize holds the thread through the checkpoint capture; the next turn
+/// waits for that instead of racing the git snapshot.
+async fn wait_thread_idle(runtime: &AgentRuntime, thread_id: &str) {
+    wait_for(Duration::from_secs(10), || {
+        runtime.active_run_for(thread_id).is_none()
+    })
+    .await;
+}
+
 fn kinds_of(runtime: &AgentRuntime, run_id: &str) -> Vec<EventKind> {
     runtime
         .store()
@@ -1613,6 +1622,7 @@ async fn allow_always_is_remembered_for_next_turn() {
     // Turn 2 in workspace A (AutoEdit): the remembered decision auto-resolves
     // with mock-allow-always (rather than AutoEdit's default allow_once) without surfacing.
     eprintln!("[remember] t+{:?} turn1 settled", started.elapsed());
+    wait_thread_idle(&runtime, &thread_a.id).await;
     runtime
         .set_permission_mode(&thread_a.id, PermissionMode::AutoEdit)
         .expect("mode A auto_edit");
@@ -2450,6 +2460,7 @@ async fn sequential_dispatches_on_same_thread_reuse_pooled_process() {
             .unwrap_or(false)
     })
     .await;
+    wait_thread_idle(&runtime, &thread.id).await;
 
     let second = runtime
         .send(
@@ -2843,6 +2854,7 @@ async fn pooled_turn_reapplies_dependent_config_after_model_change() {
     })
     .await;
     assert_eq!(runtime.pool.stats().idle, 1);
+    wait_thread_idle(&runtime, &thread.id).await;
 
     runtime
         .set_config_option(
@@ -4470,6 +4482,7 @@ async fn provider_switch_emits_context_reset_notice() {
             .unwrap_or(false)
     })
     .await;
+    wait_thread_idle(&runtime, &thread.id).await;
 
     let run2 = {
         let _env = env_lock();

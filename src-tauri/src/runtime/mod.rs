@@ -2618,17 +2618,21 @@ impl AgentRuntime {
     /// Writes a hidden `refs/pult/checkpoints/<run_id>` ref so any run's
     /// resulting tree stays recoverable (В§4.4; the rollback UI stays out of
     /// scope, the data does not). Best-effort: skips non-repo workspaces.
-    fn spawn_checkpoint(self: &Arc<Self>, thread: &ThreadRecord, run_id: &str) {
+    /// Awaited by finalize so the next turn cannot start before the capture.
+    async fn checkpoint_turn(&self, thread: &ThreadRecord, run_id: &str) {
         let Some(workspace) = thread.workspace.clone() else {
             return;
         };
-        let run_id = run_id.to_string();
-        tokio::spawn(async move {
-            if let Err(err) = crate::git::checkpoint(Path::new(&workspace), &run_id).await {
-                tracing::info!(target: "pult::runtime", run_id = %run_id,
-                    error = %err, "checkpoint skipped");
-            }
-        });
+        // A wedged git must not pin the thread (and its queue) forever.
+        let capture =
+            crate::git::checkpoint(Path::new(&workspace), run_id);
+        match tokio::time::timeout(std::time::Duration::from_secs(60), capture).await {
+            Ok(Ok(_)) => {}
+            Ok(Err(err)) => tracing::info!(target: "pult::runtime", run_id = %run_id,
+                error = %err, "checkpoint skipped"),
+            Err(_) => tracing::warn!(target: "pult::runtime", run_id = %run_id,
+                "checkpoint timed out; the next turn is released"),
+        }
     }
 }
 
@@ -2825,7 +2829,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     runtime.ready().await;
     // Stop can arrive between `run:started` and this point; never spawn then.
     if runtime.cancel_requested(&run_id) {
-        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None)?;
+        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None).await?;
         return Ok(());
     }
     let turn_started = std::time::Instant::now();
@@ -2957,7 +2961,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                 Err(err) => {
                     let msg = err.to_string();
                     emit_process("crashed", Some(msg.clone()));
-                    runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg))?;
+                    runtime.finalize_run(&run_id, &thread_id, "failed", "failed", Some(msg)).await?;
                     return Ok(());
                 }
             };
@@ -3037,7 +3041,8 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                     "failed",
                     "failed",
                     Some(err.to_string()),
-                )?;
+                )
+                .await?;
                 return Ok(());
             }
         };
@@ -3091,7 +3096,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         };
         terminals.release_owner(&owner_token);
         emit_process("exited", None);
-        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None)?;
+        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None).await?;
         return Ok(());
     }
 
@@ -3617,14 +3622,14 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         // providers_instances_list round-trip.
         emit_process("exited", None);
     }
-    runtime.finalize_run(&run_id, &thread_id, status, &final_reason, failure)?;
+    runtime.finalize_run(&run_id, &thread_id, status, &final_reason, failure).await?;
     timing.total_ms = turn_started.elapsed().as_millis() as u64;
     runtime.sink.emit_run_timing(&timing);
     Ok(())
 }
 
 impl AgentRuntime {
-    fn finalize_run(
+    async fn finalize_run(
         self: &Arc<Self>,
         run_id: &str,
         thread_id: &str,
@@ -3664,6 +3669,12 @@ impl AgentRuntime {
         // run is over either way; a refused delete leaves a usable thread, so
         // the UI must see the settled status before the delete attempt.
         let _ = self.store.set_thread_status(thread_id, "settled");
+        // Hold the thread through the capture: a manual or queued next turn
+        // must not race the checkpoint's git snapshot. The provider is already
+        // done (RunFinished was emitted), so this only delays the next start.
+        if let Ok(thread) = self.store.get_thread(thread_id) {
+            self.checkpoint_turn(&thread, run_id).await;
+        }
         let deleting = {
             let mut guard = self.inner.lock().expect("runtime lock poisoned");
             guard.runs.remove(run_id);
@@ -3685,9 +3696,6 @@ impl AgentRuntime {
         if deleting {
             // The thread is going away: never start its next queued message.
             return Ok(());
-        }
-        if let Ok(thread) = self.store.get_thread(thread_id) {
-            self.spawn_checkpoint(&thread, run_id);
         }
         // Queue auto-dispatch: the oldest queued message starts its own run
         // now that the thread is free (В§6.1 queue semantics).
