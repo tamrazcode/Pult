@@ -301,6 +301,59 @@ impl Store {
             }
         })
     }
+
+    /// Commits a steered message the provider already accepted: the user
+    /// event and the queue-row delete land in ONE transaction, with the seq
+    /// assigned inside it. A failure must not put the row back in the queue
+    /// (that would deliver the same message twice).
+    pub fn commit_steered_queue_message(
+        &self,
+        queue_id: &str,
+        run_id: &str,
+        kind: crate::events::EventKind,
+    ) -> Result<Event, PultError> {
+        self.with_conn(|conn| {
+            conn.execute("BEGIN IMMEDIATE", [])
+                .map_err(|e| sql("commit_steered_queue_message begin", e))?;
+            let write = (|| -> Result<Event, PultError> {
+                let seq: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(MAX(seq) + 1, 0) FROM events WHERE run_id = ?1",
+                        params![run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| sql("commit_steered_queue_message seq", e))?;
+                let event = Event::new(run_id, seq as u64, kind.clone());
+                let (tag, payload) = encode_event(&event)?;
+                conn.execute(
+                    "INSERT INTO events (id, run_id, seq, ts, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        event.id,
+                        event.run_id,
+                        event.seq as i64,
+                        event.ts,
+                        tag,
+                        payload
+                    ],
+                )
+                .map_err(|e| sql("commit_steered_queue_message insert event", e))?;
+                conn.execute("DELETE FROM queue_items WHERE id = ?1", params![queue_id])
+                    .map_err(|e| sql("commit_steered_queue_message delete queue row", e))?;
+                Ok(event)
+            })();
+            match write {
+                Ok(event) => conn
+                    .execute("COMMIT", [])
+                    .map(|_| event)
+                    .map_err(|e| sql("commit_steered_queue_message commit", e)),
+                Err(err) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    Err(err)
+                }
+            }
+        })
+    }
 }
 
 /// One queue row in SELECT order (see the column list in the queries above).

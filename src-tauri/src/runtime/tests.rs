@@ -3557,6 +3557,56 @@ async fn steer_with_live_steering_injects_without_cancelling_active_run() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
+/// A steer the provider accepted but the transcript could not record must not
+/// go back to the queue (that would send it twice); the user sees the
+/// indeterminate outcome instead.
+#[tokio::test]
+async fn steer_accepted_but_not_recorded_is_not_requeued() {
+    let (runtime, sink, sandbox, run1, steered_id) = steer_fixture(
+        "indeterminate",
+        &[("MOCK_DELAY_MS", "200"), ("MOCK_STEERING_SUPPORTED", "1")],
+    );
+    let thread_id = run1.thread_id.clone();
+    let pump = spawn_permission_pump(&runtime, &sink);
+    wait_run_streaming(&runtime, &run1.id).await;
+
+    let run_id = run1.id.clone();
+    runtime
+        .store()
+        .with_conn(|conn| {
+            conn.execute_batch(&format!(
+                "CREATE TRIGGER fail_steer_record BEFORE INSERT ON events
+                 WHEN NEW.kind = 'user_message' AND NEW.run_id = '{run_id}'
+                 BEGIN SELECT RAISE(ABORT, 'forced'); END;"
+            ))
+            .map_err(|e| crate::store::sql("create trigger", e))?;
+            Ok(())
+        })
+        .unwrap();
+
+    let err = runtime
+        .steer(&thread_id, &steered_id)
+        .await
+        .expect_err("the failed record must surface");
+    match err {
+        crate::PultError::Internal { code, .. } => {
+            assert_eq!(code, "steer.indeterminate", "the outcome must be explicit")
+        }
+        other => panic!("expected steer.indeterminate, got {other:?}"),
+    }
+    assert!(
+        !runtime
+            .store()
+            .list_queue(&thread_id)
+            .unwrap()
+            .iter()
+            .any(|item| item.id == steered_id),
+        "an accepted steer must never be auto-sent again"
+    );
+    pump.abort();
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
 #[tokio::test]
 async fn steer_without_live_steering_prioritizes_queue_without_cancelling_active_run() {
     let (runtime, sink, sandbox, run1, steered_id) =

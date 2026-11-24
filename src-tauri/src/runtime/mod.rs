@@ -1602,23 +1602,35 @@ impl AgentRuntime {
             {
                 // The active turn owns the message now: show it once, on the
                 // run it joined (the adapter echo is dropped in apply_session_event).
-                let event = Event::new(
-                    run_id.clone(),
-                    self.store.next_seq(&run_id)?,
+                // Recording and consuming the queue row are one transaction:
+                // requeueing after the provider accepted would send it twice.
+                let event = match self.store.commit_steered_queue_message(
+                    &item.id,
+                    &run_id,
                     EventKind::UserMessage {
-                        text: item.text,
+                        text: item.text.clone(),
                         images: item.images.clone(),
                     },
-                );
-                if let Err(err) = self.store.append_event(&event) {
-                    // The agent has the message but the transcript could not
-                    // record it: keep it visible in the queue instead of losing it.
-                    let _ = self.store.release_queue_claim(&item.id);
-                    self.emit_queue_updated(thread_id);
-                    return Err(err);
-                }
+                ) {
+                    Ok(event) => event,
+                    Err(err) => {
+                        // The provider has the message; the transcript could
+                        // not record it. Keep the row out of the queue and
+                        // report the indeterminate outcome instead of retrying.
+                        let _ = self.store.remove_queue_item(&item.id);
+                        self.emit_queue_error(
+                            thread_id,
+                            &item.id,
+                            &format!("the agent accepted the steer but it was not saved: {err}"),
+                        );
+                        self.emit_queue_updated(thread_id);
+                        return Err(crate::PultError::with_code(
+                            "steer.indeterminate",
+                            "the agent accepted the message but it could not be recorded",
+                        ));
+                    }
+                };
                 self.emit_run_event(&run_id, &event);
-                self.store.remove_queue_item(&item.id)?;
                 self.emit_queue_updated(thread_id);
                 Ok(())
             }

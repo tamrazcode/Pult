@@ -1471,6 +1471,96 @@ fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row(
 
 /// The review's queue check: a failed thread-status write inside the same
 /// transaction must leave the message retryable and no run behind.
+/// The steer transaction: a provider-accepted message and the queue delete
+/// land together, and a failed insert keeps the row out of the queue either
+/// way (the runtime removes it to avoid a duplicate send).
+#[test]
+fn steered_message_and_queue_delete_commit_together() {
+    use crate::store::records::QueueItem;
+    use std::collections::BTreeMap;
+
+    let store = Store::open_in_memory().unwrap();
+    store.create_thread(&thread("t-1", 1_000)).unwrap();
+    store.create_run(&run("r-1", "t-1", 0)).unwrap();
+    store.create_run(&run("r-2", "t-1", 1)).unwrap();
+
+    let item = QueueItem {
+        id: "q-1".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "steer me".to_string(),
+        images: Vec::new(),
+        mode: None,
+        config_options: BTreeMap::new(),
+        created_at: 1_000,
+    };
+    store.enqueue_queue_item(&item).unwrap();
+    store.claim_queue_head("t-1", "claim-1").unwrap().unwrap();
+
+    let event = store
+        .commit_steered_queue_message(
+            "q-1",
+            "r-1",
+            EventKind::UserMessage {
+                text: "steer me".to_string(),
+                images: Vec::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(event.seq, 0, "the seq is assigned inside the transaction");
+    assert_eq!(store.load_events("r-1").unwrap(), vec![event]);
+    assert!(store.list_queue("t-1").unwrap().is_empty());
+
+    // Forced insert failure: the row is still claimed/removed by the runtime,
+    // never visible to a second automatic dispatch.
+    let item2 = QueueItem {
+        id: "q-2".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "indeterminate".to_string(),
+        images: Vec::new(),
+        mode: None,
+        config_options: BTreeMap::new(),
+        created_at: 2_000,
+    };
+    store.enqueue_queue_item(&item2).unwrap();
+    store.claim_queue_head("t-1", "claim-2").unwrap().unwrap();
+    store
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_steer_record BEFORE INSERT ON events
+                 WHEN NEW.kind = 'user_message' AND NEW.run_id = 'r-2'
+                 BEGIN SELECT RAISE(ABORT, 'forced'); END;",
+            )
+            .map_err(|e| sql("create trigger", e))?;
+            Ok(())
+        })
+        .unwrap();
+
+    assert!(store
+        .commit_steered_queue_message(
+            "q-2",
+            "r-2",
+            EventKind::UserMessage {
+                text: "indeterminate".to_string(),
+                images: Vec::new(),
+            },
+        )
+        .is_err());
+    assert!(store.load_events("r-2").unwrap().is_empty());
+    let raw_q2: i64 = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM queue_items WHERE id = 'q-2'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| sql("count q-2", e))
+        })
+        .unwrap();
+    assert_eq!(raw_q2, 1, "a failed commit must roll the delete back");
+}
+
 #[test]
 fn failed_status_update_rolls_back_the_queue_commit() {
     use crate::store::records::QueueItem;
