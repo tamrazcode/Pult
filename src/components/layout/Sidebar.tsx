@@ -88,6 +88,16 @@ function ThreadRow({
   onContextMenu: (event: React.MouseEvent) => void;
 }) {
   const t = useT();
+  // A parked approval or elicitation is not "working": the user must see
+  // which thread is waiting for a decision even from another thread.
+  const waiting = useRunsStore((s) => {
+    const runs = s.runsByThread[thread.id];
+    if (!runs || runs.length === 0) return false;
+    return runs.some((run) => {
+      if (s.viewsByRun[run.id]?.pendingApproval) return true;
+      return s.activeElicitation?.runId === run.id;
+    });
+  });
   const working = thread.status === "working" || thread.status === "waiting";
   const renameDone = useRef(false);
   useEffect(() => {
@@ -145,7 +155,16 @@ function ThreadRow({
             </span>
           ) : null}
           <FadeText text={thread.title || t("sidebar.untitled")} className="min-w-0" />
-          {working ? (
+          {waiting ? (
+            <span
+              data-waiting="true"
+              aria-label={t("sidebar.waitingForYou")}
+              title={t("sidebar.waitingForYou")}
+              className="ml-auto flex w-8 shrink-0 justify-end"
+            >
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-warning" />
+            </span>
+          ) : working ? (
             <span className="ml-auto flex w-8 shrink-0 justify-end">
               <ThinkingAscii />
             </span>
