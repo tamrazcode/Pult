@@ -888,4 +888,17 @@ describe("runs store", () => {
       { runId: "r2", path: "src/live.ts", diff: "@@ live 2", added: 5, removed: 1 },
     ]);
   });
+
+  it("keeps a second elicitation until the first is answered", () => {
+    const { setElicitation, clearElicitation } = useRunsStore.getState();
+    setElicitation({ runId: "r1", requestId: "q1", message: "one", detail: {} });
+    setElicitation({ runId: "r2", requestId: "q2", message: "two", detail: {} });
+
+    expect(useRunsStore.getState().activeElicitation?.requestId).toBe("q1");
+    expect(useRunsStore.getState().elicitationQueue.map((item) => item.requestId)).toEqual(["q2"]);
+
+    clearElicitation("q1");
+    expect(useRunsStore.getState().activeElicitation?.requestId).toBe("q2");
+    expect(useRunsStore.getState().elicitationQueue).toEqual([]);
+  });
 });

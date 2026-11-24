@@ -81,7 +81,7 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
                 // Keep the form and its values until the answer is accepted;
                 // a failed send must not throw the user's input away.
                 void runsRespondElicitation(runId, requestId, action, content)
-                  .then(() => useRunsStore.getState().clearElicitation())
+                  .then(() => useRunsStore.getState().clearElicitation(requestId))
                   .catch((err) => {
                     console.error("runs_respond_elicitation failed", err);
                     useUiStore.getState().setGlobalError({

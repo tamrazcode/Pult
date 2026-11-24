@@ -504,7 +504,8 @@ interface RunsState {
   /** Slash commands the agent advertised, per thread (composer menu). */
   commandsByThread: Record<string, CommandInfo[]>;
   setElicitation: (surface: ElicitationSurface | null) => void;
-  clearElicitation: () => void;
+  /** Answers the head (or one by id); the next queued request is promoted. */
+  clearElicitation: (requestId?: string) => void;
   /** Backend-owned message queue per thread (auto-dispatch on run end). */
   queueByThread: Record<string, QueueItem[]>;
   /** Runs with Stop pressed; the UI offers force-stop while true. */
@@ -518,6 +519,8 @@ interface RunsState {
   filesByThread: Record<string, FileChange[]>;
   /** Currently surfaced elicitation, or null (ElicitationModal). */
   activeElicitation: ElicitationSurface | null;
+  /** Later requests in arrival order; the head is promoted on answer. */
+  elicitationQueue: ElicitationSurface[];
   /** Mode picked per thread, applied when its next run starts ("" = /chat). */
   desiredModeByThread: Record<string, string>;
   /** Remembers the picker's choice before a run exists. */
@@ -562,6 +565,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   cancellingByRun: {},
   pendingUserByThread: {},
   activeElicitation: null,
+  elicitationQueue: [],
   desiredModeByThread: {},
   desiredConfigByThread: {},
 
@@ -598,8 +602,11 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       const cancellingByRun = Object.fromEntries(
         Object.entries(s.cancellingByRun).filter(([id]) => !runIds.has(id)),
       );
+      const elicitationQueue = s.elicitationQueue.filter((item) => !runIds.has(item.runId));
       const activeElicitation =
-        s.activeElicitation && runIds.has(s.activeElicitation.runId) ? null : s.activeElicitation;
+        s.activeElicitation && runIds.has(s.activeElicitation.runId)
+          ? (elicitationQueue.shift() ?? null)
+          : s.activeElicitation;
       return {
         runsByThread,
         viewsByRun,
@@ -612,6 +619,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         pendingUserByThread,
         cancellingByRun,
         activeElicitation,
+        elicitationQueue,
       };
     }),
 
@@ -903,8 +911,27 @@ export const useRunsStore = create<RunsState>((set, get) => ({
 
   setQueue: (threadId, items) =>
     set((s) => ({ queueByThread: { ...s.queueByThread, [threadId]: items } })),
-  setElicitation: (surface) => set({ activeElicitation: surface }),
-  clearElicitation: () => set({ activeElicitation: null }),
+  setElicitation: (surface) =>
+    set((s) => {
+      if (!surface) return { activeElicitation: null, elicitationQueue: [] };
+      if (s.activeElicitation?.requestId === surface.requestId) {
+        return { activeElicitation: surface };
+      }
+      if (s.elicitationQueue.some((item) => item.requestId === surface.requestId)) return {};
+      if (!s.activeElicitation) return { activeElicitation: surface };
+      // A second question must not hide the first: queue it until answered.
+      return { elicitationQueue: [...s.elicitationQueue, surface] };
+    }),
+  clearElicitation: (requestId) =>
+    set((s) => {
+      if (requestId && s.activeElicitation && s.activeElicitation.requestId !== requestId) {
+        return {
+          elicitationQueue: s.elicitationQueue.filter((item) => item.requestId !== requestId),
+        };
+      }
+      const [next, ...rest] = s.elicitationQueue;
+      return { activeElicitation: next ?? null, elicitationQueue: rest };
+    }),
   setDesiredMode: (threadId, modeId) =>
     set((s) => ({
       desiredModeByThread: { ...s.desiredModeByThread, [threadId]: modeId },

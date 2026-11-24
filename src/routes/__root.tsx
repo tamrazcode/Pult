@@ -485,10 +485,16 @@ function RootLayout() {
           request={activeElicitation}
           onSubmit={(action, content) => {
             const { runId, requestId } = activeElicitation;
-            useRunsStore.getState().clearElicitation();
-            runsRespondElicitation(runId, requestId, action, content).catch((err) =>
-              console.error("runs_respond_elicitation failed", err),
-            );
+            // Keep the modal (and its values) until the answer is accepted.
+            void runsRespondElicitation(runId, requestId, action, content)
+              .then(() => useRunsStore.getState().clearElicitation(requestId))
+              .catch((err) => {
+                console.error("runs_respond_elicitation failed", err);
+                useUiStore.getState().setGlobalError({
+                  kind: "protocol",
+                  message: err instanceof Error ? err.message : String(err),
+                });
+              });
           }}
         />
       )}
