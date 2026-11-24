@@ -501,13 +501,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
               retryText={retryItem?.text}
               onRetry={
                 threadId && retryItem
-                  ? () =>
-                      void retryLastMessage(
-                        threadId,
-                        runId,
-                        retryItem.text,
-                        retryItem.images,
-                      )
+                  ? () => void retryLastMessage(threadId, runId, retryItem.text, retryItem.images)
                   : undefined
               }
             />
