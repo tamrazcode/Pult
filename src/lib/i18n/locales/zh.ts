@@ -252,6 +252,7 @@ export const zh: Record<string, string> = {
   "composer.permission.auto.desc": "直接运行读取和非破坏性工具；删除和工作区外路径需要询问。",
   "composer.permission.fullAccess.desc":
     "从不询问。智能体仍以你的身份运行，拥有你的文件和网络访问权限。",
+  "composer.queue.failed": "队列中的消息无法启动：{{message}}",
   "composer.queue.title": "队列",
   "composer.queue.edit": "编辑",
   "composer.queue.remove": "移除",

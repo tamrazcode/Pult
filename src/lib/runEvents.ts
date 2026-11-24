@@ -3,6 +3,7 @@ import {
   onElicitationRequest,
   onPtyExit,
   onPtyOutput,
+  onQueueError,
   onQueueUpdate,
   onRunCancelling,
   onRunEvent,
@@ -132,6 +133,13 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
   const offQueue = await onQueueUpdate(({ threadId, items }) => {
     useRunsStore.getState().setQueue(threadId, items);
   });
+  const offQueueError = await onQueueError(({ message }) => {
+    // The row stays queued; the composer's Retry sends it again by id.
+    useUiStore.getState().setGlobalError({
+      kind: "protocol",
+      message: translate("composer.queue.failed", { message }),
+    });
+  });
   const offSubagentSpawned = await onSubagentSpawned((payload) => {
     useSubagentsStore.getState().applySpawned(payload);
     // The child thread exists only in the backend until it is opened; keep
@@ -168,6 +176,7 @@ export async function ensureRunEventSubscriptions(): Promise<void> {
     offStarted,
     offCancelling,
     offQueue,
+    offQueueError,
     offSubagentSpawned,
     offSubagentFinished,
     offSubagentUpdated,

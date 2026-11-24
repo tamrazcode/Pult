@@ -23,6 +23,7 @@ export const composer = {
     "Reads and non-destructive tools run; deletes and outside paths ask.",
   "composer.permission.fullAccess.desc":
     "Never asks. The agent still runs as you, with your file and network access.",
+  "composer.queue.failed": "The queued message could not start: {{message}}",
   "composer.queue.title": "Queued",
   "composer.queue.edit": "Edit",
   "composer.queue.remove": "Remove",

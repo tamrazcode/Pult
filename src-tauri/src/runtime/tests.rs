@@ -851,7 +851,7 @@ async fn hidden_wake_persists_no_user_bubble() {
 
 #[tokio::test]
 async fn queue_auto_dispatch_failure_keeps_the_message() {
-    let (runtime, _sink) = mock_runtime();
+    let (runtime, sink) = mock_runtime();
     let thread = thread_record("th-queue-fail");
     runtime
         .store()
@@ -874,6 +874,18 @@ async fn queue_auto_dispatch_failure_keeps_the_message() {
     let queue = runtime.store().list_queue(&thread.id).expect("list queue");
     assert_eq!(queue.len(), 1, "a failed dispatch must not eat the message");
     assert_eq!(queue[0].text, "keep me");
+    let events = sink.0.lock().expect("sink lock");
+    let error = events
+        .iter()
+        .find(|(event, _)| event == "queue:error")
+        .map(|(_, payload)| payload.clone())
+        .expect("the failure must reach the UI with a reason");
+    assert_eq!(error["threadId"], thread.id);
+    assert_eq!(error["queueId"], "q-fail");
+    assert!(
+        error["message"].as_str().unwrap_or_default().contains("missing-instance"),
+        "the reason must name the failed instance; got {error:?}"
+    );
 }
 
 #[tokio::test]

@@ -37,6 +37,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     onRunStarted: vi.fn(async () => () => {}),
     onRunCancelling: vi.fn(async () => () => {}),
     onQueueUpdate: vi.fn(async () => () => {}),
+    onQueueError: vi.fn(async () => () => {}),
     onElicitationRequest: vi.fn(async () => () => {}),
     onPtyOutput: vi.fn(async () => () => {}),
     onPtyExit: vi.fn(async () => () => {}),

@@ -1405,6 +1405,11 @@ fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row(
     assert_eq!(store.list_runs("t-1").unwrap(), vec![r1]);
     assert_eq!(store.load_events("r-1").unwrap(), vec![ev1]);
     assert!(store.list_queue("t-1").unwrap().is_empty());
+    assert_eq!(
+        store.get_thread("t-1").unwrap().status,
+        "working",
+        "the thread status commits with the run, not after it"
+    );
     let raw_count: i64 = store
         .with_conn(|conn| {
             conn.query_row(
@@ -1457,4 +1462,92 @@ fn commit_claimed_queue_run_atomically_persists_run_event_and_deletes_queue_row(
         })
         .unwrap();
     assert_eq!(raw_q2, 1, "q-2 must remain on rollback");
+    assert_eq!(
+        store.get_thread("t-1").unwrap().status,
+        "working",
+        "a rolled-back commit must not change the thread status"
+    );
+}
+
+/// The review's queue check: a failed thread-status write inside the same
+/// transaction must leave the message retryable and no run behind.
+#[test]
+fn failed_status_update_rolls_back_the_queue_commit() {
+    use crate::store::records::QueueItem;
+    use std::collections::BTreeMap;
+
+    let store = Store::open_in_memory().unwrap();
+    store.create_thread(&thread("t-1", 1_000)).unwrap();
+    store.set_thread_status("t-1", "settled").unwrap();
+
+    let item = QueueItem {
+        id: "q-1".to_string(),
+        thread_id: "t-1".to_string(),
+        instance_id: "inst-1".to_string(),
+        text: "keep me retryable".to_string(),
+        images: Vec::new(),
+        mode: Some("code".to_string()),
+        config_options: BTreeMap::new(),
+        created_at: 1_000,
+    };
+    store.enqueue_queue_item(&item).unwrap();
+    store.claim_queue_head("t-1", "claim-1").unwrap().unwrap();
+
+    // Force the status UPDATE (the first statement of the transaction) to fail.
+    store
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_thread_status BEFORE UPDATE OF status ON threads
+                 WHEN NEW.status = 'working'
+                 BEGIN SELECT RAISE(ABORT, 'forced status failure'); END;",
+            )
+            .map_err(|e| sql("create trigger", e))?;
+            Ok(())
+        })
+        .unwrap();
+
+    let run_record = run("r-1", "t-1", 0);
+    let user_event = event(
+        "r-1",
+        0,
+        EventKind::UserMessage {
+            text: "keep me retryable".to_string(),
+            images: Vec::new(),
+        },
+    );
+    assert!(
+        store
+            .commit_claimed_queue_run("q-1", &run_record, &user_event)
+            .is_err(),
+        "the forced status failure must fail the commit"
+    );
+
+    assert!(
+        store.list_runs("t-1").unwrap().is_empty(),
+        "no run may survive the failed commit"
+    );
+    assert!(
+        store.load_events("r-1").unwrap().is_empty(),
+        "no user event may survive the failed commit"
+    );
+    let queue = store.list_queue("t-1").unwrap();
+    assert!(queue.is_empty(), "the row is still claimed by the failed dispatch");
+    let raw_q1: i64 = store
+        .with_conn(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM queue_items WHERE id = 'q-1'",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|e| sql("count q-1", e))
+        })
+        .unwrap();
+    assert_eq!(raw_q1, 1, "the row must survive the failed commit");
+    // The dispatcher releases the claim on error; the same row is then retryable.
+    store.release_queue_claim("q-1").unwrap();
+    let retryable = store.list_queue("t-1").unwrap();
+    assert_eq!(retryable.len(), 1);
+    assert_eq!(retryable[0].id, "q-1");
+    assert_eq!(retryable[0].text, "keep me retryable");
+    assert_eq!(store.get_thread("t-1").unwrap().status, "settled");
 }

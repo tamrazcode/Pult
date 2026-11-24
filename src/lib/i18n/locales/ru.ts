@@ -271,6 +271,7 @@ export const ru: Record<string, string> = {
     "Чтение и безопасные инструменты выполняются сразу; удаление и внешние пути требуют подтверждения.",
   "composer.permission.fullAccess.desc":
     "Не запрашивает подтверждение. Агент работает с вашими правами доступа к файлам и сети.",
+  "composer.queue.failed": "Сообщение из очереди не удалось запустить: {{message}}",
   "composer.queue.title": "В очереди",
   "composer.queue.edit": "Изменить",
   "composer.queue.remove": "Удалить",

@@ -259,6 +259,7 @@ export const fr: Record<string, string> = {
     "Exécute les lectures et outils non destructifs ; demande pour les suppressions et chemins externes.",
   "composer.permission.fullAccess.desc":
     "Ne demande jamais. L’agent s’exécute sous votre identité, avec votre accès aux fichiers et au réseau.",
+  "composer.queue.failed": "Le message en file d'attente n'a pas pu démarrer : {{message}}",
   "composer.queue.title": "En file d’attente",
   "composer.queue.edit": "Modifier",
   "composer.queue.remove": "Retirer",

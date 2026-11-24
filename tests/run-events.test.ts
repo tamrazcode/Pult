@@ -6,6 +6,7 @@ import type {
   InstanceInfo,
   PtyExitPayload,
   PtyOutputPayload,
+  QueueErrorPayload,
   QueueUpdatedPayload,
   Run,
   RunEventPayload,
@@ -31,6 +32,7 @@ const ipcMocks = vi.hoisted(() => {
     onRunStarted?: (run: Run) => void;
     onRunCancelling?: (runId: string) => void;
     onQueueUpdate?: (payload: QueueUpdatedPayload) => void;
+    onQueueError?: (payload: QueueErrorPayload) => void;
     onElicitationRequest?: (payload: ElicitationRequestPayload) => void;
     onPtyOutput?: (payload: PtyOutputPayload) => void;
     onPtyExit?: (payload: PtyExitPayload) => void;
@@ -72,6 +74,10 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     }),
     onQueueUpdate: vi.fn(async (handler: (payload: QueueUpdatedPayload) => void) => {
       ipcMocks.handlers.onQueueUpdate = handler;
+      return () => {};
+    }),
+    onQueueError: vi.fn(async (handler: (payload: QueueErrorPayload) => void) => {
+      ipcMocks.handlers.onQueueError = handler;
       return () => {};
     }),
     onElicitationRequest: vi.fn(async (handler: (payload: ElicitationRequestPayload) => void) => {
@@ -371,5 +377,22 @@ describe("runEvents subscriptions", () => {
       "Agent finished",
       "Regular work is ready for you.",
     );
+  });
+
+  it("surfaces the reason when a queued message could not start", async () => {
+    const { useUiStore } = await setup();
+
+    expect(ipcMocks.handlers.onQueueError).toBeTypeOf("function");
+    ipcMocks.handlers.onQueueError!({
+      threadId: "thread-1",
+      queueId: "q-1",
+      message: "unknown instance mock",
+    });
+    await flushMicrotasks();
+
+    const error = useUiStore.getState().globalError;
+    expect(error?.kind).toBe("protocol");
+    expect(error?.message).toContain("unknown instance mock");
+    expect(error?.message).toContain("could not start");
   });
 });

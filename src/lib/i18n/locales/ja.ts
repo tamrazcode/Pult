@@ -258,6 +258,7 @@ export const ja: Record<string, string> = {
     "読み取りと非破壊的なツールは自動実行し、削除と外部パスは確認します。",
   "composer.permission.fullAccess.desc":
     "確認しません。エージェントはあなたの権限で実行され、ファイルやネットワークにアクセスできます。",
+  "composer.queue.failed": "キュー内のメッセージを開始できませんでした: {{message}}",
   "composer.queue.title": "キュー",
   "composer.queue.edit": "編集",
   "composer.queue.remove": "削除",

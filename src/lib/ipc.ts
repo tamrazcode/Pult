@@ -33,6 +33,7 @@ import type {
   PreflightReport,
   ProcessNode,
   ProviderModelPrefs,
+  QueueErrorPayload,
   QueueUpdatedPayload,
   RememberedPermission,
   Run,
@@ -772,6 +773,11 @@ export function onQueueUpdate(
   handler: (payload: QueueUpdatedPayload) => void,
 ): Promise<UnlistenFn> {
   return listenOrNoop<QueueUpdatedPayload>("queue:update", handler);
+}
+
+/** A queued message could not start; the row stays queued for retry. */
+export function onQueueError(handler: (payload: QueueErrorPayload) => void): Promise<UnlistenFn> {
+  return listenOrNoop<QueueErrorPayload>("queue:error", handler);
 }
 
 /** Payload of the "run:started" Tauri event (backend-created runs). */

@@ -1654,6 +1654,19 @@ impl AgentRuntime {
         );
     }
 
+    /// A queued message could not start (bad/missing agent, workspace, DB).
+    /// The row stays queued; the UI shows the reason and retries by its id.
+    fn emit_queue_error(&self, thread_id: &str, queue_id: &str, message: &str) {
+        self.emit(
+            "queue:error",
+            &serde_json::json!({
+                "threadId": thread_id,
+                "queueId": queue_id,
+                "message": message,
+            }),
+        );
+    }
+
     /// Remembers handshake capabilities per instance for composer gating and
     /// the M6 mode picker (modes come from the session handshake). An empty
     /// mode list preserves the previously cached one вЂ” resumes that carry no
@@ -1951,6 +1964,9 @@ impl AgentRuntime {
                 self.rollback_run(&run.id, &thread.id);
                 return Err(err);
             }
+            // The thread status is part of that transaction; only the UI
+            // notification is left, and it cannot fail the accepted input.
+            self.emit_thread_updated(&thread.id);
         } else {
             if let Err(err) = self.store.create_run(&run) {
                 self.rollback_run(&run.id, &thread.id);
@@ -1969,8 +1985,10 @@ impl AgentRuntime {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
             inner.answer_queues.insert(run.id.clone(), answers_tx);
         }
-        if let Err(err) = self.set_thread_status(&thread.id, "working") {
-            return Err(self.abort_run_start(&run, &thread.id, err));
+        if claim_queue_id.is_none() {
+            if let Err(err) = self.set_thread_status(&thread.id, "working") {
+                return Err(self.abort_run_start(&run, &thread.id, err));
+            }
         }
         // Covers backend-created runs too (queue auto-dispatch): the UI
         // registers the record so the timeline can select it. Emitted after
@@ -3634,6 +3652,7 @@ impl AgentRuntime {
                         } else if !is_thread_busy(&err) {
                             // A queued steer whose next run cannot start must
                             // close the subagent card instead of hanging.
+                            self.emit_queue_error(thread_id, &item.id, &err.to_string());
                             self.orchestrator
                                 .mark_dispatch_failed(thread_id, &err.to_string());
                         }

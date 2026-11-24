@@ -1491,6 +1491,34 @@ describe("composer", () => {
     await waitFor(() => expect(runsQueueSteer).toHaveBeenCalledWith("th", "q1"));
   });
 
+  it("retries a paused queue head by id when no run is active", async () => {
+    useRunsStore.setState({
+      runsByThread: {},
+      queueByThread: {
+        th: [
+          {
+            id: "q-paused",
+            threadId: "th",
+            instanceId: "missing",
+            text: "could not start",
+            images: [],
+            mode: null,
+            configOptions: {},
+            createdAt: 1,
+          },
+        ],
+      },
+    });
+    render(<Composer threadId="th" />);
+
+    // A dispatch failure leaves the row queued with no live run; the head is
+    // retryable even when the provider has no live-steer capability.
+    const retry = screen.getByRole("button", { name: "Retry" });
+    expect(retry).toBeEnabled();
+    fireEvent.click(retry);
+    await waitFor(() => expect(runsQueueSteer).toHaveBeenCalledWith("th", "q-paused"));
+  });
+
   it("drags a queued message when the grip handle is grabbed", () => {
     useRunsStore.setState({
       queueByThread: {

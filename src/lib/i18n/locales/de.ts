@@ -258,6 +258,8 @@ export const de: Record<string, string> = {
     "Lese- und sichere Tools laufen direkt; Löschen und externe Pfade fragen nach.",
   "composer.permission.fullAccess.desc":
     "Fragt nie nach. Der Agent läuft unter deinem Konto mit deinem Datei- und Netzwerkzugriff.",
+  "composer.queue.failed":
+    "Die Nachricht aus der Warteschlange konnte nicht gestartet werden: {{message}}",
   "composer.queue.title": "Warteschlange",
   "composer.queue.edit": "Bearbeiten",
   "composer.queue.remove": "Entfernen",

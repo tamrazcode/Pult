@@ -231,9 +231,10 @@ impl Store {
         })
     }
 
-    /// Commits a claimed queue item: inserts the run, its first event, and
-    /// deletes the queue row in ONE transaction. Any failure rolls all three
-    /// back, so the message survives a failed dispatch.
+    /// Commits a claimed queue item: inserts the run, its first event, marks
+    /// the thread working, and deletes the queue row in ONE transaction. Any
+    /// failure rolls all of them back, so the message survives a failed
+    /// dispatch and the thread is never left "working" without a run.
     pub fn commit_claimed_queue_run(
         &self,
         queue_id: &str,
@@ -241,10 +242,16 @@ impl Store {
         user_event: &Event,
     ) -> Result<(), PultError> {
         let (kind, payload) = encode_event(user_event)?;
+        let now = crate::events::now_millis();
         self.with_conn(|conn| {
             conn.execute("BEGIN IMMEDIATE", [])
                 .map_err(|e| sql("commit_claimed_queue_run begin", e))?;
             let write = (|| -> Result<(), PultError> {
+                conn.execute(
+                    "UPDATE threads SET status = 'working', updated_at = ?1 WHERE id = ?2",
+                    params![now, run.thread_id],
+                )
+                .map_err(|e| sql("commit_claimed_queue_run thread status", e))?;
                 conn.execute(
                     "INSERT INTO runs (id, thread_id, idx, status, instance_id, model, mode, effort,
                                        started_at, stopped_at, stop_reason, error)

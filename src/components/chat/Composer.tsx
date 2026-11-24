@@ -1058,6 +1058,9 @@ export function Composer({ threadId }: { threadId?: string }) {
           >
             {queue.map((item, index) => {
               const dragging = dragState?.id === item.id;
+              // No live run means the head failed to start (auto-dispatch
+              // error): the same row is retryable regardless of steering.
+              const retryHead = index === 0 && !runActive;
               return (
                 <div
                   key={item.id}
@@ -1114,16 +1117,22 @@ export function Composer({ threadId }: { threadId?: string }) {
                   <button
                     type="button"
                     aria-label={
-                      index === 0 ? t("composer.queue.steerAria") : t("composer.queue.moveToFront")
+                      retryHead
+                        ? t("common.retry")
+                        : index === 0
+                          ? t("composer.queue.steerAria")
+                          : t("composer.queue.moveToFront")
                     }
                     title={
                       index > 0
                         ? t("composer.queue.moveToFront")
-                        : canLiveSteer
-                          ? t("composer.queue.steerTitle")
-                          : t("composer.queue.steerQueuedTitle")
+                        : retryHead
+                          ? t("common.retry")
+                          : canLiveSteer
+                            ? t("composer.queue.steerTitle")
+                            : t("composer.queue.steerQueuedTitle")
                     }
-                    disabled={index === 0 && !canLiveSteer}
+                    disabled={index === 0 && runActive && !canLiveSteer}
                     onClick={() => {
                       if (index === 0) {
                         runsQueueSteer(threadId, item.id).catch((err) =>
@@ -1138,9 +1147,11 @@ export function Composer({ threadId }: { threadId?: string }) {
                     className="flex h-6 items-center gap-1 rounded-(--radius-sm) border border-border-subtle px-1.5 text-xs text-text-tertiary transition hover:bg-hover hover:text-text-secondary disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-text-tertiary"
                   >
                     <CornerUpRight size={11} />{" "}
-                    {index === 0
-                      ? t("composer.queue.steerButton")
-                      : t("composer.queue.moveToFront")}
+                    {retryHead
+                      ? t("common.retry")
+                      : index === 0
+                        ? t("composer.queue.steerButton")
+                        : t("composer.queue.moveToFront")}
                   </button>
                   <button
                     type="button"

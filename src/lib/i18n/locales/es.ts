@@ -259,6 +259,7 @@ export const es: Record<string, string> = {
     "Ejecuta lecturas y herramientas no destructivas; pregunta para borrar o rutas externas.",
   "composer.permission.fullAccess.desc":
     "Nunca pregunta. El agente sigue ejecutándose como tú, con tu acceso a archivos y red.",
+  "composer.queue.failed": "No se pudo iniciar el mensaje en cola: {{message}}",
   "composer.queue.title": "En cola",
   "composer.queue.edit": "Editar",
   "composer.queue.remove": "Quitar",

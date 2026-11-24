@@ -422,6 +422,13 @@ export interface QueueUpdatedPayload {
   items: QueueItem[];
 }
 
+/** Payload of the "queue:error" event: a queued message could not start. */
+export interface QueueErrorPayload {
+  threadId: string;
+  queueId: string;
+  message: string;
+}
+
 // ---- git (M4) ----
 
 /** One porcelain status row. */
