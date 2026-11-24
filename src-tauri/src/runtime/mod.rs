@@ -2086,26 +2086,37 @@ impl AgentRuntime {
         force: bool,
         cascade_children: bool,
     ) -> Result<(), crate::PultError> {
-        let (conn, session_id, thread_id, owner_token) = {
+        let (live, thread_id) = {
             let mut inner = self.inner.lock().expect("runtime lock poisoned");
-            let Some(state) = inner.runs.get(run_id) else {
-                return Err(crate::PultError::internal(format!(
-                    "run {run_id} is not active"
-                )));
-            };
-            let state = (
-                Arc::clone(&state.conn),
-                state.session_id.clone(),
-                state.owner_token.clone(),
-            );
             let thread_id = inner
                 .threads_working
                 .iter()
                 .find(|(_, id)| id.as_str() == run_id)
                 .map(|(thread, _)| thread.clone())
                 .unwrap_or_default();
-            inner.cancelling_runs.insert(run_id.to_string());
-            (state.0, state.1, thread_id, state.2)
+            match inner.runs.get(run_id) {
+                Some(state) => {
+                    let live = (
+                        Arc::clone(&state.conn),
+                        state.session_id.clone(),
+                        state.owner_token.clone(),
+                    );
+                    inner.cancelling_runs.insert(run_id.to_string());
+                    (Some(live), thread_id)
+                }
+                // Accepted but still starting: no RunState yet, so record the
+                // intent instead of failing. run_turn checks it before the
+                // spawn and again before the prompt.
+                None if !thread_id.is_empty() => {
+                    inner.cancelling_runs.insert(run_id.to_string());
+                    (None, thread_id)
+                }
+                None => {
+                    return Err(crate::PultError::internal(format!(
+                        "run {run_id} is not active"
+                    )))
+                }
+            }
         };
         self.emit(
             "run:cancelling",
@@ -2116,6 +2127,9 @@ impl AgentRuntime {
         if cascade_children {
             self.orchestrator.cancel_subtree(&thread_id, force);
         }
+        let Some((conn, session_id, owner_token)) = live else {
+            return Ok(());
+        };
         if force {
             conn.kill();
             let terminals = {
@@ -2152,6 +2166,15 @@ impl AgentRuntime {
             }
         });
         Ok(())
+    }
+
+    /// Did the user press Stop while this run was still starting?
+    fn cancel_requested(&self, run_id: &str) -> bool {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .cancelling_runs
+            .contains(run_id)
     }
 
     /// Force-kills a run's agent process (thread delete: a wedged agent may
@@ -2772,6 +2795,11 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // The window opens before the MCP servers finish starting; a run whose
     // session needs their URLs waits here rather than losing the tools.
     runtime.ready().await;
+    // Stop can arrive between `run:started` and this point; never spawn then.
+    if runtime.cancel_requested(&run_id) {
+        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None)?;
+        return Ok(());
+    }
     let turn_started = std::time::Instant::now();
     let mut timing = RunTiming {
         run_id: run_id.clone(),
@@ -3023,6 +3051,22 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         emit_process("running", None);
     }
 
+    // Stop during spawn/handshake: the session exists, but the prompt must
+    // never be sent. Tear down exactly like a cancelled turn.
+    if runtime.cancel_requested(&run_id) {
+        conn.kill();
+        runtime.mcp_registry.revoke(&owner_token);
+        runtime.gateway_tokens.revoke_owner(&owner_token);
+        let terminals = {
+            let inner = runtime.inner.lock().expect("runtime lock poisoned");
+            Arc::clone(&inner.terminals)
+        };
+        terminals.release_owner(&owner_token);
+        emit_process("exited", None);
+        runtime.finalize_run(&run_id, &thread_id, "cancelled", "cancelled", None)?;
+        return Ok(());
+    }
+
     // A mode picked before this run existed is applied before the prompt; a
     // rejecting agent must not kill the send. Modes are re-sent every turn:
     // live mode changes are not observable here, and one round-trip is cheap.
@@ -3120,6 +3164,14 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     // Assigned on every break path before the post-loop read.
     let mut stop_reason: Option<String>;
 
+    // A Stop may land after the handshake/config phase; then the prompt is
+    // never built or sent, and the common cleanup finalizes the run.
+    stop_reason = if runtime.cancel_requested(&run_id) {
+        Some("cancelled".to_string())
+    } else {
+        None
+    };
+    if stop_reason.is_none() {
     let mut content = Vec::with_capacity(2 + images.len());
     // Wire-only block rule: the user's text always goes first (adapters that
     // auto-title a session from the first text block must see the message),
@@ -3459,6 +3511,7 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
         failure = Some(format!("store: {err}"));
         stop_reason = Some("failed".to_string());
     }
+    }
     let final_reason = stop_reason.unwrap_or_else(|| "failed".to_string());
     let status = match final_reason.as_str() {
         "cancelled" => "cancelled",
@@ -3566,6 +3619,11 @@ impl AgentRuntime {
         if let Some(detail) = &failure {
             tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
         }
+        // Settle before releasing the working claim: a send accepted in the
+        // gap would set the thread working and then be overwritten here. The
+        // run is over either way; a refused delete leaves a usable thread, so
+        // the UI must see the settled status before the delete attempt.
+        let _ = self.store.set_thread_status(thread_id, "settled");
         let deleting = {
             let mut guard = self.inner.lock().expect("runtime lock poisoned");
             guard.runs.remove(run_id);
@@ -3575,9 +3633,6 @@ impl AgentRuntime {
             guard.hidden_runs.remove(run_id);
             guard.deleting_threads.contains(thread_id)
         };
-        // The run is over either way; a refused delete leaves a usable thread,
-        // so the UI must see the settled status before the delete attempt.
-        let _ = self.store.set_thread_status(thread_id, "settled");
         self.emit_thread_updated(thread_id);
         self.orchestrator.finish_child_run(
             thread_id,

@@ -889,6 +889,83 @@ async fn queue_auto_dispatch_failure_keeps_the_message() {
 }
 
 #[tokio::test]
+async fn stop_between_run_started_and_spawn_prevents_the_prompt() {
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join("pult-early-stop");
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    let thread = thread_record("th-early-stop");
+    runtime
+        .store()
+        .create_thread(&thread)
+        .expect("create thread");
+
+    // Hold run_turn before the agent spawn, as during MCP startup.
+    runtime.readiness.defer();
+    let outcome = runtime
+        .send(
+            &thread,
+            "must not reach the agent",
+            &[],
+            "mock",
+            None,
+            &Default::default(),
+        )
+        .expect("send");
+    let run = outcome.run.expect("accepted run");
+    let registered = {
+        let inner = runtime.inner.lock().expect("runtime lock poisoned");
+        inner.runs.contains_key(&run.id)
+    };
+    assert!(!registered, "the run must still be before RunState");
+
+    runtime.cancel(&run.id).expect("early Stop must be accepted");
+    runtime
+        .cancel_with_force(&run.id, true)
+        .expect("a repeated Stop reports the same state");
+    runtime.readiness.mark_ready();
+
+    wait_for(Duration::from_secs(10), || {
+        runtime
+            .store()
+            .list_runs(&thread.id)
+            .map(|runs| {
+                runs.iter()
+                    .any(|record| record.id == run.id && record.status == "cancelled")
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    let kinds = kinds_of(&runtime, &run.id);
+    assert!(
+        kinds.iter().any(|kind| matches!(
+            kind,
+            EventKind::RunFinished { stop_reason, .. } if stop_reason == "cancelled"
+        )),
+        "the run must finish as cancelled; got {kinds:?}"
+    );
+    assert!(
+        !kinds
+            .iter()
+            .any(|kind| matches!(kind, EventKind::AgentMessageDelta { .. })),
+        "a stopped run must not reach the agent"
+    );
+    let spawns = sink
+        .0
+        .lock()
+        .expect("sink lock")
+        .iter()
+        .filter(|(event, payload)| event == "agent:process" && payload["kind"] == "spawned")
+        .count();
+    assert_eq!(spawns, 0, "the stopped run must not spawn an agent");
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
+#[tokio::test]
 async fn queued_message_auto_dispatches_after_run_finished() {
     // The env lock guards the process-env writes and the env reads inside the
     // sync dispatch calls; it is scoped so no await point holds it.
