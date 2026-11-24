@@ -89,6 +89,7 @@ describe("threads store", () => {
         "task-b": delegated("task-b", "b"),
       },
       order: ["task-a", "task-b"],
+      finished: {},
     });
     useGitStore.getState().setCommitMessage("a", "msg-a");
     useGitStore.getState().setCommitMessage("b", "msg-b");

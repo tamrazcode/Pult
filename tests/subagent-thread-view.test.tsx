@@ -69,7 +69,7 @@ describe("Subagent thread view", () => {
     Element.prototype.scrollIntoView = vi.fn();
     useProjectsStore.setState({ projects: [], selectedProjectId: null, loaded: true });
     useThreadsStore.setState({ threads: [], activeThreadId: null, unreadIds: [], loaded: true });
-    useSubagentsStore.setState({ tasks: {}, order: [] });
+    useSubagentsStore.setState({ tasks: {}, order: [], finished: {} });
     useRunsStore.setState({
       runsByThread: {},
       viewsByRun: {},

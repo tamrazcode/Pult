@@ -74,7 +74,7 @@ beforeEach(() => {
     pendingUserByThread: {},
     activeElicitation: null,
   });
-  useSubagentsStore.setState({ tasks: {}, order: [] });
+  useSubagentsStore.setState({ tasks: {}, order: [], finished: {} });
   useThreadsStore.setState({
     threads: [],
     activeThreadId: null,

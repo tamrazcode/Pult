@@ -339,7 +339,7 @@ describe("Sidebar", () => {
       paletteOpen: false,
     });
     useDraftsStore.setState({ byThread: {} });
-    useSubagentsStore.setState({ tasks: {}, order: [] });
+    useSubagentsStore.setState({ tasks: {}, order: [], finished: {} });
     useRunsStore.setState({
       runsByThread: {},
       viewsByRun: {},

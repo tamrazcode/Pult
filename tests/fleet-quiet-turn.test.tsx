@@ -91,7 +91,7 @@ beforeEach(() => {
     queueByThread: {},
     pendingUserByThread: {},
   });
-  useSubagentsStore.setState({ tasks: {}, order: [] });
+  useSubagentsStore.setState({ tasks: {}, order: [], finished: {} });
   useSettingsStore.setState({ transcriptVerbosity: "full" });
   useUiStore.setState({ rightPanelTab: "none", rightPanelOpen: false });
 });

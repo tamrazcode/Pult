@@ -56,7 +56,7 @@ describe("SubagentCard", () => {
     orchestratorCancelTask.mockReset().mockResolvedValue({ cancelled: true });
     orchestratorRetryTask.mockReset();
     orchestratorSteerTask.mockReset();
-    useSubagentsStore.setState({ tasks: {}, order: [] });
+    useSubagentsStore.setState({ tasks: {}, order: [], finished: {} });
   });
 
   it("shows Stop for active tasks and calls orchestratorCancelTask(taskId, true)", () => {
@@ -240,5 +240,51 @@ describe("SubagentCard", () => {
 
     expect(orchestratorSteerTask).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Steer" })).toBeVisible();
+  });
+});
+
+describe("subagents store merge order", () => {
+  it("keeps a finish that arrives before its spawn", () => {
+    const store = useSubagentsStore.getState();
+    store.applyFinished({ taskId: "task-1", status: "completed", summary: "done" });
+    expect(useSubagentsStore.getState().tasks["task-1"]).toBeUndefined();
+
+    store.applySpawned({
+      task: makeTask({ taskId: "task-1", status: "running" }),
+      parentThreadId: "th-parent",
+      parentRunId: "run-parent",
+    });
+
+    const task = useSubagentsStore.getState().tasks["task-1"];
+    expect(task.status).toBe("completed");
+    expect(task.summary).toBe("done");
+    expect(useSubagentsStore.getState().finished["task-1"]).toBeUndefined();
+  });
+
+  it("does not resurrect a finished task from a stale update or snapshot", () => {
+    const store = useSubagentsStore.getState();
+    store.applySpawned({
+      task: makeTask({ taskId: "task-1", status: "running" }),
+      parentThreadId: "th-parent",
+      parentRunId: "run-parent",
+    });
+    store.applyFinished({ taskId: "task-1", status: "completed", summary: "done" });
+
+    store.applyUpdated({ taskId: "task-1", status: "running" });
+    expect(useSubagentsStore.getState().tasks["task-1"].status).toBe("completed");
+
+    // Same attempt in a stale snapshot: the terminal status wins.
+    store.upsert(makeTask({ taskId: "task-1", status: "running" }));
+    expect(useSubagentsStore.getState().tasks["task-1"].status).toBe("completed");
+    expect(useSubagentsStore.getState().tasks["task-1"].summary).toBe("done");
+  });
+
+  it("accepts a new attempt (new childRunId) after a finish", () => {
+    const store = useSubagentsStore.getState();
+    store.upsert(makeTask({ taskId: "task-1", status: "completed", summary: "done" }));
+
+    store.upsert(makeTask({ taskId: "task-1", status: "running", childRunId: "run-child-2" }));
+
+    expect(useSubagentsStore.getState().tasks["task-1"].status).toBe("running");
   });
 });
