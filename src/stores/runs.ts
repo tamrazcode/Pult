@@ -814,6 +814,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       let commandsByThread = s.commandsByThread;
       let filesByThread = s.filesByThread;
       let activeElicitation = s.activeElicitation;
+      let elicitationQueue = s.elicitationQueue;
       let applied: Set<string> | null = null;
       let viewChanged = false;
       let cancellingByRun = s.cancellingByRun;
@@ -909,6 +910,14 @@ export const useRunsStore = create<RunsState>((set, get) => ({
             stopReason: event.payload.stopReason,
             error: event.payload.error ?? r.error,
           }));
+          // An unanswered question dies with its run; keeping it would only
+          // let the user answer into approval.expired.
+          elicitationQueue = elicitationQueue.filter((item) => item.runId !== runId);
+          if (activeElicitation?.runId === runId) {
+            const [next, ...rest] = elicitationQueue;
+            activeElicitation = next ?? null;
+            elicitationQueue = rest;
+          }
         }
       }
       if (
@@ -916,6 +925,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         !cancellingChanged &&
         filesByThread === s.filesByThread &&
         activeElicitation === s.activeElicitation &&
+        elicitationQueue === s.elicitationQueue &&
         commandsByThread === s.commandsByThread
       ) {
         return s;
@@ -927,6 +937,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
         commandsByThread,
         filesByThread,
         activeElicitation,
+        elicitationQueue,
         ...(cancellingChanged ? { cancellingByRun } : {}),
       };
     }),

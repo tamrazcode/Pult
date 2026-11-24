@@ -902,6 +902,26 @@ describe("runs store", () => {
     expect(useRunsStore.getState().elicitationQueue).toEqual([]);
   });
 
+  it("drops an unanswered elicitation when its run finishes", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "th", "running")] },
+      activeElicitation: { runId: "r1", requestId: "q1", message: "one", detail: {} },
+      elicitationQueue: [{ runId: "r2", requestId: "q2", message: "two", detail: {} }],
+    });
+
+    useRunsStore.getState().receiveRunEvent("r1", {
+      id: "e-finished",
+      runId: "r1",
+      seq: 1,
+      ts: 1,
+      kind: "run_finished",
+      payload: { stopReason: "cancelled" },
+    });
+
+    expect(useRunsStore.getState().activeElicitation?.requestId).toBe("q2");
+    expect(useRunsStore.getState().elicitationQueue).toEqual([]);
+  });
+
   it("does not fail a run that started after the snapshot request", () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r-new", "th", "running")] },
