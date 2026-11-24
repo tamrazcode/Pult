@@ -293,7 +293,13 @@ impl AcpConn {
                         Ok(_) => {
                             let trimmed = line.trim_end();
                             if !trimmed.is_empty() {
-                                tracing::debug!(target: "pult::agent_stderr", "{trimmed}");
+                                // Agent stderr may echo credentials; reuse the MCP
+                                // sanitizer and cap the line before tracing.
+                                let safe: String = crate::mcp::security::redact(trimmed)
+                                    .chars()
+                                    .take(512)
+                                    .collect();
+                                tracing::debug!(target: "pult::agent_stderr", "{safe}");
                             }
                             line.clear();
                         }

@@ -511,10 +511,22 @@ fn prepare_shadow_home(spec: &crate::config::InstanceSpec) {
     if !auth.is_file() || target.exists() {
         return;
     }
-    if std::fs::hard_link(&auth, &target).is_err() {
-        if let Err(error) = std::fs::copy(&auth, &target) {
+    // A private copy, never a hardlink: a provider that rewrites auth.json in
+    // place must not mutate the user's real profile through the shadow home.
+    // Published through a temp file so a half-written copy is never read.
+    let temp = std::path::Path::new(shadow).join("auth.json.pult-tmp");
+    match std::fs::copy(&auth, &temp) {
+        Ok(_) => {
+            if let Err(error) = std::fs::rename(&temp, &target) {
+                let _ = std::fs::remove_file(&temp);
+                tracing::warn!(target: "pult::runtime", path = %target.display(), error = %error,
+                    "could not publish auth.json into the shadow provider home");
+            }
+        }
+        Err(error) => {
+            let _ = std::fs::remove_file(&temp);
             tracing::warn!(target: "pult::runtime", path = %target.display(), error = %error,
-                "could not share auth.json with the shadow provider home");
+                "could not copy auth.json into the shadow provider home");
         }
     }
 }

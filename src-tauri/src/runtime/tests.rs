@@ -4397,7 +4397,7 @@ fn grok_and_muse_spawn_overrides() {
 }
 
 #[test]
-fn shadow_home_is_created_and_shares_auth_json() {
+fn shadow_home_gets_a_private_auth_copy() {
     let base = std::env::temp_dir().join(format!(
         "pult-shadow-{}-{}",
         std::process::id(),
@@ -4421,9 +4421,18 @@ fn shadow_home_is_created_and_shares_auth_json() {
     );
     assert_eq!(std::fs::read_to_string(&shared).unwrap(), "token-123");
 
+    // A private copy, not a hardlink: writing through the shadow home must not
+    // touch the user's real profile.
+    std::fs::write(&shared, "shadow-token").unwrap();
+    assert_eq!(
+        std::fs::read_to_string(home.join("auth.json")).unwrap(),
+        "token-123",
+        "the shadow copy must not share the inode with the real profile"
+    );
+
     // Idempotent: a second spawn keeps the existing file.
     super::prepare_shadow_home(&spec);
-    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "token-123");
+    assert_eq!(std::fs::read_to_string(&shared).unwrap(), "shadow-token");
     let _ = std::fs::remove_dir_all(&base);
 }
 
