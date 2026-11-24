@@ -718,6 +718,9 @@ export const ja: Record<string, string> = {
   "errors.queue.empty_message": "キュー内のメッセージは空にできません。",
   "errors.queue.item_not_found": "そのキュー内メッセージは見つかりません。",
   "errors.queue.order_mismatch": "キューが変更されました。もう一度並べ替えてください。",
+  "errors.approval.expired": "このリクエストはもう回答を待っていません。",
+  "errors.steer.indeterminate":
+    "エージェントはメッセージを受け取りましたが、記録できませんでした。",
   "errors.run.finished": "その実行はすでに終了しています。",
   "errors.terminal.input_closed": "ターミナルは入力を受け付けていません。",
   "errors.browser.state_failed": "ブラウザーの状態が不整合です。パネルを開き直してください。",

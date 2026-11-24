@@ -720,6 +720,9 @@ export const de: Record<string, string> = {
   "errors.queue.empty_message": "Eine Warteschlangen-Nachricht darf nicht leer sein.",
   "errors.queue.item_not_found": "Diese Warteschlangen-Nachricht ist nicht mehr vorhanden.",
   "errors.queue.order_mismatch": "Die Warteschlange hat sich geändert; bitte neu sortieren.",
+  "errors.approval.expired": "Diese Anfrage wartet nicht mehr auf eine Antwort.",
+  "errors.steer.indeterminate":
+    "Der Agent hat die Nachricht angenommen, aber sie konnte nicht gespeichert werden.",
   "errors.run.finished": "Diese Ausführung ist bereits beendet.",
   "errors.terminal.input_closed": "Das Terminal nimmt keine Eingaben mehr an.",
   "errors.browser.state_failed":

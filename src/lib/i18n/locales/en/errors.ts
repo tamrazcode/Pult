@@ -41,6 +41,8 @@ export const errors = {
   "errors.queue.empty_message": "A queued message cannot be empty.",
   "errors.queue.item_not_found": "That queued message is gone.",
   "errors.queue.order_mismatch": "The queue changed; reorder it again.",
+  "errors.approval.expired": "That request is no longer waiting for an answer.",
+  "errors.steer.indeterminate": "The agent accepted the message, but it could not be recorded.",
   "errors.run.finished": "That run already finished.",
   "errors.terminal.input_closed": "The terminal is no longer accepting input.",
   "errors.browser.state_failed": "The browser is in an inconsistent state. Reopen the panel.",

@@ -309,6 +309,10 @@ struct Inner {
     deleting_threads: std::collections::HashSet<String>,
     /// Runs whose Stop was pressed (grace timer or force kill in flight).
     cancelling_runs: std::collections::HashSet<String>,
+    /// Surfaced requests the agent is still waiting for, keyed by
+    /// (run_id, request_key). A late answer is rejected instead of looking
+    /// accepted while the run loop silently drops it.
+    pending_requests: std::collections::HashSet<(String, String)>,
     /// Hidden wake/continuation runs: the agent may echo the prompt as a
     /// user_message_chunk; that echo must never become a visible bubble.
     hidden_runs: std::collections::HashSet<String>,
@@ -669,6 +673,7 @@ impl AgentRuntime {
                 threads_working: HashMap::new(),
                 deleting_threads: std::collections::HashSet::new(),
                 cancelling_runs: std::collections::HashSet::new(),
+                pending_requests: std::collections::HashSet::new(),
                 hidden_runs: std::collections::HashSet::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
@@ -2241,13 +2246,24 @@ impl AgentRuntime {
         request_id: &str,
         payload: AnswerPayload,
     ) -> Result<(), crate::PultError> {
-        let tx = {
+        let (tx, pending) = {
             let inner = self.inner.lock().expect("runtime lock poisoned");
-            inner.answer_queues.get(run_id).cloned()
+            (
+                inner.answer_queues.get(run_id).cloned(),
+                inner
+                    .pending_requests
+                    .contains(&(run_id.to_string(), request_id.to_string())),
+            )
         };
-        // The run loop owns the pending maps; an unknown key is silently
-        // dropped by the answers arm (e.g. a stale UI answer after the
-        // policy already resolved the request locally).
+        if !pending {
+            // The agent already moved on (auto-resolve, timeout, or the run
+            // finished): accepting the answer would clear the UI while the
+            // run loop silently drops it.
+            return Err(crate::PultError::with_code(
+                "approval.expired",
+                "this request is no longer pending",
+            ));
+        }
         match tx {
             Some(tx) => {
                 tx.send((request_id.to_string(), payload)).map_err(|_| {
@@ -3227,6 +3243,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         AnswerPayload::Permission { option_id } => {
                             if let Some(pending) = pending_permissions.remove(&request_id) {
                                 runtime
+                                    .inner
+                                    .lock()
+                                    .expect("runtime lock poisoned")
+                                    .pending_requests
+                                    .remove(&(run_id.clone(), request_id.clone()));
+                                runtime
                                     .orchestrator
                                     .mark_child_status(&thread_id, "running");
                                 let flushed = batcher.push(EventKind::ApprovalResponse {
@@ -3266,6 +3288,12 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         }
                         AnswerPayload::Elicitation { action, content } => {
                             if let Some(pending) = pending_elicitations.remove(&request_id) {
+                                runtime
+                                    .inner
+                                    .lock()
+                                    .expect("runtime lock poisoned")
+                                    .pending_requests
+                                    .remove(&(run_id.clone(), request_id.clone()));
                                 runtime
                                     .orchestrator
                                     .mark_child_status(&thread_id, "running");
@@ -3643,6 +3671,7 @@ impl AgentRuntime {
             guard.threads_working.remove(thread_id);
             guard.cancelling_runs.remove(run_id);
             guard.hidden_runs.remove(run_id);
+            guard.pending_requests.retain(|(run, _)| run != run_id);
             guard.deleting_threads.contains(thread_id)
         };
         self.emit_thread_updated(thread_id);
@@ -4496,6 +4525,12 @@ fn surface_permission(
                 .collect(),
         },
     );
+    runtime
+        .inner
+        .lock()
+        .expect("runtime lock poisoned")
+        .pending_requests
+        .insert((run_id.to_string(), request_key.clone()));
 
     let title = params
         .tool_call
@@ -4547,6 +4582,12 @@ fn surface_elicitation(
             wire_id: request_id.clone(),
         },
     );
+    runtime
+        .inner
+        .lock()
+        .expect("runtime lock poisoned")
+        .pending_requests
+        .insert((run_id.to_string(), request_key.clone()));
     let flushed = batcher.push(EventKind::ElicitationRequest {
         message: params.message.clone(),
         detail: params.detail.clone(),

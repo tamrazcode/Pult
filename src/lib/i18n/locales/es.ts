@@ -722,6 +722,8 @@ export const es: Record<string, string> = {
   "errors.queue.empty_message": "Un mensaje en cola no puede estar vacío.",
   "errors.queue.item_not_found": "Ese mensaje en cola ya no existe.",
   "errors.queue.order_mismatch": "La cola cambió; reordénala de nuevo.",
+  "errors.approval.expired": "Esa solicitud ya no espera respuesta.",
+  "errors.steer.indeterminate": "El agente aceptó el mensaje, pero no se pudo registrar.",
   "errors.run.finished": "Esa ejecución ya terminó.",
   "errors.terminal.input_closed": "El terminal ya no acepta entrada.",
   "errors.browser.state_failed":

@@ -695,6 +695,8 @@ export const zh: Record<string, string> = {
   "errors.queue.empty_message": "队列消息不能为空。",
   "errors.queue.item_not_found": "该队列消息已不存在。",
   "errors.queue.order_mismatch": "队列已更改，请重新排序。",
+  "errors.approval.expired": "该请求已不再等待回复。",
+  "errors.steer.indeterminate": "代理已接受消息，但无法记录。",
   "errors.run.finished": "该运行已结束。",
   "errors.terminal.input_closed": "终端已不再接受输入。",
   "errors.browser.state_failed": "浏览器状态不一致，请重新打开面板。",

@@ -725,6 +725,8 @@ export const fr: Record<string, string> = {
   "errors.queue.empty_message": "Un message en file d’attente ne peut pas être vide.",
   "errors.queue.item_not_found": "Ce message en file d’attente a disparu.",
   "errors.queue.order_mismatch": "La file d’attente a changé ; réorganisez-la.",
+  "errors.approval.expired": "Cette demande n'attend plus de réponse.",
+  "errors.steer.indeterminate": "L'agent a accepté le message, mais il n'a pas pu être enregistré.",
   "errors.run.finished": "Cette exécution est déjà terminée.",
   "errors.terminal.input_closed": "Le terminal n’accepte plus d’entrée.",
   "errors.browser.state_failed": "Le navigateur est dans un état incohérent. Rouvrez le panneau.",

@@ -735,6 +735,8 @@ export const ru: Record<string, string> = {
   "errors.queue.empty_message": "Сообщение в очереди не может быть пустым.",
   "errors.queue.item_not_found": "Это сообщение в очереди уже исчезло.",
   "errors.queue.order_mismatch": "Очередь изменилась; упорядочите её заново.",
+  "errors.approval.expired": "Этот запрос больше не ждёт ответа.",
+  "errors.steer.indeterminate": "Агент принял сообщение, но записать его не удалось.",
   "errors.run.finished": "Этот запуск уже завершился.",
   "errors.terminal.input_closed": "Терминал больше не принимает ввод.",
   "errors.browser.state_failed": "Браузер в несогласованном состоянии. Откройте панель заново.",

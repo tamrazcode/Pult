@@ -1476,6 +1476,55 @@ async fn reject_once_round_trip_completes_the_turn() {
     let _ = std::fs::remove_dir_all(&sandbox);
 }
 
+/// An answer that arrives after the request was already resolved must be
+/// rejected, not acknowledged while the run loop drops it.
+#[tokio::test]
+async fn a_duplicate_approval_answer_is_rejected_as_expired() {
+    let _env = env_lock();
+    let sandbox = std::env::temp_dir().join(format!(
+        "pult-m3-expired-{}",
+        crate::events::now_millis()
+    ));
+    let _ = std::fs::remove_dir_all(&sandbox);
+    std::fs::create_dir_all(&sandbox).unwrap();
+    std::env::set_var("PULT_MOCK_AGENT", fixture_path());
+    std::env::set_var("PULT_WORKSPACE", &sandbox);
+
+    let (runtime, sink) = mock_runtime();
+    let thread = thread_record("th-expired-answer");
+    runtime.store().create_thread(&thread).unwrap();
+    let outcome = runtime
+        .send(&thread, "hello mock", &[], "mock", None, &Default::default())
+        .expect("send");
+    let run = outcome.run.expect("run");
+
+    let (run_id, request_id) =
+        wait_request(&sink, "permission:request", Duration::from_secs(8)).await;
+    assert_eq!(run_id, run.id);
+    runtime
+        .respond_permission(&run_id, &request_id, Some("mock-allow".to_string()))
+        .expect("the first answer is accepted");
+
+    wait_for(Duration::from_secs(10), || {
+        kinds_of(&runtime, &run.id).iter().any(|kind| {
+            matches!(kind, EventKind::ApprovalResponse { request_id: id, auto, .. }
+                if id == &request_id && !auto)
+        })
+    })
+    .await;
+
+    let err = runtime
+        .respond_permission(&run_id, &request_id, Some("mock-allow".to_string()))
+        .expect_err("a repeated answer must not look accepted");
+    match err {
+        crate::PultError::Internal { code, .. } => {
+            assert_eq!(code, "approval.expired", "the UI must know it expired")
+        }
+        other => panic!("expected approval.expired, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&sandbox);
+}
+
 /// allow_always is remembered per (workspace, instance, tool class): Turn 1
 /// approves under supervised, Turn 2 in workspace A (non-supervised) uses
 /// the remembered option without surfacing, and workspace B still asks.
