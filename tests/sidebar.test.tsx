@@ -354,6 +354,40 @@ describe("Sidebar", () => {
     vi.restoreAllMocks();
   });
 
+  it("marks a thread whose run waits for a decision instead of a spinner", () => {
+    useThreadsStore.setState({
+      threads: [makeThread("t1", "Needs answer", { status: "working", updatedAt: 400 })],
+      activeThreadId: null,
+      loaded: true,
+      unreadIds: [],
+    } as never);
+    useRunsStore.setState({
+      runsByThread: {
+        t1: [
+          {
+            id: "r1",
+            threadId: "t1",
+            idx: 0,
+            status: "running",
+            instanceId: "mock",
+            startedAt: 0,
+          },
+        ],
+      },
+      viewsByRun: {
+        r1: {
+          items: [],
+          streaming: true,
+          pendingApproval: { requestId: "p1", title: "Write file", options: [] },
+        },
+      },
+    });
+
+    render(<Sidebar width={288} />);
+
+    expect(screen.getByLabelText("Waiting for your decision")).toBeInTheDocument();
+  });
+
   it("omits legacy shelf headings and 'New thread with workspace' button", () => {
     render(<Sidebar width={288} />);
 
