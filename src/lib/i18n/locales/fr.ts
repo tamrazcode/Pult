@@ -9,6 +9,8 @@ export const fr: Record<string, string> = {
   "common.back": "Retour",
   "common.forward": "Avancer",
   "common.reload": "Recharger",
+  "common.liveUpdatesFailed":
+    "Les mises à jour en direct sont indisponibles. Rechargez la fenêtre.",
   "common.retry": "Réessayer",
   "common.dismiss": "Fermer",
   "common.search": "Rechercher",

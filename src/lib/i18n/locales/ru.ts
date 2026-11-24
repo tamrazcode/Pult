@@ -9,6 +9,8 @@ export const ru: Record<string, string> = {
   "common.back": "Назад",
   "common.forward": "Вперёд",
   "common.reload": "Обновить",
+  "common.liveUpdatesFailed":
+    "Живые обновления недоступны. Перезагрузите окно, чтобы восстановить связь.",
   "common.retry": "Повторить",
   "common.dismiss": "Скрыть",
   "common.search": "Поиск",

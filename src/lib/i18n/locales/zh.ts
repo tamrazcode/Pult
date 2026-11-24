@@ -9,6 +9,7 @@ export const zh: Record<string, string> = {
   "common.back": "返回",
   "common.forward": "前进",
   "common.reload": "重新加载",
+  "common.liveUpdatesFailed": "实时更新不可用。请重新加载窗口。",
   "common.retry": "重试",
   "common.dismiss": "关闭",
   "common.search": "搜索",

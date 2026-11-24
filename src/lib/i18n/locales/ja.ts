@@ -9,6 +9,7 @@ export const ja: Record<string, string> = {
   "common.back": "戻る",
   "common.forward": "進む",
   "common.reload": "再読み込み",
+  "common.liveUpdatesFailed": "ライブ更新を利用できません。ウィンドウを再読み込みしてください。",
   "common.retry": "再試行",
   "common.dismiss": "閉じる",
   "common.search": "検索",

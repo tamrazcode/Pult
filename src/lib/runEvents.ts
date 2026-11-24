@@ -26,6 +26,21 @@ import { notifyRunFinished } from "./notifications";
 
 let unlisten: (() => void)[] | null = null;
 
+/**
+ * After the event fan-in is (re)registered, re-read the authoritative state so
+ * anything missed while no listener was attached is projected again.
+ */
+export async function resyncLiveState(): Promise<void> {
+  await useThreadsStore
+    .getState()
+    .loadThreads()
+    .catch(() => undefined);
+  const active = useThreadsStore.getState().activeThreadId;
+  if (!active) return;
+  const { loadThread } = await import("./threadLoad");
+  await loadThread(active).catch(() => undefined);
+}
+
 /** Post-fold side effects, shared by single and batched event deliveries. */
 function afterRunEvents(runId: string, events: AppEvent[]): void {
   let refreshGit = false;

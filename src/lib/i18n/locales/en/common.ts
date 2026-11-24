@@ -8,6 +8,7 @@ export const common = {
   "common.back": "Back",
   "common.forward": "Forward",
   "common.reload": "Reload",
+  "common.liveUpdatesFailed": "Live updates are unavailable. Reload the window to reconnect.",
   "common.retry": "Retry",
   "common.dismiss": "Dismiss",
   "common.search": "Search",
