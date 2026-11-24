@@ -123,29 +123,6 @@ fn a_reused_pid_with_a_different_start_time_is_not_killable() {
     global_registry().unregister(pid);
 }
 
-#[test]
-fn only_a_dead_or_foreign_parent_makes_an_orphan_root() {
-    let own = r"c:\users\borch\appdata\local\pult\antigravity\agy_acp_server.exe";
-    assert!(super::is_orphan_root(None, own));
-    assert!(!super::is_orphan_root(Some((own, "agy_acp_server.exe")), own));
-    assert!(!super::is_orphan_root(
-        Some((r"c:\somewhere\Pult-0.1.12c.exe", "Pult-0.1.12c.exe")),
-        own
-    ));
-    assert!(super::is_orphan_root(
-        Some((r"c:\windows\explorer.exe", "explorer.exe")),
-        own
-    ));
-}
-
-#[test]
-fn reap_ignores_an_executable_that_is_not_our_agent() {
-    let reaped = super::reap_orphan_agents(std::path::Path::new(
-        r"C:\pult-none\agy_acp_server.exe",
-    ));
-    assert_eq!(reaped, 0);
-}
-
 #[cfg(windows)]
 #[test]
 fn adopted_children_join_the_kill_on_close_job() {

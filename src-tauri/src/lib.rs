@@ -229,16 +229,7 @@ pub fn run() {
         .setup(|app| {
             #[cfg(windows)]
             register_toast_app_id();
-            // Previous runs could exit without killing their agents (no
-            // destructors on process::exit). The job object prevents that from
-            // now on; this clears whatever an earlier build left behind.
-            if let Some(exe) = config::antigravity_server_path() {
-                let reaped = processes::reap_orphan_agents(&exe);
-                if reaped > 0 {
-                    tracing::warn!(target: "pult::processes", trees = reaped,
-                        "reaped orphaned agent trees from a previous run");
-                }
-            }
+
             let store = match open_store() {
                 Ok(store) => store,
                 Err(error) => {
