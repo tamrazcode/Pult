@@ -1561,6 +1561,74 @@ fn steered_message_and_queue_delete_commit_together() {
     assert_eq!(raw_q2, 1, "a failed commit must roll the delete back");
 }
 
+/// The terminal transaction: transcript, run record and thread status either
+/// all commit or none do.
+#[test]
+fn terminal_event_run_and_thread_settle_commit_together() {
+    let store = Store::open_in_memory().unwrap();
+    let mut working = thread("t-1", 1_000);
+    working.status = "working".to_string();
+    store.create_thread(&working).unwrap();
+    store.create_run(&run("r-1", "t-1", 0)).unwrap();
+
+    let event = store
+        .finish_run_with_terminal_event(
+            "r-1",
+            "t-1",
+            5_000,
+            "finished",
+            "end_turn",
+            None,
+            EventKind::RunFinished {
+                stop_reason: "end_turn".to_string(),
+                error: None,
+            },
+        )
+        .unwrap();
+    assert_eq!(event.seq, 0);
+    let run_record = store.list_runs("t-1").unwrap().pop().unwrap();
+    assert_eq!(run_record.status, "finished");
+    assert_eq!(run_record.stopped_at, Some(5_000));
+    assert_eq!(store.get_thread("t-1").unwrap().status, "settled");
+    assert_eq!(store.load_events("r-1").unwrap(), vec![event]);
+
+    // A forced failure on the thread settle rolls the event and run update back.
+    let mut working2 = thread("t-2", 1_000);
+    working2.status = "working".to_string();
+    store.create_thread(&working2).unwrap();
+    store.create_run(&run("r-2", "t-2", 0)).unwrap();
+    store
+        .with_conn(|conn| {
+            conn.execute_batch(
+                "CREATE TRIGGER fail_terminal_settle BEFORE UPDATE OF status ON threads
+                 WHEN NEW.id = 't-2' AND NEW.status = 'settled'
+                 BEGIN SELECT RAISE(ABORT, 'forced'); END;",
+            )
+            .map_err(|e| sql("create trigger", e))?;
+            Ok(())
+        })
+        .unwrap();
+
+    assert!(store
+        .finish_run_with_terminal_event(
+            "r-2",
+            "t-2",
+            6_000,
+            "failed",
+            "failed",
+            Some("boom"),
+            EventKind::RunFinished {
+                stop_reason: "failed".to_string(),
+                error: Some("boom".to_string()),
+            },
+        )
+        .is_err());
+    assert!(store.load_events("r-2").unwrap().is_empty(), "event rolled back");
+    let run2 = store.list_runs("t-2").unwrap().pop().unwrap();
+    assert_eq!(run2.status, "running", "run row rolled back");
+    assert_eq!(store.get_thread("t-2").unwrap().status, "working");
+}
+
 #[test]
 fn failed_status_update_rolls_back_the_queue_commit() {
     use crate::store::records::QueueItem;

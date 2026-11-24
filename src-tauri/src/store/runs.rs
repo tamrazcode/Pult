@@ -64,6 +64,80 @@ impl Store {
         })
     }
 
+    /// Commits the terminal event, the run row and the settled thread status
+    /// in ONE transaction; the caller emits the returned event only after the
+    /// commit. A crash between "run finished" and the transcript therefore
+    /// cannot leave a failed run with a healthy-looking thread.
+    #[allow(clippy::too_many_arguments)]
+    pub fn finish_run_with_terminal_event(
+        &self,
+        run_id: &str,
+        thread_id: &str,
+        stopped_at_ms: i64,
+        status: &str,
+        stop_reason: &str,
+        error: Option<&str>,
+        kind: crate::events::EventKind,
+    ) -> Result<crate::events::Event, PultError> {
+        self.with_conn(|conn| {
+            conn.execute("BEGIN IMMEDIATE", [])
+                .map_err(|e| sql("finish_run_with_terminal_event begin", e))?;
+            let write = (|| -> Result<crate::events::Event, PultError> {
+                let seq: i64 = conn
+                    .query_row(
+                        "SELECT COALESCE(MAX(seq) + 1, 0) FROM events WHERE run_id = ?1",
+                        params![run_id],
+                        |row| row.get(0),
+                    )
+                    .map_err(|e| sql("finish_run_with_terminal_event seq", e))?;
+                let event = crate::events::Event::new(run_id, seq as u64, kind.clone());
+                let (tag, payload) = super::events::split_kind(&event)?;
+                conn.execute(
+                    "INSERT INTO events (id, run_id, seq, ts, kind, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    params![
+                        event.id,
+                        event.run_id,
+                        event.seq as i64,
+                        event.ts,
+                        tag,
+                        payload
+                    ],
+                )
+                .map_err(|e| sql("finish_run_with_terminal_event insert event", e))?;
+                let updated = conn
+                    .execute(
+                        "UPDATE runs SET stopped_at = ?2, status = ?3, stop_reason = ?4,
+                                         error = ?5
+                         WHERE id = ?1 AND thread_id = ?6",
+                        params![run_id, stopped_at_ms, status, stop_reason, error, thread_id],
+                    )
+                    .map_err(|e| sql("finish_run_with_terminal_event update run", e))?;
+                if updated == 0 {
+                    return Err(PultError::store(format!(
+                        "finish_run: run not found: {run_id}"
+                    )));
+                }
+                conn.execute(
+                    "UPDATE threads SET status = 'settled', updated_at = ?2 WHERE id = ?1",
+                    params![thread_id, stopped_at_ms],
+                )
+                .map_err(|e| sql("finish_run_with_terminal_event settle thread", e))?;
+                Ok(event)
+            })();
+            match write {
+                Ok(event) => conn
+                    .execute("COMMIT", [])
+                    .map(|_| event)
+                    .map_err(|e| sql("finish_run_with_terminal_event commit", e)),
+                Err(err) => {
+                    let _ = conn.execute("ROLLBACK", []);
+                    Err(err)
+                }
+            }
+        })
+    }
+
     /// All runs of a thread, ordered by idx (§4.2: runs are numbered per thread).
     pub fn list_runs(&self, thread_id: &str) -> Result<Vec<RunRecord>, PultError> {
         self.with_conn(|conn| {

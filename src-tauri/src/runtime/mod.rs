@@ -3655,38 +3655,56 @@ impl AgentRuntime {
         stop_reason: &str,
         failure: Option<String>,
     ) -> Result<(), crate::PultError> {
-        let finished = Event::new(
-            run_id.to_string(),
-            // A deleted thread/run must still release the runtime state below.
-            self.store.next_seq(run_id).unwrap_or(0),
+        match self.store.finish_run_with_terminal_event(
+            run_id,
+            thread_id,
+            now_millis(),
+            status,
+            stop_reason,
+            failure.as_deref(),
             EventKind::RunFinished {
                 stop_reason: stop_reason.to_string(),
                 error: failure.clone(),
             },
-        );
-        match self.store.append_event(&finished) {
-            Ok(()) => self.emit_run_event(run_id, &finished),
-            Err(err) => tracing::warn!(target: "pult::runtime",
-                error = %err, "run_finished not persisted (thread removed?)"),
-        }
-        let _ = self.store.finish_run(
-            run_id,
-            now_millis(),
-            status,
-            Some(stop_reason),
-            failure.as_deref(),
-        );
+        ) {
+            Ok(event) => {
+                // Publish only after the transcript, the run row and the
+                // settled thread are one committed fact.
+                self.emit_run_event(run_id, &event);
+            }
+            Err(err) => {
+                tracing::warn!(target: "pult::runtime",
+                    error = %err, "terminal run commit failed; falling back");
+                let fallback = Event::new(
+                    run_id.to_string(),
+                    self.store.next_seq(run_id).unwrap_or(0),
+                    EventKind::RunFinished {
+                        stop_reason: stop_reason.to_string(),
+                        error: failure.clone(),
+                    },
+                );
+                if self.store.append_event(&fallback).is_ok() {
+                    self.emit_run_event(run_id, &fallback);
+                }
+                let _ = self.store.finish_run(
+                    run_id,
+                    now_millis(),
+                    status,
+                    Some(stop_reason),
+                    failure.as_deref(),
+                );
+                let _ = self.store.set_thread_status(thread_id, "settled");
+            }
+        };
         // Child runs settle their delegated-task row only after the run is no
         // longer "working": a steer that lands in between sees a free thread
         // and dispatches a follow-up instead of racing a finished task.
         if let Some(detail) = &failure {
             tracing::warn!(target: "pult::runtime", detail = %detail, "run ended with failure");
         }
-        // Settle before releasing the working claim: a send accepted in the
-        // gap would set the thread working and then be overwritten here. The
-        // run is over either way; a refused delete leaves a usable thread, so
-        // the UI must see the settled status before the delete attempt.
-        let _ = self.store.set_thread_status(thread_id, "settled");
+        // The settled status committed with the terminal event above, before
+        // the working claim is released: a send accepted in the gap cannot be
+        // overwritten back to settled.
         // Hold the thread through the capture: a manual or queued next turn
         // must not race the checkpoint's git snapshot. The provider is already
         // done (RunFinished was emitted), so this only delays the next start.

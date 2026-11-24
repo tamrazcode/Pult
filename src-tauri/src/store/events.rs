@@ -165,7 +165,7 @@ impl Store {
 
 /// Splits an `EventKind` into its stored columns: the serde tag ("tool_call")
 /// and the payload JSON.
-fn split_kind(event: &Event) -> Result<(String, String), PultError> {
+pub(crate) fn split_kind(event: &Event) -> Result<(String, String), PultError> {
     let value = serde_json::to_value(&event.kind).map_err(|e| {
         PultError::store(format!("append_event encode kind (id {}): {e}", event.id))
     })?;
