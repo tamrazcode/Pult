@@ -131,10 +131,23 @@ pub fn resolve(
     root: &std::path::Path,
     request: &PolicyRequest<'_>,
 ) -> PolicyDecision {
-    // A remembered allow_always short-circuits the mode scope only when the
-    // mode is not supervised, nothing escapes the workspace, and the option
-    // still maps to an allow kind (never a reused reject id).
-    if mode != PermissionMode::Supervised && !request.escapes_workspace(root) {
+    // Whether the *current mode* would allow this operation on its own. A
+    // remembered allow may only reuse a decision inside that scope: a broad
+    // "always" granted earlier must not outlive a switch to a narrower mode
+    // (or auto-approve a delete/execute in Auto Edit).
+    let mode_allows = match mode {
+        PermissionMode::Supervised => false,
+        // An edit needs a known target; an empty locations list is not a
+        // verified target and must go to the user.
+        PermissionMode::AutoEdit => {
+            request.tool_kind == "edit"
+                && !request.paths.is_empty()
+                && !request.escapes_workspace(root)
+        }
+        PermissionMode::Auto => request.tool_kind != "delete" && !request.escapes_workspace(root),
+        PermissionMode::FullAccess => true,
+    };
+    if mode_allows {
         if let Some(option_id) = request.remembered {
             if request
                 .options
@@ -148,7 +161,10 @@ pub fn resolve(
     match mode {
         PermissionMode::Supervised => PolicyDecision::Ask,
         PermissionMode::AutoEdit => {
-            if request.tool_kind == "edit" && !request.escapes_workspace(root) {
+            if request.tool_kind == "edit"
+                && !request.paths.is_empty()
+                && !request.escapes_workspace(root)
+            {
                 auto_allow(request)
             } else {
                 PolicyDecision::Ask
@@ -238,11 +254,18 @@ mod tests {
             PolicyDecision::Ask
         );
 
-        // Remembered allow_always short-circuits outside Supervised inside the workspace
-        // when the remembered option id still maps to an allow* kind.
+        // A remembered allow must not outlive the mode's own restriction:
+        // Auto asks for delete even when "always" was remembered earlier.
         let r_auto_del = req("delete", &paths, &options, Some("always"));
         assert_eq!(
             resolve(PermissionMode::Auto, &root(), &r_auto_del),
+            PolicyDecision::Ask
+        );
+
+        // Inside the mode's scope the remembered decision still applies.
+        let r_auto_edit = req("edit", &paths, &options, Some("always"));
+        assert_eq!(
+            resolve(PermissionMode::Auto, &root(), &r_auto_edit),
             PolicyDecision::AutoResolve("always".into())
         );
 
@@ -292,6 +315,19 @@ mod tests {
         let r5 = req("edit", &relative, &options, None);
         assert_eq!(
             resolve(PermissionMode::AutoEdit, &root(), &r5),
+            PolicyDecision::Ask
+        );
+        // No locations means no verified target: Auto Edit must ask.
+        let empty: Vec<String> = Vec::new();
+        let r6 = req("edit", &empty, &options, None);
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r6),
+            PolicyDecision::Ask
+        );
+        // A remembered allow cannot smuggle in a non-edit operation.
+        let r7 = req("execute", &inside, &options, Some("always"));
+        assert_eq!(
+            resolve(PermissionMode::AutoEdit, &root(), &r7),
             PolicyDecision::Ask
         );
     }
