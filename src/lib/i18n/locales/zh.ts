@@ -939,6 +939,9 @@ export const zh: Record<string, string> = {
   "chat.turn.rollback": "回滚",
   "chat.turn.rollbackConfirm": "将工作区文件恢复到此轮检查点？",
   "chat.turn.rollingBack": "正在恢复…",
+  "chat.turn.rollbackConfirmDirty":
+    "将工作区文件恢复到此轮？未提交的更改会被替换；会保留备份以便撤销。",
+  "chat.turn.undo": "撤销",
   "chat.turn.restored": "工作区已恢复到检查点",
   "chat.quietSummary.one": "已浏览 {{count}} 个步骤",
   "chat.quietSummary.other": "已浏览 {{count}} 个步骤",

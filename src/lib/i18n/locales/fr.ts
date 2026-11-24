@@ -979,6 +979,9 @@ export const fr: Record<string, string> = {
   "chat.turn.rollbackConfirm":
     "Restaurer les fichiers de l'espace de travail au point de contrôle de ce tour ?",
   "chat.turn.rollingBack": "Restauration…",
+  "chat.turn.rollbackConfirmDirty":
+    "Restaurer les fichiers de l'espace de travail à ce tour ? Les modifications non validées sont remplacées ; une sauvegarde permet d'annuler.",
+  "chat.turn.undo": "Annuler",
   "chat.turn.restored": "Espace de travail restauré au point de contrôle",
   "chat.quietSummary.one": "{{count}} étape explorée",
   "chat.quietSummary.other": "{{count}} étapes explorées",

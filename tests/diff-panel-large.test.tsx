@@ -64,6 +64,7 @@ function bigState(): GitThreadState {
     checkpoints: [],
     activeCheckpoint: null,
     restoringCheckpoint: null,
+    restoreBackupId: null,
   };
 }
 

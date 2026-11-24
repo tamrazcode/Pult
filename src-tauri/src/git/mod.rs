@@ -1359,9 +1359,15 @@ async fn prune_empty_parents(repo: &Path, path: &Path) {
 }
 
 /// Restores the worktree to the checkpoint tree: modified and deleted files
-/// come back, files absent from the snapshot are removed. HEAD, the real index
-/// and git-ignored files/directories are left alone.
-pub async fn checkpoint_restore(dir: &Path, run_id: &str) -> Result<(), PultError> {
+/// come back, files absent from the snapshot are moved aside. HEAD, the real
+/// index and git-ignored files/directories are left alone.
+///
+/// The current worktree is saved as a checkpoint first, and every removed path
+/// is quarantined instead of deleted: a failed checkout puts the moves back,
+/// and the returned run id can be passed to this same function to undo a
+/// successful restore.
+pub async fn checkpoint_restore(dir: &Path, run_id: &str) -> Result<String, PultError> {
+    validate_run_id(run_id)?;
     let repo = resolve_repo(dir).await?;
     let target = checkpoint_ref(&repo, run_id).await?;
     let tree = split_nul_paths(
@@ -1390,45 +1396,104 @@ pub async fn checkpoint_restore(dir: &Path, run_id: &str) -> Result<(), PultErro
     // Scratch index first: if it cannot be built (e.g. a copied index in a
     // merge-conflict state) the worktree is still untouched.
     let (temp, _copied) = temp_index_for(&repo).await?;
-    let result = async {
-        git(&repo, &["read-tree", &target], Some(&temp)).await?;
 
-        for stale in worktree.difference(&tree) {
-            if is_protected_path(stale) {
-                continue;
-            }
-            let abs = repo.join(stale);
-            match tokio::fs::remove_file(&abs).await {
-                Ok(()) => prune_empty_parents(&repo, &abs).await,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => {
-                    // Windows refuses remove_file on a directory symlink or an
-                    // NTFS junction; the link itself goes through remove_dir
-                    // (the target stays). A real non-empty directory fails
-                    // here and is left alone.
-                    let is_link_or_dir = tokio::fs::symlink_metadata(&abs)
-                        .await
-                        .map(|meta| meta.file_type().is_symlink() || meta.is_dir())
-                        .unwrap_or(false);
-                    if !is_link_or_dir {
-                        return Err(internal(format!("restore remove {}: {err}", abs.display())));
-                    }
-                    tokio::fs::remove_dir(&abs).await.map_err(|link_err| {
-                        internal(format!("restore remove {}: {link_err}", abs.display()))
-                    })?;
-                    prune_empty_parents(&repo, &abs).await;
-                }
-            }
-        }
-
-        if !tree.is_empty() {
-            git(&repo, &["checkout-index", "--all", "--force"], Some(&temp)).await?;
-        }
-        Ok(())
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let backup_id = format!("restore-{stamp}");
+    if let Err(err) = checkpoint_with_temp_index(&repo, &temp, &backup_id).await {
+        drop_temp_index(&temp).await;
+        return Err(err);
     }
-    .await;
+
+    let stale: Vec<String> = worktree
+        .difference(&tree)
+        .filter(|path| !is_protected_path(path))
+        .cloned()
+        .collect();
+
+    // Reject ambiguous targets before any mutation: a real directory (a
+    // submodule or a stray folder) is not something a file restore may remove.
+    for path in &stale {
+        let abs = repo.join(path);
+        let Ok(meta) = tokio::fs::symlink_metadata(&abs).await else {
+            continue;
+        };
+        if meta.is_dir() && !meta.file_type().is_symlink() {
+            drop_temp_index(&temp).await;
+            return Err(internal(format!(
+                "restore refuses to remove directory {}",
+                abs.display()
+            )));
+        }
+    }
+
+    let quarantine = repo.join(".pult").join(format!("restore-{stamp}"));
+    let mut moved: Vec<(std::path::PathBuf, std::path::PathBuf)> = Vec::new();
+    let mut failure: Option<PultError> = None;
+
+    for path in &stale {
+        let abs = repo.join(path);
+        if tokio::fs::symlink_metadata(&abs).await.is_err() {
+            continue;
+        }
+        let dest = quarantine.join(path);
+        if let Some(parent) = dest.parent() {
+            if let Err(err) = tokio::fs::create_dir_all(parent).await {
+                failure = Some(internal(format!("restore quarantine {}: {err}", parent.display())));
+                break;
+            }
+        }
+        match tokio::fs::rename(&abs, &dest).await {
+            Ok(()) => moved.push((abs, dest)),
+            Err(err) => {
+                failure = Some(internal(format!("restore move {}: {err}", abs.display())));
+                break;
+            }
+        }
+    }
+
+    if failure.is_none() {
+        if let Err(err) = git(&repo, &["read-tree", &target], Some(&temp)).await {
+            failure = Some(err);
+        }
+    }
+    if failure.is_none() && !tree.is_empty() {
+        if let Err(err) = git(&repo, &["checkout-index", "--all", "--force"], Some(&temp)).await {
+            failure = Some(err);
+        }
+    }
+
+    if let Some(err) = failure {
+        let mut rollback_error: Option<String> = None;
+        for (abs, dest) in moved.iter().rev() {
+            if let Some(parent) = abs.parent() {
+                let _ = tokio::fs::create_dir_all(parent).await;
+            }
+            if let Err(move_err) = tokio::fs::rename(dest, abs).await {
+                rollback_error = Some(format!("{}: {move_err}", abs.display()));
+            }
+        }
+        if rollback_error.is_none() {
+            let _ = tokio::fs::remove_dir_all(&quarantine).await;
+        }
+        drop_temp_index(&temp).await;
+        return Err(match rollback_error {
+            Some(detail) => internal(format!(
+                "restore failed and could not put files back ({detail}); copies are in {}",
+                quarantine.display()
+            )),
+            None => err,
+        });
+    }
+
+    for (abs, _) in &moved {
+        prune_empty_parents(&repo, abs).await;
+    }
+    let _ = tokio::fs::remove_dir_all(&quarantine).await;
     drop_temp_index(&temp).await;
-    result
+    Ok(backup_id)
 }
 
 #[cfg(test)]

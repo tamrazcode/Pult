@@ -989,6 +989,9 @@ export const ru: Record<string, string> = {
   "chat.turn.rollbackConfirm":
     "Восстановить файлы рабочей области до контрольной точки этого хода?",
   "chat.turn.rollingBack": "Восстановление…",
+  "chat.turn.rollbackConfirmDirty":
+    "Вернуть файлы рабочей области к этому ходу? Незакоммиченные изменения будут заменены; резервная копия сохранится, откат доступен.",
+  "chat.turn.undo": "Отменить",
   "chat.turn.restored": "Рабочая область восстановлена до контрольной точки",
   "chat.quietSummary.one": "Пройден {{count}} шаг",
   "chat.quietSummary.other": "Пройдено {{count}} шагов",

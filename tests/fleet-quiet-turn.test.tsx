@@ -258,10 +258,16 @@ describe("Turn diff and rollback", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Rollback" }));
     expect(
-      screen.getByText("Restore workspace files to this turn's checkpoint?"),
+      screen.getByText(
+        "Restore workspace files to this turn? Uncommitted changes are replaced; a backup is kept so you can undo.",
+      ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    expect(screen.queryByText("Restore workspace files to this turn's checkpoint?")).toBeNull();
+    expect(
+      screen.queryByText(
+        "Restore workspace files to this turn? Uncommitted changes are replaced; a backup is kept so you can undo.",
+      ),
+    ).toBeNull();
     expect(restoreCheckpoint).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole("button", { name: "Rollback" }));

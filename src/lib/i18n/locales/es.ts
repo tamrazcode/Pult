@@ -976,6 +976,9 @@ export const es: Record<string, string> = {
   "chat.turn.rollbackConfirm":
     "¿Restaurar los archivos del espacio de trabajo al punto de control de este turno?",
   "chat.turn.rollingBack": "Restaurando…",
+  "chat.turn.rollbackConfirmDirty":
+    "¿Restaurar los archivos del espacio de trabajo a este turno? Los cambios sin confirmar se reemplazan; se guarda una copia para deshacer.",
+  "chat.turn.undo": "Deshacer",
   "chat.turn.restored": "Espacio de trabajo restaurado al punto de control",
   "chat.quietSummary.one": "{{count}} paso explorado",
   "chat.quietSummary.other": "{{count}} pasos explorados",

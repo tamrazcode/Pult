@@ -66,6 +66,8 @@ export interface GitThreadState {
   activeCheckpoint: ActiveCheckpointState | null;
   /** Checkpoint run id whose worktree restore is in flight. */
   restoringCheckpoint: string | null;
+  /** Safety checkpoint of the files the last rollback replaced; undo pointer. */
+  restoreBackupId?: string | null;
 }
 
 interface GitStore {
@@ -85,7 +87,10 @@ interface GitStore {
   viewCheckpointDiff: (threadId: string, runId: string) => Promise<void>;
   loadCheckpointFileDiff: (threadId: string, runId: string, path: string) => Promise<void>;
   clearCheckpointView: (threadId: string) => void;
+  /** Rolls back files; `restoreBackupId` keeps the safety checkpoint for undo. */
   restoreCheckpoint: (threadId: string, runId: string) => Promise<boolean>;
+  /** Puts the files replaced by the last rollback back in place. */
+  undoRestore: (threadId: string) => Promise<boolean>;
   setViewMode: (mode: DiffViewMode) => void;
   loadGhAvailability: () => Promise<void>;
   /** Drops a deleted thread's git state and any refresh it still has queued. */
@@ -110,6 +115,8 @@ function emptyState(): GitThreadState {
     checkpoints: [],
     activeCheckpoint: null,
     restoringCheckpoint: null,
+    /** Safety checkpoint of the files replaced by the last rollback. */
+    restoreBackupId: null,
   };
 }
 
@@ -560,17 +567,63 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({
       byThread: {
         ...s.byThread,
-        [threadId]: { ...(s.byThread[threadId] ?? emptyState()), restoringCheckpoint: runId },
+        [threadId]: {
+          ...(s.byThread[threadId] ?? emptyState()),
+          restoringCheckpoint: runId,
+          error: null,
+        },
       },
     }));
     try {
-      await gitCheckpointRestore(threadId, runId);
+      const backupId = await gitCheckpointRestore(threadId, runId);
       set((s) => {
         const prev = s.byThread[threadId] ?? emptyState();
         return {
           byThread: {
             ...s.byThread,
-            [threadId]: { ...prev, restoringCheckpoint: null, activeCheckpoint: null },
+            [threadId]: {
+              ...prev,
+              restoringCheckpoint: null,
+              activeCheckpoint: null,
+              restoreBackupId: backupId ?? null,
+            },
+          },
+        };
+      });
+      await Promise.all([get().refresh(threadId), get().loadCheckpoints(threadId)]);
+      return true;
+    } catch (err) {
+      set((s) => ({
+        byThread: {
+          ...s.byThread,
+          [threadId]: {
+            ...(s.byThread[threadId] ?? emptyState()),
+            restoringCheckpoint: null,
+            error: ipcErrorMessage(err),
+          },
+        },
+      }));
+      return false;
+    }
+  },
+
+  undoRestore: async (threadId) => {
+    const backupId = get().byThread[threadId]?.restoreBackupId;
+    if (!backupId || get().byThread[threadId]?.restoringCheckpoint) return false;
+    set((s) => ({
+      byThread: {
+        ...s.byThread,
+        [threadId]: { ...(s.byThread[threadId] ?? emptyState()), restoringCheckpoint: backupId },
+      },
+    }));
+    try {
+      await gitCheckpointRestore(threadId, backupId);
+      set((s) => {
+        const prev = s.byThread[threadId] ?? emptyState();
+        return {
+          byThread: {
+            ...s.byThread,
+            [threadId]: { ...prev, restoringCheckpoint: null, restoreBackupId: null },
           },
         };
       });

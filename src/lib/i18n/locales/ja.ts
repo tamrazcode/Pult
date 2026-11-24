@@ -972,6 +972,9 @@ export const ja: Record<string, string> = {
   "chat.turn.rollbackConfirm":
     "ワークスペースのファイルをこのターンのチェックポイントに戻しますか？",
   "chat.turn.rollingBack": "復元中…",
+  "chat.turn.rollbackConfirmDirty":
+    "ワークスペースのファイルをこのターンに戻しますか？未コミットの変更は置き換えられますが、取り消せるようバックアップを保存します。",
+  "chat.turn.undo": "元に戻す",
   "chat.turn.restored": "ワークスペースをチェックポイントに復元しました",
   "chat.quietSummary.one": "{{count}} ステップを確認",
   "chat.quietSummary.other": "{{count}} ステップを確認",

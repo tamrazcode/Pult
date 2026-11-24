@@ -150,6 +150,9 @@ export const chat = {
   "chat.turn.rollback": "Rollback",
   "chat.turn.rollbackConfirm": "Restore workspace files to this turn's checkpoint?",
   "chat.turn.rollingBack": "Restoring…",
+  "chat.turn.rollbackConfirmDirty":
+    "Restore workspace files to this turn? Uncommitted changes are replaced; a backup is kept so you can undo.",
+  "chat.turn.undo": "Undo",
   "chat.turn.restored": "Workspace restored to checkpoint",
   "chat.quietSummary.one": "Explored {{count}} step",
   "chat.quietSummary.other": "Explored {{count}} steps",

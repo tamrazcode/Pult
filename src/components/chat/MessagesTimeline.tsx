@@ -882,10 +882,15 @@ function RunActions({
   const t = useT();
   const [armed, setArmed] = useState(false);
   const [restored, setRestored] = useState(false);
+  // Safety checkpoint of the files this rollback replaced; drives Undo.
+  const [backupId, setBackupId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!restored) return;
-    const timer = window.setTimeout(() => setRestored(false), 2500);
+    const timer = window.setTimeout(() => {
+      setRestored(false);
+      setBackupId(null);
+    }, 8000);
     return () => window.clearTimeout(timer);
   }, [restored]);
 
@@ -909,7 +914,20 @@ function RunActions({
     setArmed(false);
     void (async () => {
       const ok = await useGitStore.getState().restoreCheckpoint?.(threadId, runId);
-      if (ok) setRestored(true);
+      if (ok) {
+        setRestored(true);
+        setBackupId(useGitStore.getState().byThread[threadId]?.restoreBackupId ?? null);
+      }
+    })();
+  };
+
+  const undoRollback = () => {
+    void (async () => {
+      const ok = await useGitStore.getState().undoRestore?.(threadId);
+      if (ok) {
+        setBackupId(null);
+        setRestored(false);
+      }
     })();
   };
 
@@ -919,7 +937,7 @@ function RunActions({
         <span className="activity-shimmer">{t("chat.turn.rollingBack")}</span>
       ) : armed ? (
         <>
-          <span className="text-text-secondary">{t("chat.turn.rollbackConfirm")}</span>
+          <span className="text-text-secondary">{t("chat.turn.rollbackConfirmDirty")}</span>
           <button
             type="button"
             onClick={confirmRollback}
@@ -953,7 +971,20 @@ function RunActions({
           </button>
         </span>
       )}
-      {restored && <span className="text-success">{t("chat.turn.restored")}</span>}
+      {restored && (
+        <span className="flex items-center gap-2 text-success">
+          {t("chat.turn.restored")}
+          {backupId && (
+            <button
+              type="button"
+              onClick={undoRollback}
+              className="text-text-tertiary underline-offset-2 transition hover:text-text-primary hover:underline"
+            >
+              {t("chat.turn.undo")}
+            </button>
+          )}
+        </span>
+      )}
     </div>
   );
 }

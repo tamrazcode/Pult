@@ -1161,12 +1161,13 @@ pub async fn git_checkpoint_diff_file(
 }
 
 /// Rolls the worktree back to a checkpoint tree without touching HEAD.
+/// Returns the safety checkpoint id that restores the pre-rollback files.
 #[tauri::command]
 pub async fn git_checkpoint_restore(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,
     thread_id: String,
     run_id: String,
-) -> Result<(), PultError> {
+) -> Result<String, PultError> {
     let dir = thread_git_dir(&runtime, &thread_id)?;
     crate::git::checkpoint_restore(&dir, &run_id).await
 }

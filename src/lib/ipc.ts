@@ -687,9 +687,10 @@ export function gitCheckpointDiffFile(
   });
 }
 
-/** Rolls the worktree back to a checkpoint tree without touching HEAD. */
-export function gitCheckpointRestore(threadId: string, runId: string): Promise<void> {
-  return invokeRequired<void>("git_checkpoint_restore", { threadId, runId });
+/** Rolls the worktree back to a checkpoint tree without touching HEAD.
+ *  Resolves with the safety checkpoint id that restores the previous files. */
+export function gitCheckpointRestore(threadId: string, runId: string): Promise<string> {
+  return invokeRequired<string>("git_checkpoint_restore", { threadId, runId });
 }
 
 // ---- PTY terminals (M5) ----

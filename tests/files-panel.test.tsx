@@ -96,6 +96,7 @@ function seedGit(entries: Array<{ path: string; indexStatus: string; worktreeSta
         checkpoints: [],
         activeCheckpoint: null,
         restoringCheckpoint: null,
+        restoreBackupId: null,
       },
     },
   });

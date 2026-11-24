@@ -1377,6 +1377,7 @@ describe("composer", () => {
           checkpoints: [],
           activeCheckpoint: null,
           restoringCheckpoint: null,
+          restoreBackupId: null,
         },
       },
     });

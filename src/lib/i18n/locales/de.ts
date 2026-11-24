@@ -974,6 +974,9 @@ export const de: Record<string, string> = {
   "chat.turn.rollback": "Zurücksetzen",
   "chat.turn.rollbackConfirm": "Workspace-Dateien auf den Checkpoint dieses Turns zurücksetzen?",
   "chat.turn.rollingBack": "Wird wiederhergestellt…",
+  "chat.turn.rollbackConfirmDirty":
+    "Workspace-Dateien auf diesen Turn zurücksetzen? Nicht committete Änderungen werden ersetzt; ein Backup bleibt für das Rückgängigmachen.",
+  "chat.turn.undo": "Rückgängig",
   "chat.turn.restored": "Workspace auf Checkpoint zurückgesetzt",
   "chat.quietSummary.one": "{{count}} Schritt durchsucht",
   "chat.quietSummary.other": "{{count}} Schritte durchsucht",
