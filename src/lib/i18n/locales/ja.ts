@@ -201,6 +201,7 @@ export const ja: Record<string, string> = {
   "chat.tool.actions": "操作",
   "chat.tool.working": "処理中",
   "chat.list.and": "と",
+  "chat.historyLoadFailed": "このスレッドの履歴を読み込めませんでした。",
   "chat.error.retry": "再試行",
   "chat.error.copyDiagnostics": "診断情報をコピー",
   "chat.elicitation.submit": "送信",

@@ -201,6 +201,7 @@ export const fr: Record<string, string> = {
   "chat.tool.actions": "Actions",
   "chat.tool.working": "En cours",
   "chat.list.and": "et",
+  "chat.historyLoadFailed": "Impossible de charger l'historique de ce fil.",
   "chat.error.retry": "Réessayer",
   "chat.error.copyDiagnostics": "Copier les diagnostics",
   "chat.elicitation.submit": "Valider",

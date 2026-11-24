@@ -58,6 +58,7 @@ export const chat = {
   "chat.tool.actions": "Actions",
   "chat.tool.working": "Working",
   "chat.list.and": "and",
+  "chat.historyLoadFailed": "Couldn't load this thread's history.",
   "chat.error.retry": "Retry",
   "chat.error.copyDiagnostics": "Copy diagnostics",
   "chat.elicitation.submit": "Submit",

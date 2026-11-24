@@ -201,6 +201,7 @@ export const de: Record<string, string> = {
   "chat.tool.actions": "Aktionen",
   "chat.tool.working": "Arbeitet",
   "chat.list.and": "und",
+  "chat.historyLoadFailed": "Der Verlauf dieses Threads konnte nicht geladen werden.",
   "chat.error.retry": "Wiederholen",
   "chat.error.copyDiagnostics": "Diagnose kopieren",
   "chat.elicitation.submit": "Absenden",

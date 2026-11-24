@@ -197,6 +197,7 @@ export const zh: Record<string, string> = {
   "chat.tool.actions": "操作",
   "chat.tool.working": "处理中",
   "chat.list.and": "和",
+  "chat.historyLoadFailed": "无法加载此线程的历史记录。",
   "chat.error.retry": "重试",
   "chat.error.copyDiagnostics": "复制诊断信息",
   "chat.elicitation.submit": "提交",

@@ -212,6 +212,7 @@ export const ru: Record<string, string> = {
   "chat.tool.actions": "Действия",
   "chat.tool.working": "Работает",
   "chat.list.and": "и",
+  "chat.historyLoadFailed": "Не удалось загрузить историю треда.",
   "chat.error.retry": "Повторить",
   "chat.error.copyDiagnostics": "Копировать диагностику",
   "chat.elicitation.submit": "Отправить",
