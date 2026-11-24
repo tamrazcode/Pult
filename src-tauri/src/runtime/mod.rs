@@ -203,6 +203,9 @@ struct PendingPermission {
     tool_kind: String,
     /// optionId в†’ ACP kind, for remembered-decision bookkeeping.
     option_kinds: HashMap<String, String>,
+    /// Locations the approved operation covers; becomes an allow grant for the
+    /// matching ACP callback in this run.
+    paths: Vec<String>,
 }
 
 /// A surfaced elicitation awaiting the UI's answer.
@@ -3091,6 +3094,9 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
     }
     timing.config_ms = config_started.elapsed().as_millis() as u64;
     let mut pending_permissions: HashMap<String, PendingPermission> = HashMap::new();
+    // Allow answers scoped to this run: ACP callbacks check them before
+    // touching files or spawning a terminal.
+    let mut approval_grants: Vec<crate::runtime::permissions::ApprovalGrant> = Vec::new();
     let mut pending_elicitations: HashMap<String, PendingElicitation> = HashMap::new();
     let mut failure: Option<String> = None;
     // Assigned on every break path before the post-loop read.
@@ -3152,6 +3158,14 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                     if let Some(kind) =
                                         pending.option_kinds.get(option_id).cloned()
                                     {
+                                        if kind.starts_with("allow") {
+                                            approval_grants.push(
+                                                crate::runtime::permissions::ApprovalGrant {
+                                                    tool_kind: pending.tool_kind.clone(),
+                                                    paths: pending.paths.clone(),
+                                                },
+                                            );
+                                        }
                                         if crate::runtime::permissions::is_rememberable(&kind) {
                                             runtime.remember_decision(
                                                 &workspace_key(&root),
@@ -3266,6 +3280,28 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                             let _ = conn.respond_client(request_id, reply).await;
                         }
                         ClientRequest::WriteFile { request_id, params } => {
+                            // Supervised writes need an approval for this exact
+                            // path; a direct callback must not bypass the card.
+                            let mode = runtime.permission_mode_for(&thread_id);
+                            if let Err(message) =
+                                crate::runtime::permissions::authorize_write(
+                                    mode,
+                                    &approval_grants,
+                                    &root,
+                                    &params.path,
+                                )
+                            {
+                                let _ = conn
+                                    .respond_client(
+                                        request_id,
+                                        Err(crate::protocol::jsonrpc::RpcError::new(
+                                            -32000,
+                                            message,
+                                        )),
+                                    )
+                                    .await;
+                                continue;
+                            }
                             let (reply, change) = write_file_sandboxed(&root, &params);
                             if let Some((path, diff, added, removed)) = change {
                                 let flushed = batcher.push(EventKind::FileChanged {
@@ -3292,6 +3328,24 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                                 .mark_child_status(&thread_id, "waiting_input");
                         }
                         ClientRequest::TerminalCreate { request_id, params } => {
+                            let mode = runtime.permission_mode_for(&thread_id);
+                            if let Err(message) =
+                                crate::runtime::permissions::authorize_terminal(
+                                    mode,
+                                    &approval_grants,
+                                )
+                            {
+                                let _ = conn
+                                    .respond_client(
+                                        request_id,
+                                        Err(crate::protocol::jsonrpc::RpcError::new(
+                                            -32000,
+                                            message,
+                                        )),
+                                    )
+                                    .await;
+                                continue;
+                            }
                             let reply = handle_terminal_create(
                                 &terminals,
                                 &owner_token,
@@ -4346,6 +4400,14 @@ fn surface_permission(
             wire_id: request_id.clone(),
             tool_kind: tool_kind_from_call(&params),
             option_kinds,
+            paths: params
+                .tool_call
+                .locations
+                .as_deref()
+                .unwrap_or_default()
+                .iter()
+                .map(|location| location.path.clone())
+                .collect(),
         },
     );
 

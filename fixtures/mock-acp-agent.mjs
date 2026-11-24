@@ -598,6 +598,33 @@ async function runTurn(sessionId, promptText, turnNumber, turn) {
       status: "in_progress",
       locations: [],
     });
+    // Ask before spawning: the client now enforces Supervised at the
+    // terminal callback boundary too.
+    const termPerm = await raceCancel(
+      turn,
+      agentRequest("session/request_permission", {
+        sessionId,
+        toolCall: {
+          toolCallId: termToolId,
+          title: "Run a terminal command",
+          name: "run_terminal",
+          kind: "execute",
+          status: "pending",
+          locations: [],
+        },
+        options: PERMISSION_OPTIONS,
+      }),
+    );
+    const termOutcome =
+      termPerm && typeof termPerm.outcome === "object" ? termPerm.outcome : null;
+    if (termOutcome && termOutcome.outcome === "cancelled") {
+      throw new CancelledError();
+    }
+    const termSelected =
+      termOutcome && termOutcome.outcome === "selected" ? termOutcome.optionId : null;
+    if (termSelected !== "mock-allow" && termSelected !== "mock-allow-always") {
+      throw new CancelledError();
+    }
     const created = await raceCancel(
       turn,
       agentRequest("terminal/create", {

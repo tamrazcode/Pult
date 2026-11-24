@@ -181,6 +181,107 @@ pub fn resolve(
     }
 }
 
+/// One allow answer from the user, scoped to this run. ACP callbacks
+/// (`fs/write_text_file`, terminal create) are authorized only against these,
+/// so an agent that skips `session/request_permission` cannot mutate files.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApprovalGrant {
+    /// ACP ToolKind of the approved request (edit, delete, execute, …).
+    pub tool_kind: String,
+    /// Locations from the approved request; empty means "unknown target".
+    pub paths: Vec<String>,
+}
+
+/// Same mapping the fs sandbox uses: a rootless POSIX path belongs to the
+/// workspace, a drive path is taken as-is.
+fn resolve_against_root(root: &std::path::Path, raw: &str) -> std::path::PathBuf {
+    use std::path::Component;
+    let candidate = std::path::Path::new(raw);
+    match candidate.components().next() {
+        Some(Component::Prefix(_)) => candidate.to_path_buf(),
+        Some(Component::RootDir) => {
+            let rest: std::path::PathBuf = candidate.components().skip(1).collect();
+            root.join(rest)
+        }
+        _ => root.join(candidate),
+    }
+}
+
+fn canonical_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if let Ok(real) = path.canonicalize() {
+        return Some(real);
+    }
+    // A file (and maybe its parents) does not exist yet: resolve the nearest
+    // existing ancestor and re-append the missing components.
+    let mut missing: Vec<std::ffi::OsString> = Vec::new();
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        missing.push(current.file_name()?.to_os_string());
+        if let Ok(base) = parent.canonicalize() {
+            let mut out = base;
+            for part in missing.iter().rev() {
+                out.push(part);
+            }
+            return Some(out);
+        }
+        current = parent;
+    }
+    None
+}
+
+/// Did the user approve a write to exactly this path in this run?
+pub fn grant_covers_write(
+    grants: &[ApprovalGrant],
+    root: &std::path::Path,
+    target: &str,
+) -> bool {
+    let Some(target) = canonical_path(&resolve_against_root(root, target)) else {
+        return false;
+    };
+    grants.iter().any(|grant| {
+        matches!(grant.tool_kind.as_str(), "edit" | "delete")
+            && grant.paths.iter().any(|path| {
+                canonical_path(&resolve_against_root(root, path))
+                    .is_some_and(|path| path == target)
+            })
+    })
+}
+
+/// Supervised and Auto Edit require an approved `execute` before a terminal
+/// process may be created; Auto and Full Access do not.
+pub fn authorize_terminal(mode: PermissionMode, grants: &[ApprovalGrant]) -> Result<(), &'static str> {
+    match mode {
+        PermissionMode::Supervised | PermissionMode::AutoEdit => {
+            if grants.iter().any(|grant| grant.tool_kind == "execute") {
+                Ok(())
+            } else {
+                Err("the agent must request permission before starting a terminal")
+            }
+        }
+        PermissionMode::Auto | PermissionMode::FullAccess => Ok(()),
+    }
+}
+
+/// Writes need an approved edit for the exact path in Supervised; Auto Edit
+/// trusts its own workspace sandbox, Auto and Full Access allow.
+pub fn authorize_write(
+    mode: PermissionMode,
+    grants: &[ApprovalGrant],
+    root: &std::path::Path,
+    target: &str,
+) -> Result<(), &'static str> {
+    match mode {
+        PermissionMode::Supervised => {
+            if grant_covers_write(grants, root, target) {
+                Ok(())
+            } else {
+                Err("the agent must request permission before writing this file")
+            }
+        }
+        PermissionMode::AutoEdit | PermissionMode::Auto | PermissionMode::FullAccess => Ok(()),
+    }
+}
+
 /// Pick the allow option: allow_once if offered, else the first allow-*.
 fn auto_allow(request: &PolicyRequest<'_>) -> PolicyDecision {
     if let Some(option) = request.find_kind("allow_once") {
@@ -330,6 +431,67 @@ mod tests {
             resolve(PermissionMode::AutoEdit, &root(), &r7),
             PolicyDecision::Ask
         );
+    }
+
+    #[test]
+    fn supervised_callbacks_need_a_matching_grant() {
+        let dir = std::env::temp_dir();
+        let target = dir.join("pult-grant-write.txt");
+        let target_text = target.to_string_lossy().into_owned();
+        let grant = ApprovalGrant {
+            tool_kind: "edit".to_string(),
+            paths: vec![target_text.clone()],
+        };
+
+        assert!(authorize_write(PermissionMode::Supervised, &[], &dir, &target_text).is_err());
+        assert!(
+            authorize_write(
+                PermissionMode::Supervised,
+                std::slice::from_ref(&grant),
+                &dir,
+                &target_text
+            )
+            .is_ok()
+        );
+        // A grant for a different file does not cover this one.
+        let other = ApprovalGrant {
+            tool_kind: "edit".to_string(),
+            paths: vec![dir.join("other.txt").to_string_lossy().into_owned()],
+        };
+        assert!(authorize_write(PermissionMode::Supervised, &[other], &dir, &target_text).is_err());
+        // An execute grant never authorizes a write.
+        let execute = ApprovalGrant {
+            tool_kind: "execute".to_string(),
+            paths: vec![target_text.clone()],
+        };
+        assert!(
+            authorize_write(PermissionMode::Supervised, &[execute], &dir, &target_text).is_err()
+        );
+        // A rootless workspace path maps to the same file as the grant.
+        std::fs::create_dir_all(dir.join("repo").join("src")).unwrap();
+        let relative = "/repo/src/pult-grant-write.txt";
+        let rooted = ApprovalGrant {
+            tool_kind: "edit".to_string(),
+            paths: vec![relative.to_string()],
+        };
+        assert!(
+            authorize_write(PermissionMode::Supervised, &[rooted], &dir, relative).is_ok(),
+            "rootless callback paths must match their rootless grants"
+        );
+    }
+
+    #[test]
+    fn terminals_need_a_grant_in_supervised_and_auto_edit() {
+        let grant = ApprovalGrant {
+            tool_kind: "execute".to_string(),
+            paths: Vec::new(),
+        };
+        assert!(authorize_terminal(PermissionMode::Supervised, &[]).is_err());
+        assert!(authorize_terminal(PermissionMode::AutoEdit, &[]).is_err());
+        assert!(authorize_terminal(PermissionMode::Supervised, std::slice::from_ref(&grant)).is_ok());
+        assert!(authorize_terminal(PermissionMode::AutoEdit, std::slice::from_ref(&grant)).is_ok());
+        assert!(authorize_terminal(PermissionMode::Auto, &[]).is_ok());
+        assert!(authorize_terminal(PermissionMode::FullAccess, &[]).is_ok());
     }
 
     #[test]
