@@ -681,9 +681,33 @@ fn boot_resets_orphaned_run_states_without_touching_updated_at() {
     store.create_thread(&working).unwrap();
     store.create_thread(&waiting).unwrap();
     store.create_thread(&settled).unwrap();
+    // A run that was live when the process died is terminal after boot.
+    setup_run(&store, "r-interrupted");
+    let mut completed = run("r-completed", "t-1", 1);
+    completed.status = "finished".to_string();
+    store.create_run(&completed).unwrap();
 
     let changed = store.reset_orphaned_run_states().unwrap();
     assert_eq!(changed, 2, "working + waiting reset, others untouched");
+
+    let runs = store.list_runs("t-1").unwrap();
+    let interrupted = runs.iter().find(|r| r.id == "r-interrupted").unwrap();
+    assert_eq!(interrupted.status, "failed");
+    assert_eq!(interrupted.stop_reason.as_deref(), Some("failed"));
+    assert!(
+        interrupted
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("restarted"),
+        "the failure reason must be explicit"
+    );
+    assert!(interrupted.stopped_at.is_some());
+    assert_eq!(
+        runs.iter().find(|r| r.id == "r-completed").unwrap().status,
+        "finished",
+        "finished runs stay finished"
+    );
 
     let w = store.get_thread("t-work").unwrap();
     assert_eq!(w.status, "draft");

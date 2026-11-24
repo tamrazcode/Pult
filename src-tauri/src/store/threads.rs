@@ -98,6 +98,18 @@ impl Store {
                     [],
                 )
                 .map_err(|e| sql("reset_orphaned_run_states update", e))?;
+            // A run cannot survive the process: an interrupted run must be
+            // terminal at boot, not a zombie spinner over the same transcript.
+            conn.execute(
+                "UPDATE runs
+                 SET status = 'failed',
+                     stopped_at = COALESCE(stopped_at, ?1),
+                     stop_reason = COALESCE(stop_reason, 'failed'),
+                     error = COALESCE(error, 'pult restarted while this run was active')
+                 WHERE status IN ('running', 'queued')",
+                params![now_millis()],
+            )
+            .map_err(|e| sql("reset_orphaned_run_states runs", e))?;
             // A crash between claim and commit leaves the row claimed forever;
             // unclaiming it puts the queued message back in the queue.
             conn.execute(
