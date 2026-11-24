@@ -52,7 +52,7 @@ import {
   isNativeSubagentItem,
   nativeSubagentInfo,
 } from "../../lib/nativeSubagents";
-import type { DelegatedTask } from "../../lib/types";
+import type { DelegatedTask, ImageInput } from "../../lib/types";
 import { useThreadsStore } from "../../stores/threads";
 import { useSettingsStore } from "../../stores/settings";
 import { useUiStore } from "../../stores/ui";
@@ -379,7 +379,7 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
 
   const crashed = view.error !== undefined || view.stopReason === "failed";
   // Recovery (§8 M7): a protocol/agent failure offers to re-send the turn.
-  const retryText = [...view.items].reverse().find((item) => item.type === "user")?.text;
+  const retryItem = [...view.items].reverse().find((item) => item.type === "user");
   const hiddenCount = Math.max(entries.length - windowSize, 0);
   const windowedEntries = entries.slice(hiddenCount);
   const historyTicks: HistoryTick[] = [];
@@ -498,9 +498,17 @@ export function MessagesTimeline({ threadId }: { threadId?: string }) {
           {crashed && (
             <CrashBanner
               detail={view.error ?? t("chat.failureNoReason")}
-              retryText={retryText}
+              retryText={retryItem?.text}
               onRetry={
-                threadId && retryText ? () => void retryLastMessage(threadId, retryText) : undefined
+                threadId && retryItem
+                  ? () =>
+                      void retryLastMessage(
+                        threadId,
+                        runId,
+                        retryItem.text,
+                        retryItem.images,
+                      )
+                  : undefined
               }
             />
           )}
@@ -1930,10 +1938,19 @@ function CrashBanner({
 }
 
 /** Re-sends the failed turn's user text on the thread's selected instance. */
-function retryLastMessage(threadId: string, text: string): void {
-  const instanceId = useUiStore.getState().selectedInstanceId;
+function retryLastMessage(
+  threadId: string,
+  runId: string | undefined,
+  text: string,
+  images: ImageInput[],
+): void {
+  // Retry the same turn: the run's own agent first, the user's images kept.
+  const run = runId
+    ? useRunsStore.getState().runsByThread[threadId]?.find((candidate) => candidate.id === runId)
+    : undefined;
+  const instanceId = run?.instanceId ?? useUiStore.getState().selectedInstanceId;
   if (!instanceId) return;
-  runsDispatch(threadId, text, instanceId, []).catch((err) =>
+  runsDispatch(threadId, text, instanceId, images).catch((err) =>
     useUiStore.getState().setGlobalError({ kind: "protocol", message: localizeIpcError(err) }),
   );
 }
