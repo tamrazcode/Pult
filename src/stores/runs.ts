@@ -508,6 +508,8 @@ interface RunsState {
   clearElicitation: (requestId?: string) => void;
   /** Backend-owned message queue per thread (auto-dispatch on run end). */
   queueByThread: Record<string, QueueItem[]>;
+  /** Bumped on every live queue update; a stale snapshot must not overwrite it. */
+  queueEpochByThread: Record<string, number>;
   /** Runs with Stop pressed; the UI offers force-stop while true. */
   cancellingByRun: Record<string, boolean>;
   markCancelling: (runId: string) => void;
@@ -542,6 +544,8 @@ interface RunsState {
     activeRunId?: string | null,
     desiredMode?: string | null,
     desiredConfig?: Record<string, ConfigOptionValue>,
+    /** Live queue epoch captured before the request; a newer epoch wins. */
+    queueEpochAtStart?: number,
   ) => void;
   /** Applies a "run:event" payload; seeds a view for unknown runs. */
   receiveRunEvent: (runId: string, event: AppEvent) => void;
@@ -562,6 +566,7 @@ export const useRunsStore = create<RunsState>((set, get) => ({
   commandsByThread: {},
   filesByThread: {},
   queueByThread: {},
+  queueEpochByThread: {},
   cancellingByRun: {},
   pendingUserByThread: {},
   activeElicitation: null,
@@ -661,11 +666,21 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       return { pendingUserByThread };
     }),
 
-  hydrateThread: (threadId, runs, events, queue, activeRunId, desiredMode, desiredConfig) =>
+  hydrateThread: (
+    threadId,
+    runs,
+    events,
+    queue,
+    activeRunId,
+    desiredMode,
+    desiredConfig,
+    queueEpochAtStart,
+  ) =>
     set((s) => {
       // Merge, don't replace: a threads_get snapshot taken before a local
       // runs_dispatch resolved may lack the run that is already streaming.
       // Fetched records win (authoritative status); local extras survive.
+      const fetchedIds = new Set(runs.map((run) => run.id));
       const byId = new Map((s.runsByThread[threadId] ?? []).map((r) => [r.id, r]));
       for (const r of runs) {
         const local = byId.get(r.id);
@@ -678,8 +693,12 @@ export const useRunsStore = create<RunsState>((set, get) => ({
       }
       // A run the DB calls active but the runtime no longer holds died with
       // the previous app session: mark it interrupted (crash diagnostics).
+      // Only runs the snapshot itself listed can be stale. A run created after
+      // the request started is live by definition and must not be failed.
       const records = [...byId.values()].map((r) =>
-        (r.status === "running" || r.status === "queued") && r.id !== activeRunId
+        fetchedIds.has(r.id) &&
+        (r.status === "running" || r.status === "queued") &&
+        r.id !== activeRunId
           ? {
               ...r,
               status: "failed" as const,
@@ -765,7 +784,16 @@ export const useRunsStore = create<RunsState>((set, get) => ({
             ? { ...s.commandsByThread, [threadId]: commands }
             : s.commandsByThread,
         filesByThread: { ...s.filesByThread, [threadId]: files },
-        queueByThread: { ...s.queueByThread, [threadId]: queue },
+        // A live queue:update that arrived after the request started wins over
+        // the older snapshot (it may already reflect a removed item).
+        queueByThread: {
+          ...s.queueByThread,
+          [threadId]:
+            queueEpochAtStart !== undefined &&
+            (s.queueEpochByThread[threadId] ?? 0) !== queueEpochAtStart
+              ? (s.queueByThread[threadId] ?? queue)
+              : queue,
+        },
         desiredModeByThread:
           desiredMode && desiredMode !== s.desiredModeByThread[threadId]
             ? { ...s.desiredModeByThread, [threadId]: desiredMode }
@@ -910,7 +938,13 @@ export const useRunsStore = create<RunsState>((set, get) => ({
     })),
 
   setQueue: (threadId, items) =>
-    set((s) => ({ queueByThread: { ...s.queueByThread, [threadId]: items } })),
+    set((s) => ({
+      queueByThread: { ...s.queueByThread, [threadId]: items },
+      queueEpochByThread: {
+        ...s.queueEpochByThread,
+        [threadId]: (s.queueEpochByThread[threadId] ?? 0) + 1,
+      },
+    })),
   setElicitation: (surface) =>
     set((s) => {
       if (!surface) return { activeElicitation: null, elicitationQueue: [] };

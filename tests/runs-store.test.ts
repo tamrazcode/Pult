@@ -901,4 +901,31 @@ describe("runs store", () => {
     expect(useRunsStore.getState().activeElicitation?.requestId).toBe("q2");
     expect(useRunsStore.getState().elicitationQueue).toEqual([]);
   });
+
+  it("does not fail a run that started after the snapshot request", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r-new", "th", "running")] },
+      viewsByRun: {},
+    });
+
+    useRunsStore.getState().hydrateThread("th", [], [], [], null);
+
+    expect(useRunsStore.getState().runsByThread["th"][0]?.status).toBe("running");
+  });
+
+  it("keeps a live queue that changed during the snapshot request", () => {
+    const item = (id: string) => ({
+      id,
+      threadId: "th",
+      instanceId: "mock",
+      text: id,
+      images: [],
+      createdAt: 0,
+    });
+    useRunsStore.getState().setQueue("th", [item("q2")]);
+
+    useRunsStore.getState().hydrateThread("th", [], [], [item("q1")], null, null, undefined, 0);
+
+    expect(useRunsStore.getState().queueByThread["th"]?.map((q) => q.id)).toEqual(["q2"]);
+  });
 });

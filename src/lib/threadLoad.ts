@@ -11,6 +11,9 @@ export async function loadThread(
   threadId: string,
   isCancelled: () => boolean = () => false,
 ): Promise<void> {
+  // Capture the live queue generation before the request: a queue:update that
+  // lands while it is in flight must win over the older snapshot.
+  const queueEpoch = useRunsStore.getState().queueEpochByThread[threadId] ?? 0;
   const detail = await threadsGet(threadId);
   if (isCancelled()) return;
   useThreadsStore.getState().upsertThread(detail.thread);
@@ -24,5 +27,6 @@ export async function loadThread(
       detail.activeRunId,
       detail.desiredMode,
       detail.desiredConfig,
+      queueEpoch,
     );
 }
