@@ -235,6 +235,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     },
     [draftKey],
   );
+  const rootRef = useRef<HTMLDivElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const inlineTokens = useMemo(() => {
     const tokens = new Map<string, { name: string; size: string }>();
@@ -806,6 +807,10 @@ export function Composer({ threadId }: { threadId?: string }) {
         if (tag === "TEXTAREA" && !(target as HTMLTextAreaElement).readOnly) return;
       }
       if (useUiStore.getState().paletteOpen) return;
+      // The shortcut must not grant a permission from another control: only
+      // the composer/approval card (or bare page focus) may answer it.
+      const root = rootRef.current;
+      if (!root || !target || (!root.contains(target) && target !== document.body)) return;
       const elicitation = useRunsStore.getState().activeElicitation;
       if (elicitation?.runId === runIdForApproval) return;
       const options = pendingApproval.options;
@@ -987,7 +992,7 @@ export function Composer({ threadId }: { threadId?: string }) {
   };
 
   return (
-    <div className="shrink-0 px-6 pb-5">
+    <div ref={rootRef} className="shrink-0 px-6 pb-5">
       {pendingApproval && (
         <div className="mx-auto mb-2 flex max-w-3xl items-center gap-2 rounded-(--radius-md) border border-warning bg-warning/10 px-3 py-1.5">
           <span className="min-w-0 flex-1 text-xs text-warning">
