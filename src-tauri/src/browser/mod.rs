@@ -635,24 +635,33 @@ fn encode_path(path: &str) -> String {
 /// 128 bits derived from OS-random hasher seeds: unguessable enough for a
 /// process-lifetime loopback token without pulling in a RNG dependency.
 fn random_token() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let state = std::collections::hash_map::RandomState::new();
-    let mut first = state.build_hasher();
-    first.write_u64(crate::events::now_millis() as u64);
-    first.write_u32(std::process::id());
-    let mut second = state.build_hasher();
-    second.write_u128(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos(),
-    );
-    format!("{:016x}{:016x}", first.finish(), second.finish())
+    // The token scopes what a page may read; it must come from the OS CSPRNG,
+    // not from a seedable hasher.
+    let mut bytes = [0u8; 16];
+    if getrandom::fill(&mut bytes).is_ok() {
+        return bytes.iter().map(|byte| format!("{byte:02x}")).collect();
+    }
+    // The OS RNG is unavailable (extremely rare): keep the server bootable
+    // without pretending this is a strong credential.
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{nanos:032x}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_tokens_are_32_hex_chars_and_unique() {
+        let first = random_token();
+        let second = random_token();
+        assert_eq!(first.len(), 32);
+        assert!(first.chars().all(|ch| ch.is_ascii_hexdigit()));
+        assert_ne!(first, second);
+    }
 
     #[test]
     fn safe_join_rejects_traversal_and_accepts_nested_files() {
