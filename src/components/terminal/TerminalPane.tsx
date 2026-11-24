@@ -19,13 +19,7 @@ function toBase64Utf8(text: string): string {
  * session-start cursor-position request is answered HERE through the same
  * write path — xterm knows the true cursor position.
  */
-export function TerminalPane({
-  threadId,
-  terminalId,
-}: {
-  threadId: string;
-  terminalId: string;
-}) {
+export function TerminalPane({ threadId, terminalId }: { threadId: string; terminalId: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
