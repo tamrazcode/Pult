@@ -60,7 +60,7 @@ async fn import_one(store: &Store, name: &str, entry: &Value) -> ImportOutcome {
         Ok(false) => {}
         Err(error) => return skipped(error.to_string()),
     }
-    let Some((transport, allow_localhost)) = parse_transport(entry).await else {
+    let Some((transport, _loopback_ok)) = parse_transport(entry).await else {
         return skipped("entry has neither `command` nor a supported `url`".to_string());
     };
     let mut input: CustomMcpServerInput = match serde_json::from_value(json!({
@@ -71,7 +71,11 @@ async fn import_one(store: &Store, name: &str, entry: &Value) -> ImportOutcome {
         Err(error) => return skipped(format!("could not build config: {error}")),
     };
     input.transport = transport;
-    input.allow_localhost = allow_localhost;
+    // Import is inert: nothing runs or connects until the user reviews the
+    // entry, enables it, and separately allows loopback. `_loopback_ok` above
+    // only decides whether a local URL is accepted by validation.
+    input.enabled = false;
+    input.allow_localhost = false;
     match config::create(store, input) {
         Ok(_) => ImportOutcome {
             name,
@@ -331,7 +335,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn import_stamps_allow_localhost_from_the_url() {
+    async fn import_is_inert_and_never_grants_loopback() {
         let store = Store::open_in_memory().unwrap();
         // Public IP literal on purpose: no DNS lookup inside the test.
         let outcomes = import_json(
@@ -357,8 +361,12 @@ mod tests {
                 .find(|server| server.name == name)
                 .unwrap_or_else(|| panic!("{name} was not imported"))
         };
-        assert!(by_name("local").allow_localhost);
-        assert!(!by_name("remote").allow_localhost);
+        // Imported entries do not start and cannot reach loopback until the
+        // user enables them and allows localhost explicitly.
+        for name in ["local", "remote"] {
+            assert!(!by_name(name).enabled, "{name} must import disabled");
+            assert!(!by_name(name).allow_localhost, "{name} must not allow loopback");
+        }
     }
 
     #[test]
