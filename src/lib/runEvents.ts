@@ -12,6 +12,7 @@ import {
   onSubagentFinished,
   onSubagentSpawned,
   onSubagentUpdated,
+  runsPendingElicitations,
 } from "./ipc";
 import { isTauri } from "./tauri";
 import { scheduleGitRefresh } from "../stores/git";
@@ -32,6 +33,18 @@ let unlisten: (() => void)[] | null = null;
  * anything missed while no listener was attached is projected again.
  */
 export async function resyncLiveState(): Promise<void> {
+  // A question surfaced while no listener was attached is still pending in
+  // the runtime; restore it before re-reading the thread projections.
+  const pending = await runsPendingElicitations().catch(() => []);
+  for (const request of pending) {
+    const surface: ElicitationSurface = {
+      runId: request.runId,
+      requestId: request.requestId,
+      message: request.message,
+      detail: (request.detail ?? {}) as Record<string, unknown>,
+    };
+    useRunsStore.getState().setElicitation(surface);
+  }
   await useThreadsStore
     .getState()
     .loadThreads()

@@ -319,6 +319,7 @@ pub fn run() {
             ipc::runs_queue_steer,
             ipc::runs_respond_permission,
             ipc::runs_respond_elicitation,
+            ipc::runs_pending_elicitations,
             ipc::runs_set_permission_mode,
             ipc::providers_instances_list,
             ipc::git_status,

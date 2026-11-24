@@ -457,6 +457,11 @@ export interface ElicitationRequestPayload {
   detail: unknown;
 }
 
+/** Elicitations still awaiting an answer (resync after a listener gap). */
+export function runsPendingElicitations(): Promise<ElicitationRequestPayload[]> {
+  return invokeWithFallback<ElicitationRequestPayload[]>("runs_pending_elicitations", []);
+}
+
 /** Removes one message from the thread's queue (composer row ✕). */
 export function runsQueueRemove(threadId: string, queueId: string): Promise<void> {
   return invokeRequired<void>("runs_queue_remove", { threadId, queueId });

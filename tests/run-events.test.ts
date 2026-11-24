@@ -39,9 +39,16 @@ const ipcMocks = vi.hoisted(() => {
     onAgentCaps?: (payload: AgentCapsPayload) => void;
   } = {};
   const providersInstancesList = vi.fn(async (): Promise<InstanceInfo[]> => []);
+  const runsPendingElicitations = vi.fn(async (): Promise<ElicitationRequestPayload[]> => []);
   const notifyRunFinished = vi.fn();
   const settingsSet = vi.fn(async () => undefined);
-  return { handlers, providersInstancesList, notifyRunFinished, settingsSet };
+  return {
+    handlers,
+    providersInstancesList,
+    runsPendingElicitations,
+    notifyRunFinished,
+    settingsSet,
+  };
 });
 
 vi.mock("../src/lib/notifications", () => ({
@@ -53,6 +60,7 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
   return {
     ...actual,
     providersInstancesList: ipcMocks.providersInstancesList,
+    runsPendingElicitations: ipcMocks.runsPendingElicitations,
     settingsSet: ipcMocks.settingsSet,
     onAgentProcess: vi.fn(async () => () => {}),
     onThreadUpdate: vi.fn(async () => () => {}),
@@ -143,6 +151,8 @@ describe("runEvents subscriptions", () => {
     vi.useFakeTimers();
     ipcMocks.providersInstancesList.mockClear();
     ipcMocks.providersInstancesList.mockResolvedValue([makeInstance()]);
+    ipcMocks.runsPendingElicitations.mockReset();
+    ipcMocks.runsPendingElicitations.mockResolvedValue([]);
     ipcMocks.notifyRunFinished.mockClear();
     ipcMocks.settingsSet.mockClear();
     for (const key of Object.keys(ipcMocks.handlers) as Array<keyof typeof ipcMocks.handlers>) {
@@ -394,5 +404,25 @@ describe("runEvents subscriptions", () => {
     expect(error?.kind).toBe("protocol");
     expect(error?.message).toContain("unknown instance mock");
     expect(error?.message).toContain("could not start");
+  });
+
+  it("restores a pending elicitation when the fan-in reattaches", async () => {
+    const { resyncLiveState } = await import("../src/lib/runEvents");
+    const { useRunsStore } = await import("../src/stores/runs");
+    ipcMocks.runsPendingElicitations.mockResolvedValue([
+      {
+        runId: "run-1",
+        requestId: "req-pending",
+        message: "Pick a color",
+        detail: { mode: "form" },
+      },
+    ]);
+
+    await resyncLiveState();
+
+    const active = useRunsStore.getState().activeElicitation;
+    expect(active?.requestId).toBe("req-pending");
+    expect(active?.message).toBe("Pick a color");
+    expect(active?.detail).toEqual({ mode: "form" });
   });
 });

@@ -313,6 +313,9 @@ struct Inner {
     /// (run_id, request_key). A late answer is rejected instead of looking
     /// accepted while the run loop silently drops it.
     pending_requests: std::collections::HashSet<(String, String)>,
+    /// Full elicitation surfaces still awaiting an answer, for resync after a
+    /// listener gap (the persisted transcript has no requestId).
+    pending_elicitations: HashMap<(String, String), ElicitationRequestPayload>,
     /// Hidden wake/continuation runs: the agent may echo the prompt as a
     /// user_message_chunk; that echo must never become a visible bubble.
     hidden_runs: std::collections::HashSet<String>,
@@ -674,6 +677,7 @@ impl AgentRuntime {
                 deleting_threads: std::collections::HashSet::new(),
                 cancelling_runs: std::collections::HashSet::new(),
                 pending_requests: std::collections::HashSet::new(),
+                pending_elicitations: HashMap::new(),
                 hidden_runs: std::collections::HashSet::new(),
                 capabilities: HashMap::new(),
                 permission_modes: HashMap::new(),
@@ -2225,6 +2229,17 @@ impl AgentRuntime {
         self.push_answer(run_id, request_id, AnswerPayload::Permission { option_id })
     }
 
+    /// Pending elicitation surfaces, for resync after a listener gap.
+    pub fn pending_elicitation_requests(&self) -> Vec<ElicitationRequestPayload> {
+        self.inner
+            .lock()
+            .expect("runtime lock poisoned")
+            .pending_elicitations
+            .values()
+            .cloned()
+            .collect()
+    }
+
     /// Route an elicitation answer (accept/decline/cancel + content).
     pub fn respond_elicitation(
         &self,
@@ -3293,12 +3308,15 @@ async fn run_turn(task: RunTask) -> Result<(), crate::PultError> {
                         }
                         AnswerPayload::Elicitation { action, content } => {
                             if let Some(pending) = pending_elicitations.remove(&request_id) {
-                                runtime
-                                    .inner
-                                    .lock()
-                                    .expect("runtime lock poisoned")
-                                    .pending_requests
-                                    .remove(&(run_id.clone(), request_id.clone()));
+                                {
+                                    let mut inner = runtime.inner.lock().expect("runtime lock poisoned");
+                                    inner
+                                        .pending_requests
+                                        .remove(&(run_id.clone(), request_id.clone()));
+                                    inner
+                                        .pending_elicitations
+                                        .remove(&(run_id.clone(), request_id.clone()));
+                                }
                                 runtime
                                     .orchestrator
                                     .mark_child_status(&thread_id, "running");
@@ -3683,6 +3701,7 @@ impl AgentRuntime {
             guard.cancelling_runs.remove(run_id);
             guard.hidden_runs.remove(run_id);
             guard.pending_requests.retain(|(run, _)| run != run_id);
+            guard.pending_elicitations.retain(|(run, _), _| run != run_id);
             guard.deleting_threads.contains(thread_id)
         };
         self.emit_thread_updated(thread_id);
@@ -4596,20 +4615,24 @@ fn surface_elicitation(
         .expect("runtime lock poisoned")
         .pending_requests
         .insert((run_id.to_string(), request_key.clone()));
+    let payload = ElicitationRequestPayload {
+        run_id: run_id.to_string(),
+        request_id: request_key.clone(),
+        message: params.message.clone(),
+        detail: params.detail.clone(),
+    };
+    runtime
+        .inner
+        .lock()
+        .expect("runtime lock poisoned")
+        .pending_elicitations
+        .insert((run_id.to_string(), request_key.clone()), payload.clone());
     let flushed = batcher.push(EventKind::ElicitationRequest {
         message: params.message.clone(),
         detail: params.detail.clone(),
     });
     persist_event_batch(runtime, run_id, flushed)?;
-    runtime.emit(
-        "elicitation:request",
-        &ElicitationRequestPayload {
-            run_id: run_id.to_string(),
-            request_id: request_key,
-            message: params.message.clone(),
-            detail: params.detail.clone(),
-        },
-    );
+    runtime.emit("elicitation:request", &payload);
     notify_if_unfocused(runtime, "Agent needs input", "elicitation");
     Ok(())
 }

@@ -770,6 +770,15 @@ pub fn runs_respond_elicitation(
     runtime.respond_elicitation(&run_id, &request_id, action, content)
 }
 
+/// Pending elicitations, so the UI can restore a question that was surfaced
+/// while the event fan-in was detached.
+#[tauri::command]
+pub fn runs_pending_elicitations(
+    runtime: tauri::State<'_, Arc<AgentRuntime>>,
+) -> Vec<crate::runtime::ElicitationRequestPayload> {
+    runtime.pending_elicitation_requests()
+}
+
 /// Switches the thread's permission mode (§5.7 pill; also stored as default).
 #[tauri::command]
 pub fn runs_set_permission_mode(
