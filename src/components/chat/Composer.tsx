@@ -587,6 +587,9 @@ export function Composer({ threadId }: { threadId?: string }) {
       .replace(/\s+/g, " ")
       .trim();
     const threadTitle = (titleText || attachedFallback).slice(0, 40);
+    // The draft is cleared only after the backend accepted the send; a failed
+    // first send keeps it under the new thread instead of losing the text.
+    let accepted = false;
     void (async () => {
       try {
         if (!threadId) {
@@ -630,8 +633,13 @@ export function Composer({ threadId }: { threadId?: string }) {
           await router.navigate({ to: "/thread/$threadId", params: { threadId: thread.id } });
           try {
             await dispatchRun(thread.id, promptText, images, pendingMode, pendingConfig);
+            accepted = true;
           } catch (err) {
             useRunsStore.getState().clearPendingUser(thread.id);
+            // Keep the typed text and chips on the thread the send created.
+            const drafts = useDraftsStore.getState();
+            drafts.setDraft(thread.id, text);
+            drafts.setAttachments(thread.id, { images: chips, files: fileChips });
             useUiStore
               .getState()
               .setGlobalError({ kind: "protocol", message: localizeIpcError(err) });
@@ -651,12 +659,13 @@ export function Composer({ threadId }: { threadId?: string }) {
           useRunsStore.getState().setPendingUser(threadId, pendingText, images);
           try {
             await dispatchRun(threadId, promptText, images, modeForSend(desired, threadId), config);
+            accepted = true;
           } catch (err) {
             useRunsStore.getState().clearPendingUser(threadId);
             throw err;
           }
         }
-        resetDraft();
+        if (accepted) resetDraft();
       } catch (err) {
         console.error("send failed", err);
         setError(localizeIpcError(err));
