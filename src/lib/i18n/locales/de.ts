@@ -236,6 +236,8 @@ export const de: Record<string, string> = {
   // composer
   "composer.placeholder": "Alles fragen. @ Dateien, / Befehle",
   "composer.decisionPlaceholder": "Entscheidung nötig — Genehmigung oben beantworten",
+  "composer.dropFiles": "Dateien zum Anhängen ablegen",
+  "composer.dropFilesHint": "Loslassen, um sie dieser Nachricht hinzuzufügen",
   "composer.attach": "Dateien anhängen",
   "composer.send": "Nachricht senden",
   "composer.stop": "Ausführung stoppen",

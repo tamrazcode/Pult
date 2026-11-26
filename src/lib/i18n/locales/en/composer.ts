@@ -1,6 +1,8 @@
 export const composer = {
   "composer.placeholder": "Ask anything. @ files, / commands",
   "composer.decisionPlaceholder": "Decision needed — respond to the approval above",
+  "composer.dropFiles": "Drop files to attach",
+  "composer.dropFilesHint": "Release to add them to this message",
   "composer.attach": "Attach files",
   "composer.send": "Send message",
   "composer.stop": "Stop run",

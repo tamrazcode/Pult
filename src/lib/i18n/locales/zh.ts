@@ -232,6 +232,8 @@ export const zh: Record<string, string> = {
   // composer
   "composer.placeholder": "输入任何问题。@ 文件，/ 命令",
   "composer.decisionPlaceholder": "需要决策 — 请回复上方的批准请求",
+  "composer.dropFiles": "拖放文件以附加",
+  "composer.dropFilesHint": "文件将添加到此消息",
   "composer.attach": "附加文件",
   "composer.send": "发送消息",
   "composer.stop": "停止运行",

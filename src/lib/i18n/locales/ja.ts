@@ -236,6 +236,8 @@ export const ja: Record<string, string> = {
   // composer
   "composer.placeholder": "何でも入力してください。@ ファイル、/ コマンド",
   "composer.decisionPlaceholder": "判断が必要です — 上の承認リクエストに回答してください",
+  "composer.dropFiles": "ファイルをドロップして添付",
+  "composer.dropFilesHint": "このメッセージに追加されます",
   "composer.attach": "ファイルを添付",
   "composer.send": "メッセージを送信",
   "composer.stop": "実行を停止",

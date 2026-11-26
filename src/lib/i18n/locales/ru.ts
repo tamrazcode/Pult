@@ -248,6 +248,8 @@ export const ru: Record<string, string> = {
   // composer
   "composer.placeholder": "Спросите что угодно. @ файлы, / команды",
   "composer.decisionPlaceholder": "Требуется решение — ответьте на подтверждение выше",
+  "composer.dropFiles": "Отпустите файлы, чтобы прикрепить",
+  "composer.dropFilesHint": "Они добавятся к текущему сообщению",
   "composer.attach": "Прикрепить файлы",
   "composer.send": "Отправить сообщение",
   "composer.stop": "Остановить запуск",
