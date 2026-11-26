@@ -419,6 +419,18 @@ export function Composer({ threadId }: { threadId?: string }) {
     [autosize, draftKey, setValue],
   );
 
+  // Editing the token text is deleting the attachment: the chip must not
+  // outlive the hyperlink that represents it.
+  const syncAttachments = useCallback(
+    (next: string) => {
+      const keptImages = chips.filter((chip) => next.includes(chip.token));
+      const keptFiles = fileChips.filter((chip) => next.includes(chip.token));
+      if (keptImages.length !== chips.length) setChips(keptImages);
+      if (keptFiles.length !== fileChips.length) setFileChips(keptFiles);
+    },
+    [chips, fileChips, setChips, setFileChips],
+  );
+
   const removeAttachmentToken = useCallback(
     (token: string) => {
       const current = useDraftsStore.getState().byThread[draftKey] ?? "";
@@ -669,7 +681,11 @@ export function Composer({ threadId }: { threadId?: string }) {
     }
     setBusy(true);
     setError(null);
-    const images: ImageInput[] = chips.map(({ data, mimeType }) => ({ data, mimeType }));
+    const images: ImageInput[] = chips.map(({ data, mimeType, name }) => ({
+      data,
+      mimeType,
+      name,
+    }));
     const attachedNames = [...chips, ...fileChips].map((attachment) => attachment.name).join(", ");
     const attachedFallback = attachedNames ? t("composer.attached", { files: attachedNames }) : "";
     // Image-only sends still need a non-empty title and queue label.
@@ -1435,6 +1451,7 @@ export function Composer({ threadId }: { threadId?: string }) {
               onChange={(e) => {
                 const next = e.target.value;
                 setValue(next);
+                syncAttachments(next);
                 setMention(extractMentionQuery(next, e.target.selectionStart ?? next.length));
                 autosize();
               }}

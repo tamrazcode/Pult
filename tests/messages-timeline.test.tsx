@@ -130,6 +130,56 @@ describe("MessagesTimeline", () => {
     expect(screen.getByText("third answer")).toBeInTheDocument();
   });
 
+  it("keeps an image attachment token as a link in the sent bubble", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "user",
+              text: "see shot.png 1.2 MB",
+              images: [{ data: "USERIMG", mimeType: "image/png", name: "shot.png" }],
+            },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    const link = screen.getByRole("button", { name: "shot.png 1.2 MB" });
+    expect(link).toBeVisible();
+    expect(link.className).toContain("text-accent");
+  });
+
+  it("keeps a text attachment token as a download link in the sent bubble", () => {
+    useRunsStore.setState({
+      runsByThread: { th: [run("r1", "finished", 0)] },
+      viewsByRun: {
+        r1: {
+          items: [
+            {
+              type: "user",
+              text: "notes.md 6 B\nAttached file: notes.md\n```\nhello\n```",
+              images: [],
+            },
+          ],
+          streaming: false,
+          stopReason: "end_turn",
+        },
+      },
+    });
+
+    render(<MessagesTimeline threadId="th" />);
+
+    const link = screen.getByRole("link", { name: "notes.md 6 B" });
+    expect(link).toBeVisible();
+    expect(link).toHaveAttribute("download", "notes.md");
+  });
+
   it("windows the merged history across runs and expands it", { timeout: 20_000 }, () => {
     useRunsStore.setState({
       runsByThread: { th: [run("r1", "finished", 0), run("r2", "finished", 1)] },

@@ -1478,6 +1478,72 @@ function MessageActions({
   );
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Image tokens (`name 12 KB`) stay links in the sent bubble. */
+function renderUserText(
+  text: string,
+  images: { data: string; mimeType: string; name?: string | null }[],
+): ReactNode {
+  const imageTokens = images
+    .filter((image) => image.name)
+    .map((image) => ({ name: image.name!, image }));
+  // Text files travel inlined; the block lets the token download its content.
+  const fileTokens: { name: string; content: string }[] = [];
+  const block = /(?:^|\n)Attached file: (.+?)( \(truncated\))?\n(`{3,})\n([\s\S]*?)\n\3(?=\n|$)/g;
+  for (const match of text.matchAll(block)) {
+    if (match[1]) fileTokens.push({ name: match[1], content: match[4] ?? "" });
+  }
+  const names = [
+    ...imageTokens.map((token) => token.name),
+    ...fileTokens.map((token) => token.name),
+  ];
+  if (names.length === 0) return text;
+  const alternatives = names.map((name) => `${escapeRegExp(name)} \\d+(?:\\.\\d+)? (?:B|KB|MB)`);
+  const pattern = new RegExp(`(${alternatives.join("|")})`, "g");
+  return text.split(pattern).map((part, index) => {
+    const image = imageTokens.find((token) =>
+      new RegExp(`^${escapeRegExp(token.name)} \\d`).test(part),
+    );
+    if (image) {
+      return (
+        <button
+          key={`${part}-${index}`}
+          type="button"
+          className="inline cursor-pointer text-accent underline decoration-accent/40 underline-offset-2 transition hover:decoration-accent"
+          onClick={() =>
+            useUiStore
+              .getState()
+              .openImagePreview(
+                `data:${image.image.mimeType};base64,${image.image.data}`,
+                image.name,
+              )
+          }
+        >
+          {part}
+        </button>
+      );
+    }
+    const file = fileTokens.find((token) =>
+      new RegExp(`^${escapeRegExp(token.name)} \\d`).test(part),
+    );
+    if (!file) return part;
+    const href = `data:text/plain;charset=utf-8,${encodeURIComponent(file.content)}`;
+    return (
+      <a
+        key={`${part}-${index}`}
+        href={href}
+        download={file.name}
+        className="inline text-accent underline decoration-accent/40 underline-offset-2 transition hover:decoration-accent"
+      >
+        {part}
+      </a>
+    );
+  });
+}
+
 function UserRow({
   text,
   images,
@@ -1485,7 +1551,7 @@ function UserRow({
   clampMaxPx,
 }: {
   text: string;
-  images: { data: string; mimeType: string }[];
+  images: { data: string; mimeType: string; name?: string | null }[];
   ts?: number;
   clampMaxPx: number;
 }) {
@@ -1561,7 +1627,7 @@ function UserRow({
                 clamped ? "user-message-fade-mask overflow-hidden pb-7" : ""
               }`}
             >
-              {text}
+              {renderUserText(text, images)}
             </div>
             {overflowing && (
               <div

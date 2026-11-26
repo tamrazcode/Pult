@@ -487,6 +487,28 @@ describe("composer attachments", () => {
     expect(textbox.value).toContain("picked.md");
   });
 
+  it("removes the chip when its inline token is deleted from the text", async () => {
+    const user = userEvent.setup();
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance({ promptImage: false })],
+    });
+    const { container } = render(<Composer threadId="th" />);
+    const { input } = getAttachControls(container);
+    const note = new File(["hello"], "notes.md", { type: "text/markdown" });
+    await user.upload(input, note);
+
+    await waitFor(() =>
+      expect(container.querySelector("[data-file-chip]")).toHaveTextContent("notes.md"),
+    );
+    const textbox = within(container).getByRole("textbox");
+    expect((textbox as HTMLTextAreaElement).value).toContain("notes.md");
+
+    fireEvent.change(textbox, { target: { value: "" } });
+
+    await waitFor(() => expect(container.querySelector("[data-file-chip]")).toBeNull());
+  });
+
   it("reads files from a native Tauri drop and attaches them", async () => {
     attachmentsReadDropped.mockResolvedValue([
       {

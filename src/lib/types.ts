@@ -84,6 +84,8 @@ export interface Run {
 export interface ImageInput {
   data: string;
   mimeType: string;
+  /** Original file name, used to keep the inline token a link. */
+  name?: string | null;
 }
 
 export interface SessionMode {

@@ -94,6 +94,9 @@ pub struct RunRecord {
 pub struct ImageInput {
     pub data: String,
     pub mime_type: String,
+    /// Original file name, used to keep the inline attachment token a link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
 
 /// A queued message waiting for the thread's active run to finish.

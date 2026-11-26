@@ -414,6 +414,7 @@ mod tests {
             images: vec![ImageInput {
                 data: "aGk=".to_string(),
                 mime_type: "image/png".to_string(),
+                name: None,
             }],
             mode: None,
             config_options: Default::default(),
