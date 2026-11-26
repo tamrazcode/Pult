@@ -22,8 +22,7 @@
         "center": true,
         "focus": false,
         "decorations": false,
-        "shadow": true,
-        "dragDropEnabled": false
+        "shadow": true
       }
     ],
     "security": {

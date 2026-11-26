@@ -2267,6 +2267,173 @@ pub fn attachments_check_paths(paths: Vec<String>) -> Vec<AttachmentStatus> {
         .collect()
 }
 
+/// One file the user picked or dropped into the composer. Images carry a data
+/// URL, text files carry their (truncated) contents; every failure is per-file
+/// so one bad file does not drop the whole batch.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickedAttachment {
+    pub name: String,
+    pub size: u64,
+    pub mime_type: String,
+    pub text: Option<String>,
+    pub data: Option<String>,
+    pub truncated: bool,
+    pub error: Option<String>,
+}
+
+/// Native picker: the WebView2 file input is unreliable in the frameless
+/// window, so the dialog runs in the plugin and the files are read here.
+#[tauri::command]
+pub async fn attachments_pick_files(
+    app: tauri::AppHandle,
+) -> Result<Vec<PickedAttachment>, PultError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog().file().pick_files(move |paths| {
+        let _ = tx.send(paths);
+    });
+    let picked = rx
+        .await
+        .map_err(|_| PultError::internal("file dialog closed"))?;
+    let mut out = Vec::new();
+    for file in picked.unwrap_or_default() {
+        if let Ok(path) = file.into_path() {
+            out.push(read_picked_attachment(&path));
+        }
+    }
+    Ok(out)
+}
+
+/// Files dropped through Tauri's native drag-drop event. The paths come from
+/// the OS drop, not from page script; reads are capped like the picker.
+#[tauri::command]
+pub async fn attachments_read_dropped(
+    paths: Vec<String>,
+) -> Result<Vec<PickedAttachment>, PultError> {
+    tokio::task::spawn_blocking(move || {
+        paths
+            .iter()
+            .map(|path| read_picked_attachment(std::path::Path::new(path)))
+            .collect::<Vec<_>>()
+    })
+    .await
+    .map_err(|e| PultError::internal(format!("dropped files read failed: {e}")))
+}
+
+fn read_picked_attachment(path: &std::path::Path) -> PickedAttachment {
+    const MAX_IMAGE: u64 = 1_500_000;
+    const MAX_TEXT_BYTES: u64 = 5_000_000;
+    const MAX_TEXT_CHARS: usize = 200_000;
+
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("attachment")
+        .to_string();
+    let meta = match std::fs::metadata(path) {
+        Ok(meta) if meta.is_file() => meta,
+        _ => {
+            return PickedAttachment {
+                name,
+                size: 0,
+                mime_type: String::new(),
+                text: None,
+                data: None,
+                truncated: false,
+                error: Some("not a file".to_string()),
+            }
+        }
+    };
+    let size = meta.len();
+    let ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let image_mime = match ext.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    };
+    if let Some(mime) = image_mime {
+        if size > MAX_IMAGE {
+            return PickedAttachment {
+                name,
+                size,
+                mime_type: mime.to_string(),
+                text: None,
+                data: None,
+                truncated: false,
+                error: Some("image is larger than 1.5 MB".to_string()),
+            };
+        }
+        let bytes = std::fs::read(path).unwrap_or_default();
+        if !image_magic_ok(&ext, &bytes) {
+            return PickedAttachment {
+                name,
+                size,
+                mime_type: mime.to_string(),
+                text: None,
+                data: None,
+                truncated: false,
+                error: Some("file content does not match its image extension".to_string()),
+            };
+        }
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        return PickedAttachment {
+            name,
+            size,
+            mime_type: mime.to_string(),
+            text: None,
+            data: Some(format!("data:{mime};base64,{}", STANDARD.encode(bytes))),
+            truncated: false,
+            error: None,
+        };
+    }
+    if size > MAX_TEXT_BYTES {
+        return PickedAttachment {
+            name,
+            size,
+            mime_type: "text/plain".to_string(),
+            text: None,
+            data: None,
+            truncated: false,
+            error: Some("text file is larger than 5 MB".to_string()),
+        };
+    }
+    let bytes = std::fs::read(path).unwrap_or_default();
+    if bytes.is_empty() || bytes.contains(&0) {
+        return PickedAttachment {
+            name,
+            size,
+            mime_type: "text/plain".to_string(),
+            text: None,
+            data: None,
+            truncated: false,
+            error: Some("only text and image files can be attached".to_string()),
+        };
+    }
+    let raw = String::from_utf8_lossy(&bytes);
+    let truncated = raw.chars().count() > MAX_TEXT_CHARS;
+    let text: String = if truncated {
+        raw.chars().take(MAX_TEXT_CHARS).collect()
+    } else {
+        raw.into_owned()
+    };
+    PickedAttachment {
+        name,
+        size,
+        mime_type: "text/plain".to_string(),
+        text: Some(text),
+        data: None,
+        truncated,
+        error: None,
+    }
+}
+
 #[tauri::command]
 pub async fn read_image_data_url(
     runtime: tauri::State<'_, Arc<AgentRuntime>>,

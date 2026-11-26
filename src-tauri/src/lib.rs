@@ -386,6 +386,8 @@ pub fn run() {
             ipc::attachments_save_image,
             ipc::attachments_save_text,
             ipc::attachments_check_paths,
+            ipc::attachments_pick_files,
+            ipc::attachments_read_dropped,
             ipc::runs_set_mode,
             ipc::runs_set_config_option,
             ipc::diagnostics_frames,

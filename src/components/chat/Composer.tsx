@@ -16,6 +16,8 @@ import { Button } from "../ui/button";
 import { ModePill, ProviderModelPicker, configValueValid } from "./ComposerControls";
 import { ContextRing } from "./ContextRing";
 import {
+  attachmentsPickFiles,
+  attachmentsReadDropped,
   runsCancel,
   runsDispatch,
   runsQueueRemove,
@@ -25,6 +27,8 @@ import {
   runsRespondPermission,
   workspaceFiles,
 } from "../../lib/ipc";
+import type { PickedAttachment } from "../../lib/ipc";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { isTauri } from "../../lib/tauri";
 import {
   applyTextareaEdit,
@@ -467,8 +471,65 @@ export function Composer({ threadId }: { threadId?: string }) {
     [chips.length, fileChips.length, imageCapable, insertTokens, setChips, setFileChips, t],
   );
 
-  // The chat surface reports dropped files here; the composer owns the
-  // attachment pipeline, so the drop works anywhere in the chat column.
+  const attachPayloads = useCallback(
+    (picked: PickedAttachment[]) => {
+      if (picked.length === 0) return;
+      const room = MAX_ATTACHMENTS - chips.length - fileChips.length;
+      if (room <= 0) {
+        setError(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
+        return;
+      }
+      const images: ImageChip[] = [];
+      const docs: FileChip[] = [];
+      const problems: string[] = [];
+      for (const file of picked.slice(0, room)) {
+        if (file.error) {
+          problems.push(`${file.name}: ${file.error}`);
+          continue;
+        }
+        if (file.data) {
+          if (!imageCapable) {
+            problems.push(t("composer.noImagesAttach"));
+            continue;
+          }
+          const chip = chipFromDataUrl(file.name, file.size, file.data);
+          if (chip) images.push(chip);
+          else problems.push(`${file.name}: unsupported image`);
+          continue;
+        }
+        if (file.text !== null) {
+          docs.push({
+            name: file.name,
+            text: file.text,
+            truncated: file.truncated,
+            size: file.size,
+            token: attachmentToken(file.name, file.size),
+          });
+        }
+      }
+      if (picked.length > room) {
+        problems.push(t("composer.attachments.limit", { count: MAX_ATTACHMENTS }));
+      }
+      if (problems.length > 0) setError([...new Set(problems)].join(" · "));
+      if (images.length > 0) setChips((prev) => [...prev, ...images]);
+      if (docs.length > 0) setFileChips((prev) => [...prev, ...docs]);
+      insertTokens([...images, ...docs].map((chip) => chip.token));
+    },
+    [chips.length, fileChips.length, imageCapable, insertTokens, setChips, setFileChips, t],
+  );
+
+  const pickAttachments = useCallback(() => {
+    if (!isTauri()) {
+      fileInputRef.current?.click();
+      return;
+    }
+    void attachmentsPickFiles()
+      .then((picked) => attachPayloads(picked))
+      .catch((err) => setError(localizeIpcError(err)));
+  }, [attachPayloads]);
+
+  // Browser/dev drops arrive as File objects; Tauri drops arrive as native
+  // paths and are read by the backend.
   useEffect(() => {
     const onDropFiles = (event: Event) => {
       const files = (event as CustomEvent<File[]>).detail;
@@ -477,6 +538,30 @@ export function Composer({ threadId }: { threadId?: string }) {
     window.addEventListener(ATTACHMENT_DROP_EVENT, onDropFiles);
     return () => window.removeEventListener(ATTACHMENT_DROP_EVENT, onDropFiles);
   }, [attachFiles]);
+
+  useEffect(() => {
+    if (!isTauri()) return;
+    let unlisten: (() => void) | undefined;
+    try {
+      void getCurrentWebview()
+        .onDragDropEvent((event) => {
+          if (event.payload.type === "drop") {
+            const paths = event.payload.paths;
+            if (paths.length === 0) return;
+            void attachmentsReadDropped(paths)
+              .then((picked) => attachPayloads(picked))
+              .catch((err) => setError(localizeIpcError(err)));
+          }
+        })
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => undefined);
+    } catch {
+      // jsdom/dev without the Tauri IPC bridge
+    }
+    return () => unlisten?.();
+  }, [attachPayloads]);
 
   const dispatchRun = useCallback(
     async (
@@ -1376,12 +1461,11 @@ export function Composer({ threadId }: { threadId?: string }) {
               title={t("composer.attach")}
               aria-label={t("composer.attach")}
               onClick={(event) => {
-                // An explicit click is reliable in WebView2 even when the
-                // hidden input is not associated by position. Ignore clicks
-                // that land on the input itself (tests and keyboard use).
+                // In Tauri the native dialog is the reliable path; the hidden
+                // input stays for the browser/dev and tests.
                 if (event.target instanceof HTMLInputElement) return;
                 event.preventDefault();
-                if (!awaitingDecision && !busy) fileInputRef.current?.click();
+                if (!awaitingDecision && !busy) pickAttachments();
               }}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >

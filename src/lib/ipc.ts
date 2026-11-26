@@ -237,6 +237,27 @@ export function attachmentsCheckPaths(paths: string[]): Promise<AttachmentStatus
   return invokeRequired<AttachmentStatus[]>("attachments_check_paths", { paths });
 }
 
+/** A file read by the native picker/drop into a composer chip. */
+export interface PickedAttachment {
+  name: string;
+  size: number;
+  mimeType: string;
+  text: string | null;
+  data: string | null;
+  truncated: boolean;
+  error: string | null;
+}
+
+/** Native multi-file picker (WebView2's file input is unreliable). */
+export function attachmentsPickFiles(): Promise<PickedAttachment[]> {
+  return invokeRequired<PickedAttachment[]>("attachments_pick_files");
+}
+
+/** Reads files handed over by Tauri's native drag-drop event. */
+export function attachmentsReadDropped(paths: string[]): Promise<PickedAttachment[]> {
+  return invokeRequired<PickedAttachment[]>("attachments_read_dropped", { paths });
+}
+
 /** Native folder picker; null outside Tauri or when the user cancels. */
 export async function pickFolder(title = "Choose folder"): Promise<string | null> {
   if (!isTauri()) return null;

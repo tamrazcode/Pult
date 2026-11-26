@@ -418,3 +418,46 @@ fn generic_settings_reject_internal_keys() {
         assert!(super::require_public_setting(key).is_err(), "{key}");
     }
 }
+
+#[test]
+fn picked_attachments_read_text_and_images_and_reject_binaries() {
+    let dir = std::env::temp_dir().join(format!(
+        "pult-picked-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let text_path = dir.join("note.md");
+    std::fs::write(&text_path, "hello attachment").unwrap();
+    let text = super::read_picked_attachment(&text_path);
+    assert_eq!(text.text.as_deref(), Some("hello attachment"));
+    assert!(text.data.is_none());
+    assert!(text.error.is_none());
+
+    let png_path = dir.join("shot.png");
+    std::fs::write(
+        &png_path,
+        [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13],
+    )
+    .unwrap();
+    let image = super::read_picked_attachment(&png_path);
+    assert!(
+        image
+            .data
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("data:image/png;base64,"),
+        "png must become a data URL"
+    );
+
+    let binary_path = dir.join("blob.bin");
+    std::fs::write(&binary_path, [0, 1, 2, 3]).unwrap();
+    let binary = super::read_picked_attachment(&binary_path);
+    assert!(binary.error.is_some(), "NUL bytes are not text");
+
+    let missing = super::read_picked_attachment(&dir.join("missing.txt"));
+    assert!(missing.error.is_some());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

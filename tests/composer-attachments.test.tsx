@@ -16,6 +16,8 @@ const {
   providersInstancesList,
   settingsGet,
   settingsSet,
+  attachmentsPickFiles,
+  attachmentsReadDropped,
 } = vi.hoisted(() => ({
   navigate: vi.fn(async () => undefined),
   runsDispatch: vi.fn(),
@@ -27,10 +29,25 @@ const {
   providersInstancesList: vi.fn(),
   settingsGet: vi.fn(),
   settingsSet: vi.fn(),
+  attachmentsPickFiles: vi.fn(),
+  attachmentsReadDropped: vi.fn(),
+}));
+
+const webviewMocks = vi.hoisted(() => ({
+  dragDrop: undefined as ((event: unknown) => void) | undefined,
 }));
 
 vi.mock("../src/lib/tauri", () => ({
   isTauri: () => true,
+}));
+
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: async (handler: (event: unknown) => void) => {
+      webviewMocks.dragDrop = handler;
+      return () => {};
+    },
+  }),
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -52,6 +69,8 @@ vi.mock("../src/lib/ipc", async (importOriginal) => {
     providersInstancesList,
     settingsGet,
     settingsSet,
+    attachmentsPickFiles,
+    attachmentsReadDropped,
     onThreadUpdate: vi.fn(async () => () => {}),
     onAgentProcess: vi.fn(async () => () => {}),
   };
@@ -123,6 +142,9 @@ describe("composer attachments", () => {
       .mockImplementation(async () => useUiStore.getState().instances);
     settingsGet.mockReset().mockResolvedValue(null);
     settingsSet.mockReset().mockResolvedValue(undefined);
+    attachmentsPickFiles.mockReset().mockResolvedValue([]);
+    attachmentsReadDropped.mockReset().mockResolvedValue([]);
+    webviewMocks.dragDrop = undefined;
 
     useRunsStore.setState({
       runsByThread: {},
@@ -440,14 +462,58 @@ describe("composer attachments", () => {
     expect(dispatchedText).toMatch(/`{4,}\n[\s\S]*before\n```\nfake close\n```\nafter\n`{4,}/);
   });
 
-  it("opens the file picker from the paperclip label", () => {
+  it("opens the native picker from the paperclip label and attaches the picked file", async () => {
+    attachmentsPickFiles.mockResolvedValue([
+      {
+        name: "picked.md",
+        size: 7,
+        mimeType: "text/plain",
+        text: "picked",
+        data: null,
+        truncated: false,
+        error: null,
+      },
+    ]);
     const { container } = render(<Composer threadId="th" />);
-    const { label, input } = getAttachControls(container);
-    const open = vi.spyOn(input, "click");
+    const { label } = getAttachControls(container);
 
     fireEvent.click(label);
 
-    expect(open).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(attachmentsPickFiles).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(container.querySelector("[data-file-chip]")).toHaveTextContent("picked.md"),
+    );
+    const textbox = within(container).getByRole("textbox") as HTMLTextAreaElement;
+    expect(textbox.value).toContain("picked.md");
+  });
+
+  it("reads files from a native Tauri drop and attaches them", async () => {
+    attachmentsReadDropped.mockResolvedValue([
+      {
+        name: "dropped.md",
+        size: 7,
+        mimeType: "text/plain",
+        text: "dropped",
+        data: null,
+        truncated: false,
+        error: null,
+      },
+    ]);
+    const { container } = render(<Composer threadId="th" />);
+    await waitFor(() => expect(webviewMocks.dragDrop).toBeTypeOf("function"));
+
+    act(() => {
+      webviewMocks.dragDrop!({
+        payload: { type: "drop", paths: ["C:\\tmp\\dropped.md"] },
+      });
+    });
+
+    await waitFor(() =>
+      expect(attachmentsReadDropped).toHaveBeenCalledWith(["C:\\tmp\\dropped.md"]),
+    );
+    await waitFor(() =>
+      expect(container.querySelector("[data-file-chip]")).toHaveTextContent("dropped.md"),
+    );
   });
 
   it("attaches a file dropped anywhere in the chat column", async () => {
