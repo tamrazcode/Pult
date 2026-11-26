@@ -6,7 +6,9 @@ import { NewChatEmptyState } from "./NewChatEmptyState";
 import { ProjectInfoWidget } from "../layout/ProjectInfoWidget";
 import { ElicitationModal } from "./ElicitationModal";
 import { runsRespondElicitation } from "../../lib/ipc";
+import { emitAttachmentDrop } from "../../lib/attachmentDrop";
 import { normalizeToolKind } from "../../lib/toolDetails";
+import type { DragEvent } from "react";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
 import { useUiStore } from "../../stores/ui";
 import { useThreadsStore } from "../../stores/threads";
@@ -41,17 +43,34 @@ export function ChatColumn({ title, threadId }: { title?: string; threadId?: str
     if (current?.type === "tool") ambientKind = normalizeToolKind(current);
     else if (current?.type === "thought") ambientKind = "thought";
   }
+  const allowDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+  const dropFiles = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    emitAttachmentDrop(event.dataTransfer.files);
+  };
 
   if (!threadId) {
     return (
-      <div className="flex min-h-0 min-w-[400px] flex-1 flex-col bg-canvas">
+      <div
+        onDragOver={allowDrop}
+        onDrop={dropFiles}
+        className="flex min-h-0 min-w-[400px] flex-1 flex-col bg-canvas"
+      >
         <ChatHeader title={title} />
         <NewChatEmptyState />
       </div>
     );
   }
   return (
-    <div className="relative flex min-h-0 min-w-[400px] flex-1 flex-col bg-canvas">
+    <div
+      onDragOver={allowDrop}
+      onDrop={dropFiles}
+      className="relative flex min-h-0 min-w-[400px] flex-1 flex-col bg-canvas"
+    >
       <ChatHeader title={title} threadId={threadId} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="relative flex min-h-0 flex-1 flex-col">

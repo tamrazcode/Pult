@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type * as IpcModule from "../src/lib/ipc";
 import type { InstanceInfo } from "../src/lib/types";
+import { emitAttachmentDrop } from "../src/lib/attachmentDrop";
 
 const {
   navigate,
@@ -437,5 +438,32 @@ describe("composer attachments", () => {
     expect(dispatchedText).toContain("Attached file: a   b.md");
     expect(dispatchedText).not.toContain("Attached file: a```b.md");
     expect(dispatchedText).toMatch(/`{4,}\n[\s\S]*before\n```\nfake close\n```\nafter\n`{4,}/);
+  });
+
+  it("opens the file picker from the paperclip label", () => {
+    const { container } = render(<Composer threadId="th" />);
+    const { label, input } = getAttachControls(container);
+    const open = vi.spyOn(input, "click");
+
+    fireEvent.click(label);
+
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches a file dropped anywhere in the chat column", async () => {
+    useUiStore.setState({
+      selectedInstanceId: "mock",
+      instances: [makeInstance({ promptImage: false })],
+    });
+    const { container } = render(<Composer threadId="th" />);
+    const dropped = new File(["dropped attachment"], "dropped.md", { type: "text/markdown" });
+
+    act(() => emitAttachmentDrop([dropped]));
+
+    await waitFor(() => {
+      expect(container.querySelector("[data-file-chip]")).toHaveTextContent("dropped.md");
+    });
+    const textbox = within(container).getByRole("textbox") as HTMLTextAreaElement;
+    expect(textbox.value).toContain("dropped.md");
   });
 });

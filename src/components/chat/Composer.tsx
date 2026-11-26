@@ -33,6 +33,7 @@ import {
   handleMarkdownSpace,
 } from "../../lib/composerMarkdown";
 import { localizeIpcError, useT } from "../../lib/i18n";
+import { ATTACHMENT_DROP_EVENT } from "../../lib/attachmentDrop";
 import { useGitStore } from "../../stores/git";
 import { useProjectsStore } from "../../stores/projects";
 import { activeRunForThread, useRunsStore } from "../../stores/runs";
@@ -236,6 +237,7 @@ export function Composer({ threadId }: { threadId?: string }) {
     [draftKey],
   );
   const rootRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const inlineTokens = useMemo(() => {
     const tokens = new Map<string, { name: string; size: string }>();
@@ -464,6 +466,17 @@ export function Composer({ threadId }: { threadId?: string }) {
     },
     [chips.length, fileChips.length, imageCapable, insertTokens, setChips, setFileChips, t],
   );
+
+  // The chat surface reports dropped files here; the composer owns the
+  // attachment pipeline, so the drop works anywhere in the chat column.
+  useEffect(() => {
+    const onDropFiles = (event: Event) => {
+      const files = (event as CustomEvent<File[]>).detail;
+      void attachFiles(files);
+    };
+    window.addEventListener(ATTACHMENT_DROP_EVENT, onDropFiles);
+    return () => window.removeEventListener(ATTACHMENT_DROP_EVENT, onDropFiles);
+  }, [attachFiles]);
 
   const dispatchRun = useCallback(
     async (
@@ -1362,10 +1375,19 @@ export function Composer({ threadId }: { threadId?: string }) {
             <label
               title={t("composer.attach")}
               aria-label={t("composer.attach")}
+              onClick={(event) => {
+                // An explicit click is reliable in WebView2 even when the
+                // hidden input is not associated by position. Ignore clicks
+                // that land on the input itself (tests and keyboard use).
+                if (event.target instanceof HTMLInputElement) return;
+                event.preventDefault();
+                if (!awaitingDecision && !busy) fileInputRef.current?.click();
+              }}
               className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-(--radius-sm) text-text-tertiary transition hover:bg-hover hover:text-text-secondary"
             >
               <Paperclip size={15} />
               <input
+                ref={fileInputRef}
                 type="file"
                 multiple
                 disabled={awaitingDecision || busy}

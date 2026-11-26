@@ -16,6 +16,7 @@ fixtures/mock-repo/
 fixtures/mock-remote.git/
 fixtures/gh-mock-log.txt
 .superpowers/
+.empryo/
 
 # Local runtime data (never publish)
 .pult/

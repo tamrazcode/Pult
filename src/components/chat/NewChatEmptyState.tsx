@@ -1,9 +1,12 @@
 import { useRouter } from "@tanstack/react-router";
+import type { DragEvent } from "react";
 import { Composer } from "./Composer";
 import { LivingAscii } from "./LivingAscii";
 import { useProjectsStore } from "../../stores/projects";
 import { useT } from "../../lib/i18n";
 import { useUiStore } from "../../stores/ui";
+import { emitAttachmentDrop } from "../../lib/attachmentDrop";
+import newThreadBackground from "../../assets/new-thread-bg.jpg";
 
 /** First-run screen: live ASCII field, prompt, and the composer. */
 export function NewChatEmptyState() {
@@ -16,9 +19,33 @@ export function NewChatEmptyState() {
   const enabled = instances.filter((instance) => instance.enabled);
   const noAgent = enabled.length === 0;
   const onlyMock = enabled.length > 0 && enabled.every((i) => i.driver === "mock");
+  const allowDrop = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+  const dropFiles = (event: DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    emitAttachmentDrop(event.dataTransfer.files);
+  };
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto">
-      <LivingAscii />
+    <div
+      onDragOver={allowDrop}
+      onDrop={dropFiles}
+      className="relative flex min-h-0 flex-1 flex-col items-center justify-center overflow-y-auto"
+    >
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-cover bg-center opacity-60"
+        style={{ backgroundImage: `url(${newThreadBackground})` }}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-canvas/80 via-canvas/10 to-canvas/85"
+      />
+      <div className="absolute inset-0 opacity-40">
+        <LivingAscii />
+      </div>
       <div className="relative z-10 w-full -translate-y-3 py-10">
         <div className="mx-auto flex w-full max-w-3xl flex-col items-center px-6 text-center">
           <h1 className="text-2xl font-medium tracking-tight text-text-primary">
