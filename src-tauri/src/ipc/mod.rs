@@ -2203,11 +2203,8 @@ pub fn attachments_save_image(data: String, mime_type: String) -> Result<String,
     let bytes = STANDARD
         .decode(data.as_bytes())
         .map_err(|e| PultError::with_code("attachment.decode", format!("{e}")))?;
-    if bytes.is_empty() || bytes.len() > 8_000_000 {
-        return Err(PultError::with_code(
-            "attachment.size",
-            "image is empty or larger than 8 MB",
-        ));
+    if bytes.is_empty() {
+        return Err(PultError::with_code("attachment.size", "image is empty"));
     }
     let dir = attachment_dir()?;
     let seq = ATTACHMENT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2322,7 +2319,6 @@ pub async fn attachments_read_dropped(
 }
 
 fn read_picked_attachment(path: &std::path::Path) -> PickedAttachment {
-    const MAX_IMAGE: u64 = 1_500_000;
     const MAX_TEXT_BYTES: u64 = 5_000_000;
     const MAX_TEXT_CHARS: usize = 200_000;
 
@@ -2359,17 +2355,6 @@ fn read_picked_attachment(path: &std::path::Path) -> PickedAttachment {
         _ => None,
     };
     if let Some(mime) = image_mime {
-        if size > MAX_IMAGE {
-            return PickedAttachment {
-                name,
-                size,
-                mime_type: mime.to_string(),
-                text: None,
-                data: None,
-                truncated: false,
-                error: Some("image is larger than 1.5 MB".to_string()),
-            };
-        }
         let bytes = std::fs::read(path).unwrap_or_default();
         if !image_magic_ok(&ext, &bytes) {
             return PickedAttachment {

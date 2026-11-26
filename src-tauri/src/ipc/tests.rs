@@ -456,6 +456,18 @@ fn picked_attachments_read_text_and_images_and_reject_binaries() {
     let binary = super::read_picked_attachment(&binary_path);
     assert!(binary.error.is_some(), "NUL bytes are not text");
 
+    // No size cap on images: a 1.6 MB PNG still becomes an attachment.
+    let large_path = dir.join("large.png");
+    let mut large = vec![137u8, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13];
+    large.resize(1_600_000, 0);
+    std::fs::write(&large_path, large).unwrap();
+    let large_image = super::read_picked_attachment(&large_path);
+    assert!(
+        large_image.data.is_some(),
+        "images have no app-side size cap: {:?}",
+        large_image.error
+    );
+
     let missing = super::read_picked_attachment(&dir.join("missing.txt"));
     assert!(missing.error.is_some());
 
