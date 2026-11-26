@@ -226,25 +226,38 @@ fn decode_event(
     kind: &str,
     payload: &str,
 ) -> Result<Event, PultError> {
-    // Multi-megabyte historical rows (imagegen outputs) must not be parsed into
-    // the UI model: replace them with a marker before deserializing.
-    let payload: serde_json::Value = if payload.len() > 2_000_000 {
-        json!({
-            "truncated": true,
-            "bytes": payload.len(),
-            "note": "large historical payload omitted",
-        })
-    } else {
-        serde_json::from_str(payload)
-            .map_err(|e| PultError::store(format!("decode event payload (id {id}): {e}")))?
+    // A historical row that no longer fits the event model must not kill the
+    // whole thread: replace only that row with a visible notice.
+    let notice = |reason: &str| -> Result<Event, PultError> {
+        serde_json::from_value(json!({
+            "id": id.clone(),
+            "runId": run_id.clone(),
+            "seq": seq,
+            "ts": ts,
+            "kind": "notice",
+            "payload": {
+                "level": "warning",
+                "message": format!("A historical event could not be read ({reason})."),
+            },
+        }))
+        .map_err(|e| PultError::store(format!("decode notice (id {id}): {e}")))
     };
-    serde_json::from_value(json!({
-        "id": id,
-        "runId": run_id,
+    // Multi-megabyte image/tool rows are rare; parse the normal ones directly.
+    // The UI cap trims what is actually sent to the WebView.
+    if payload.len() > 16_000_000 {
+        return notice("payload too large");
+    }
+    let payload: serde_json::Value = serde_json::from_str(payload)
+        .map_err(|e| PultError::store(format!("decode event payload (id {id}): {e}")))?;
+    match serde_json::from_value(json!({
+        "id": id.clone(),
+        "runId": run_id.clone(),
         "seq": seq,
         "ts": ts,
         "kind": kind,
         "payload": payload,
-    }))
-    .map_err(|e| PultError::store(format!("decode event (id {id}): {e}")))
+    })) {
+        Ok(event) => Ok(event),
+        Err(err) => notice(&format!("{kind}: {err}")),
+    }
 }

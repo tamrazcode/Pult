@@ -1709,3 +1709,48 @@ fn failed_status_update_rolls_back_the_queue_commit() {
     assert_eq!(retryable[0].text, "keep me retryable");
     assert_eq!(store.get_thread("t-1").unwrap().status, "settled");
 }
+
+#[test]
+fn oversized_or_unreadable_historical_events_degrade_to_notice() {
+    let store = Store::open_in_memory().unwrap();
+    store.create_thread(&thread("t-1", 1_000)).unwrap();
+    store.create_run(&run("r-1", "t-1", 0)).unwrap();
+
+    // A 2.1 MB user message must still load: the UI cap trims its images/text,
+    // but the history itself cannot fail.
+    let big = event(
+        "r-1",
+        0,
+        EventKind::UserMessage {
+            text: "x".repeat(2_100_000),
+            images: Vec::new(),
+        },
+    );
+    store.append_event(&big).unwrap();
+
+    // A row whose payload no longer matches the event shape becomes a notice
+    // instead of killing the whole thread.
+    store
+        .with_conn(|conn| {
+            conn.execute(
+                "INSERT INTO events (id, run_id, seq, ts, kind, payload)
+                 VALUES ('bad-row', 'r-1', 1, 1, 'user_message', '{\"nope\":true}')",
+                [],
+            )
+            .map_err(|e| sql("insert bad event", e))?;
+            Ok(())
+        })
+        .unwrap();
+
+    let loaded = store.load_thread_events("t-1").unwrap();
+    assert_eq!(loaded.len(), 2);
+    assert!(
+        matches!(&loaded[0].kind, EventKind::UserMessage { text, .. } if text.len() > 2_000_000),
+        "the large user message must load"
+    );
+    assert!(
+        matches!(&loaded[1].kind, EventKind::Notice { .. }),
+        "an unreadable row must degrade to a notice; got {:?}",
+        loaded[1].kind
+    );
+}
