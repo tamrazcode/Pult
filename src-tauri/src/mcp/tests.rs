@@ -405,6 +405,10 @@ async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
+    if crate::config::which("node").is_none() {
+        eprintln!("skipping gateway stdio test: node is not available");
+        return;
+    }
     let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures/mcp-mock.mjs")
         .canonicalize()

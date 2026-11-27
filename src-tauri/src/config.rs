@@ -328,6 +328,7 @@ pub(crate) fn antigravity_server_path() -> Option<std::path::PathBuf> {
     which("agy_acp_server")
 }
 
+#[cfg(windows)]
 fn antigravity_server_path_in(
     local_app_data: Option<&Path>,
     home: Option<&Path>,
@@ -347,6 +348,7 @@ fn antigravity_server_path_in(
     None
 }
 
+#[cfg(windows)]
 fn t3_antigravity_server(home: &Path) -> Option<std::path::PathBuf> {
     let versions = home
         .join(".t3")
@@ -358,6 +360,7 @@ fn t3_antigravity_server(home: &Path) -> Option<std::path::PathBuf> {
 }
 
 /// Copies the server and its harness beside it; partial copies stay unused.
+#[cfg(windows)]
 fn adopt_antigravity_install(source: &Path, dest: &Path) -> bool {
     let Some(parent) = source.parent() else {
         return false;
@@ -380,6 +383,7 @@ fn adopt_antigravity_install(source: &Path, dest: &Path) -> bool {
 }
 
 /// Newest `<sha>/agy_acp_server.exe` under T3's versions folder.
+#[cfg(windows)]
 fn newest_antigravity_server(versions: &Path) -> Option<std::path::PathBuf> {
     let mut best: Option<(std::time::SystemTime, String, std::path::PathBuf)> = None;
     for entry in std::fs::read_dir(versions).ok()?.flatten() {
@@ -577,6 +581,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    #[cfg(windows)]
     #[test]
     fn antigravity_prefers_pult_install_over_t3_fallback() {
         let root = temp_config_home("antigravity-pult");
@@ -606,6 +611,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(windows)]
     #[test]
     fn antigravity_adopts_t3_version_into_pult_folder() {
         let root = temp_config_home("antigravity-t3");
@@ -638,6 +644,7 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
     }
 
+    #[cfg(windows)]
     #[test]
     fn antigravity_missing_everywhere_is_none() {
         let root = temp_config_home("antigravity-none");

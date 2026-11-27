@@ -78,7 +78,9 @@ async fn cancel_carries_provider_meta() {
     conn.cancel("session-1").await.expect("cancel");
 
     let mut raw = String::new();
-    for _ in 0..100 {
+    // Cold CI runners can take longer than a second to start node; this is a
+    // readiness poll, not a latency assertion.
+    for _ in 0..500 {
         if let Ok(text) = std::fs::read_to_string(&log) {
             if !text.trim().is_empty() {
                 raw = text;
