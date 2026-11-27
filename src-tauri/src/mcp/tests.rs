@@ -413,6 +413,8 @@ async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
         .join("../fixtures/mcp-mock.mjs")
         .canonicalize()
         .expect("fixture exists");
+    // Node's module loader chokes on a Windows verbatim path (`\\?\D:\...`).
+    let fixture = crate::runtime::clean_verbatim(fixture);
     let store = Arc::new(Store::open_in_memory().unwrap());
     let created = config::create(
         &store,
