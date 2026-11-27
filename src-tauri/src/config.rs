@@ -555,15 +555,22 @@ mod tests {
         let second = root.join("second");
         std::fs::create_dir_all(&first).unwrap();
         std::fs::create_dir_all(&second).unwrap();
-        std::fs::write(first.join(format!("{name}.cmd")), b"first").unwrap();
-        std::fs::write(second.join(format!("{name}.cmd")), b"second").unwrap();
+        let probe = |dir: &std::path::Path| {
+            if cfg!(windows) {
+                dir.join(format!("{name}.cmd"))
+            } else {
+                dir.join(&name)
+            }
+        };
+        std::fs::write(probe(&first), b"first").unwrap();
+        std::fs::write(probe(&second), b"second").unwrap();
         let path = std::env::join_paths([&first, &second]).unwrap();
         assert_eq!(
             resolve_command_in(&name, path.to_str()),
-            Some(first.join(format!("{name}.cmd")))
+            Some(probe(&first))
         );
         assert_eq!(
-            resolve_command_in(&first.join(format!("{name}.cmd")).to_string_lossy(), path.to_str()),
+            resolve_command_in(&probe(&first).to_string_lossy(), path.to_str()),
             None,
             "absolute commands are never rewritten"
         );

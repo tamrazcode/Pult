@@ -294,7 +294,12 @@ async fn activate_node(staging: &Path) -> Result<(), PultError> {
             }
             Err(error) => {
                 last_error = Some(error);
-                tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
+                if attempt < 5 {
+                    tokio::time::sleep(std::time::Duration::from_millis(
+                        100 * (attempt + 1),
+                    ))
+                    .await;
+                }
             }
         }
     }

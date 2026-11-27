@@ -170,7 +170,7 @@ fn suppress_alt_system_menu(window: &tauri::WebviewWindow) {
         if msg == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_KEYMENU as usize && lparam == 0 {
             return 0;
         }
-        let previous = OLD_PROC.load(Ordering::Relaxed);
+        let previous = OLD_PROC.load(Ordering::Acquire);
         if previous == 0 {
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         }
@@ -182,13 +182,13 @@ fn suppress_alt_system_menu(window: &tauri::WebviewWindow) {
         return;
     };
     let hwnd = raw.0 as HWND;
-    if OLD_PROC.load(Ordering::Relaxed) != 0 {
+    if OLD_PROC.load(Ordering::Acquire) != 0 {
         return;
     }
     unsafe {
         let previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, guard as *const () as usize as isize);
         if previous != 0 {
-            OLD_PROC.store(previous, Ordering::Relaxed);
+            OLD_PROC.store(previous, Ordering::Release);
         }
     }
 }
