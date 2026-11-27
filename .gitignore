@@ -6,6 +6,7 @@ dist/
 .vite/
 .tanstack/
 src-tauri/target/
+src-tauri/target-release/
 src-tauri/gen/
 test-results/
 playwright-report/

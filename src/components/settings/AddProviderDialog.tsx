@@ -69,8 +69,7 @@ export function AddProviderDialog({
   // No CLI, no installer, and the command is still the catalog default: a
   // preflight would only fail after saving and rolling back. Ask for a real
   // command first (the user may have it in a nonstandard place).
-  const manualMissing =
-    !detectedAgent && !entry.installPackage && command.trim() === entry.command;
+  const manualMissing = !detectedAgent && !entry.installPackage && command.trim() === entry.command;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -473,10 +472,9 @@ export function AddProviderDialog({
               </label>
               {entry.installPackage && !detectedAgent && (
                 <p className="rounded-(--radius-sm) border border-border-subtle bg-surface px-3 py-2 text-xs text-text-tertiary">
-                  Pult installs{" "}
-                  <span className="font-mono">{entry.installPackage}</span> into its own npm
-                  folder (no admin rights) and downloads a portable Node runtime if this machine
-                  has none, then tests the agent.
+                  Pult installs <span className="font-mono">{entry.installPackage}</span> into its
+                  own npm folder (no admin rights) and downloads a portable Node runtime if this
+                  machine has none, then tests the agent.
                 </p>
               )}
               {manualMissing && (

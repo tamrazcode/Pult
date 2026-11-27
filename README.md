@@ -37,6 +37,10 @@ tour git/worktrees + browser + terminal, then create a local profile.
   folder (`~/.pult/plugins`).
 - **Background notifications** — native toast + soft chime when a run ends while Pult is
   in the background.
+- **Background commands** — agents can run long builds/tests with `run_background` and
+  end their turn; Pult wakes the thread with the exit status and output tail.
+- **Self-sufficient providers** — one click installs the CLI into Pult's own folder and
+  downloads a portable Node when the machine has none; npm errors are readable.
 - **GitHub updates** — checks Releases in the background, downloads with a progress ring,
   installs silently and restarts.
 
