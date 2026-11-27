@@ -473,3 +473,18 @@ fn picked_attachments_read_text_and_images_and_reject_binaries() {
 
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn provider_installers_map_to_their_binaries() {
+    assert_eq!(super::provider_binary("opencode-ai"), Some("opencode"));
+    assert_eq!(super::provider_binary("@openai/codex"), Some("codex"));
+    assert_eq!(
+        super::provider_binary("@anthropic-ai/claude-code"),
+        Some("claude")
+    );
+    assert_eq!(
+        super::provider_binary("@google/gemini-cli"),
+        Some("gemini")
+    );
+    assert_eq!(super::provider_binary("some-other-package"), None);
+}

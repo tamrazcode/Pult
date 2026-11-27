@@ -841,6 +841,7 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
         .arg("-g")
         .arg("--no-fund")
         .arg("--no-audit")
+        .arg("--include=optional")
         .arg("--prefix")
         .arg(&prefix)
         .arg("--")
@@ -867,7 +868,123 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
         };
         return Err(PultError::with_code("provider.install_failed", detail));
     }
+    // npm 11 can skip install scripts (or the user's npm config can set
+    // ignore-scripts). opencode-ai then leaves a 479-byte launcher that exits
+    // immediately; run its postinstall explicitly and prove the CLI starts.
+    let postinstall = run_provider_postinstall(&toolchain, &prefix, package).await?;
+    verify_provider_binary(&toolchain, package).await?;
+    Ok(format!("{stdout}\n{stderr}\n{postinstall}").trim().to_string())
+}
+
+fn provider_binary(package: &str) -> Option<&'static str> {
+    match package {
+        "opencode-ai" => Some("opencode"),
+        "@openai/codex" => Some("codex"),
+        "@anthropic-ai/claude-code" => Some("claude"),
+        "@google/gemini-cli" => Some("gemini"),
+        _ => None,
+    }
+}
+
+/// Packages that ship a platform binary select it in a postinstall script.
+/// npm may skip that script, so Pult runs it itself with the same Node it
+/// installed the package with.
+async fn run_provider_postinstall(
+    toolchain: &crate::toolchain::Toolchain,
+    prefix: &std::path::Path,
+    package: &str,
+) -> Result<String, PultError> {
+    if package != "opencode-ai" {
+        return Ok(String::new());
+    }
+    let dir = prefix.join("node_modules").join("opencode-ai");
+    let script = dir.join("postinstall.mjs");
+    if !script.is_file() {
+        return Ok(String::new());
+    }
+    let mut command = tokio::process::Command::new(&toolchain.node);
+    command
+        .arg(&script)
+        .current_dir(&dir)
+        .env("PATH", &toolchain.path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(300), command.output())
+        .await
+        .map_err(|_| {
+            PultError::with_code("provider.postinstall_timeout", "opencode postinstall timed out")
+        })?
+        .map_err(|e| PultError::internal(format!("opencode postinstall failed to start: {e}")))?;
+    let stdout = crate::toolchain::decode_console(&output.stdout);
+    let stderr = crate::toolchain::decode_console(&output.stderr);
+    if !output.status.success() {
+        let detail = format!(
+            "opencode postinstall failed (the package left a launcher instead of the CLI):\n{stderr}\n{stdout}"
+        );
+        return Err(PultError::with_code(
+            "provider.postinstall_failed",
+            crate::toolchain::redact_output(&detail),
+        ));
+    }
     Ok(format!("{stdout}\n{stderr}").trim().to_string())
+}
+
+/// Runs `--version` through the exact child PATH Pult will use at spawn time.
+async fn verify_provider_binary(
+    toolchain: &crate::toolchain::Toolchain,
+    package: &str,
+) -> Result<(), PultError> {
+    let Some(binary) = provider_binary(package) else {
+        return Ok(());
+    };
+    let path_var = toolchain.path.to_string_lossy();
+    let Some(path) = crate::config::resolve_command_in(binary, Some(path_var.as_ref())) else {
+        return Err(PultError::with_code(
+            "provider.binary_missing",
+            format!("{binary} was installed but Pult cannot find it on the provider PATH"),
+        ));
+    };
+    let mut command = tokio::process::Command::new(&path);
+    command
+        .arg("--version")
+        .env("PATH", &toolchain.path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    let output = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .map_err(|_| {
+            PultError::with_code(
+                "provider.binary_broken",
+                format!("{binary} --version did not answer within 30 seconds"),
+            )
+        })?
+        .map_err(|e| {
+            PultError::with_code(
+                "provider.binary_broken",
+                format!("{binary} --version failed to start: {e}"),
+            )
+        })?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = crate::toolchain::decode_console(&output.stdout);
+    let stderr = crate::toolchain::decode_console(&output.stderr);
+    Err(PultError::with_code(
+        "provider.binary_broken",
+        crate::toolchain::redact_output(&format!(
+            "the installed {binary} cannot start ({}):\n{stderr}\n{stdout}\n\
+             Hint: reinstall the provider; antivirus or an incompatible CPU build can block it.",
+            output.status
+        )),
+    ))
 }
 
 /// Opens the provider's interactive login in a visible terminal (Claude now).
