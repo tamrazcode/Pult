@@ -15,6 +15,7 @@ pub mod processes;
 pub mod protocol;
 pub mod runtime;
 pub mod store;
+pub mod toolchain;
 pub mod workspace;
 
 use std::path::PathBuf;
@@ -148,6 +149,50 @@ fn register_toast_app_id() {
         .status();
 }
 
+/// Alt+Shift switches the Windows keyboard layout, but releasing Alt also
+/// activates the native system menu; Windows then beeps on the next keypress
+/// and the hidden title bar takes focus. Swallow only the bare-Alt menu
+/// activation so Alt+Space, Alt+F4 and every other shortcut keep working.
+#[cfg(windows)]
+fn suppress_alt_system_menu(window: &tauri::WebviewWindow) {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_MENU;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, SC_KEYMENU, WM_SYSCOMMAND,
+        WM_SYSKEYUP, WNDPROC,
+    };
+
+    static OLD_PROC: AtomicIsize = AtomicIsize::new(0);
+
+    unsafe extern "system" fn guard(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        if msg == WM_SYSKEYUP && wparam == VK_MENU as usize {
+            return 0;
+        }
+        // `lparam == 0` is the bare-Alt release; Alt+Space passes VK_SPACE and
+        // must keep opening the system menu.
+        if msg == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_KEYMENU as usize && lparam == 0 {
+            return 0;
+        }
+        let previous: WNDPROC = std::mem::transmute(OLD_PROC.load(Ordering::Relaxed));
+        CallWindowProcW(previous, hwnd, msg, wparam, lparam)
+    }
+
+    let Ok(raw) = window.hwnd() else {
+        return;
+    };
+    let hwnd = raw.0 as HWND;
+    if OLD_PROC.load(Ordering::Relaxed) != 0 {
+        return;
+    }
+    unsafe {
+        let previous = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, guard as *const () as usize as isize);
+        if previous != 0 {
+            OLD_PROC.store(previous, Ordering::Relaxed);
+        }
+    }
+}
+
 /// A store that cannot be opened is recoverable. The app used to abort setup,
 /// which flashed a window and exited with code 101 without telling the user
 /// anything; now a native dialog explains the failure and offers to move the
@@ -229,6 +274,10 @@ pub fn run() {
         .setup(|app| {
             #[cfg(windows)]
             register_toast_app_id();
+            #[cfg(windows)]
+            if let Some(window) = app.get_webview_window("main") {
+                suppress_alt_system_menu(&window);
+            }
 
             let store = match open_store() {
                 Ok(store) => store,

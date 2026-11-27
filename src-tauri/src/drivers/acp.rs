@@ -286,12 +286,15 @@ impl AcpConn {
             use tokio::io::AsyncBufReadExt;
             let mut stderr = tokio::io::BufReader::new(child_stderr);
             tokio::spawn(async move {
-                let mut line = String::new();
+                let mut line = Vec::new();
                 loop {
-                    match stderr.read_line(&mut line).await {
+                    match stderr.read_until(b'\n', &mut line).await {
                         Ok(0) | Err(_) => break,
                         Ok(_) => {
-                            let trimmed = line.trim_end();
+                            // Agents on Windows may emit OEM/ANSI bytes; decoding
+                            // per line keeps diagnostics instead of killing the pump.
+                            let text = crate::toolchain::decode_console(&line);
+                            let trimmed = text.trim_end();
                             if !trimmed.is_empty() {
                                 // Agent stderr may echo credentials; reuse the MCP
                                 // sanitizer and cap the line before tracing.

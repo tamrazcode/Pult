@@ -464,6 +464,11 @@ fn merged_env(
         env.entry("MUSE_NO_AUTO_UPDATE".to_string())
             .or_insert_with(|| "1".to_string());
     }
+    // Agents installed through Pult (or launched with `npx`) need Pult's npm
+    // prefix and portable Node ahead of a stale GUI PATH.
+    if let Some(path) = crate::toolchain::spawn_path(env.get("PATH").map(String::as_str)) {
+        env.insert("PATH".to_string(), path.to_string_lossy().into_owned());
+    }
     Ok(env)
 }
 

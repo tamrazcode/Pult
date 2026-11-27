@@ -15,6 +15,8 @@ export interface ProviderCatalogEntry {
   experimental?: boolean;
   /** npm package Pult can install for one-click connect. */
   installPackage?: string;
+  /** How to get the CLI when Pult has no installer. */
+  manualInstallHint?: string;
   /** Optional env var for API-key auth instead of a subscription login. */
   apiKeyEnv?: string;
   /** Backend driver id; defaults to `acp`. */
@@ -53,6 +55,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     command: "cursor-agent",
     args: ["acp"],
     experimental: true,
+    manualInstallHint: "Install Cursor, then enable its CLI (`cursor-agent`) on PATH.",
   },
   {
     id: "grok",
@@ -62,6 +65,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     detectedId: "grok",
     command: "grok",
     args: ["agent", "stdio"],
+    manualInstallHint: "Install the Grok Build CLI and sign in with `grok` first.",
   },
   {
     id: "opencode",
@@ -71,6 +75,18 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     detectedId: "opencode",
     command: "opencode",
     args: ["acp"],
+    installPackage: "opencode-ai",
+  },
+  {
+    id: "gemini-cli",
+    displayName: "Gemini",
+    description: "Google's Gemini CLI in experimental ACP mode.",
+    brand: "gemini",
+    detectedId: "gemini",
+    command: "gemini",
+    args: ["--experimental-acp"],
+    installPackage: "@google/gemini-cli",
+    apiKeyEnv: "GEMINI_API_KEY",
   },
   {
     id: "antigravity",
@@ -80,6 +96,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     detectedId: "antigravity",
     command: "agy_acp_server",
     args: [],
+    manualInstallHint: "Install the Antigravity app; Pult adopts its ACP server automatically.",
   },
   {
     id: "muse",
@@ -91,6 +108,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     args: ["acp"],
     experimental: true,
     apiKeyEnv: "META_API_KEY",
+    manualInstallHint: "Install Muse Code and sign in with its CLI first.",
   },
   {
     id: "pi",
@@ -102,5 +120,6 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     args: [],
     experimental: true,
     driver: "pi_rpc",
+    manualInstallHint: "Install the Pi CLI and sign in with its CLI first.",
   },
 ];

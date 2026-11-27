@@ -66,6 +66,11 @@ export function AddProviderDialog({
       ),
     [detected, entry],
   );
+  // No CLI, no installer, and the command is still the catalog default: a
+  // preflight would only fail after saving and rolling back. Ask for a real
+  // command first (the user may have it in a nonstandard place).
+  const manualMissing =
+    !detectedAgent && !entry.installPackage && command.trim() === entry.command;
 
   useEffect(() => {
     closeRef.current?.focus();
@@ -328,6 +333,16 @@ export function AddProviderDialog({
                               Installed
                             </span>
                           )}
+                          {!installed && provider.installPackage && (
+                            <span className="rounded bg-accent/15 px-1 text-[12px] text-accent">
+                              Auto-install
+                            </span>
+                          )}
+                          {!installed && !provider.installPackage && (
+                            <span className="rounded bg-active px-1 text-[12px] text-text-tertiary">
+                              Manual setup
+                            </span>
+                          )}
                           {provider.experimental && (
                             <span className="rounded bg-warning/15 px-1 text-[12px] text-warning">
                               Experimental
@@ -456,9 +471,17 @@ export function AddProviderDialog({
               </label>
               {entry.installPackage && !detectedAgent && (
                 <p className="rounded-(--radius-sm) border border-border-subtle bg-surface px-3 py-2 text-xs text-text-tertiary">
-                  Install &amp; connect runs{" "}
-                  <span className="font-mono">npm install -g {entry.installPackage}</span>, then
-                  tests the agent.
+                  Pult installs{" "}
+                  <span className="font-mono">{entry.installPackage}</span> into its own npm
+                  folder (no admin rights) and downloads a portable Node runtime if this machine
+                  has none, then tests the agent.
+                </p>
+              )}
+              {manualMissing && (
+                <p className="rounded-(--radius-sm) border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+                  {entry.displayName} was not found on PATH and has no automatic installer.{" "}
+                  {entry.manualInstallHint ?? "Install its CLI first."} Or enter the absolute path
+                  to its executable above.
                 </p>
               )}
               {entry.apiKeyEnv && (
@@ -518,7 +541,7 @@ export function AddProviderDialog({
             ) : (
               <button
                 type="button"
-                disabled={saving || installing}
+                disabled={saving || installing || manualMissing}
                 onClick={() => void add()}
                 className="h-8 rounded-(--radius-sm) bg-accent px-4 text-xs font-medium text-accent-fg transition hover:brightness-110 disabled:opacity-60"
               >

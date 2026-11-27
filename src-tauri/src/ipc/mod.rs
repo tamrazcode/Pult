@@ -805,13 +805,16 @@ pub fn providers_detect_installed() -> Result<Vec<crate::config::DetectedAgent>,
     Ok(crate::config::detect_installed())
 }
 
-/// Installs a known provider CLI globally through npm (fixed package map).
+/// Installs a known provider CLI into Pult's own npm prefix (fixed package
+/// map). A missing Node is bootstrapped on demand, so no admin rights and no
+/// global npm prefix are involved.
 #[tauri::command]
 pub async fn providers_install(provider: String) -> Result<String, PultError> {
     let package = match provider.as_str() {
         "claude-code" | "claude" => "@anthropic-ai/claude-code",
         "codex" => "@openai/codex",
         "gemini-cli" | "gemini" => "@google/gemini-cli",
+        "opencode" | "opencode-ai" => "opencode-ai",
         _ => {
             return Err(PultError::with_code(
                 "provider.install_unsupported",
@@ -825,21 +828,42 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
             format!("refusing to install unexpected package: {package}"),
         ));
     }
-    let mut command = tokio::process::Command::new(npm_program());
-    command.args(["install", "-g", "--", package]);
+    let toolchain = crate::toolchain::ensure().await?;
+    let prefix = crate::toolchain::npm_prefix_dir()
+        .ok_or_else(|| crate::toolchain::runtime_error("no per-user data directory"))?;
+    std::fs::create_dir_all(&prefix)
+        .map_err(|e| crate::toolchain::runtime_error(format!("create npm prefix: {e}")))?;
+
+    let mut command = tokio::process::Command::new(&toolchain.npm);
+    command
+        .arg("install")
+        .arg("-g")
+        .arg("--no-fund")
+        .arg("--no-audit")
+        .arg("--prefix")
+        .arg(&prefix)
+        .arg("--")
+        .arg(package)
+        .env("PATH", &toolchain.path);
+    if let Some(cache) = crate::toolchain::npm_cache_dir() {
+        command.env("npm_config_cache", cache);
+    }
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
     let output = tokio::time::timeout(std::time::Duration::from_secs(600), command.output())
         .await
         .map_err(|_| PultError::with_code("provider.install_timeout", "npm install timed out"))?
         .map_err(|e| PultError::internal(format!("npm install failed to start: {e}")))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = crate::toolchain::decode_console(&output.stdout);
+    let stderr = crate::toolchain::decode_console(&output.stderr);
     if !output.status.success() {
-        return Err(PultError::with_code(
-            "provider.install_failed",
-            format!("npm install {package} failed:\n{stderr}\n{stdout}"),
-        ));
+        let detail = format!("npm install {package} failed:\n{stderr}\n{stdout}");
+        let detail = crate::mcp::security::redact(&detail);
+        let detail = match crate::toolchain::failure_hint(&detail) {
+            Some(hint) => format!("{detail}\n{hint}"),
+            None => detail,
+        };
+        return Err(PultError::with_code("provider.install_failed", detail));
     }
     Ok(format!("{stdout}\n{stderr}").trim().to_string())
 }
@@ -1802,7 +1826,7 @@ async fn npm_latest(package: &str) -> Option<String> {
 
 /// reqwest is built with `rustls-no-provider` (same as the updater); install
 /// ring once before the first client exists.
-fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, PultError> {
+pub(crate) fn http_client(timeout: std::time::Duration) -> Result<reqwest::Client, PultError> {
     static INSTALL: std::sync::Once = std::sync::Once::new();
     INSTALL.call_once(|| {
         let _ = rustls::crypto::ring::default_provider().install_default();

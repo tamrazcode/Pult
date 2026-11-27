@@ -400,15 +400,20 @@ fn newest_antigravity_server(versions: &Path) -> Option<std::path::PathBuf> {
     best.map(|(_, _, server)| server)
 }
 
-/// PATH lookup honoring PATHEXT (Windows) — a poor man's `which`.
+/// PATH lookup honoring PATHEXT (Windows) — a poor man's `which`. Pult's own
+/// runtime dirs are searched after PATH so a provider Pult installed is found
+/// even though the GUI process inherited an older PATH.
 pub fn which(binary: &str) -> Option<std::path::PathBuf> {
     let extensions: &[&str] = if cfg!(windows) {
         &["exe", "cmd", "bat"]
     } else {
         &[""]
     };
-    let path_var = std::env::var("PATH").ok()?;
-    for dir in std::env::split_paths(&path_var) {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|path_var| std::env::split_paths(&path_var).collect())
+        .unwrap_or_default();
+    dirs.extend(crate::toolchain::bin_dirs());
+    for dir in dirs {
         for ext in extensions {
             let candidate = if ext.is_empty() {
                 dir.join(binary)
