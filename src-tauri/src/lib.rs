@@ -238,6 +238,25 @@ fn report_store_failure(app: &tauri::AppHandle, error: &PultError) {
         });
 }
 
+/// Pult hotfix releases are `<base>-rN`. Semver sorts a pre-release below its
+/// base, which would hide `0.1.12-r1` from an installed `0.1.12`; for the same
+/// base a higher rN wins, and an rN wins over the plain base. A plain release
+/// never replaces a same-base hotfix (release a new base instead).
+fn hotfix_is_newer(current: &semver::Version, update: &semver::Version) -> bool {
+    if current.major == update.major
+        && current.minor == update.minor
+        && current.patch == update.patch
+    {
+        fn rank(pre: &str) -> u32 {
+            pre.strip_prefix('r')
+                .and_then(|value| value.parse::<u32>().ok())
+                .unwrap_or(0)
+        }
+        return rank(update.pre.as_str()) > rank(current.pre.as_str());
+    }
+    update > current
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // `pult mcp-stdio` must never create a window or a Tauri runtime.
@@ -253,7 +272,16 @@ pub fn run() {
         // Auto-update plumbing (M8): inert until a real endpoint + public key
         // are configured (see README "Updates"); nothing calls the updater at
         // startup, so placeholder config is harmless.
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        // Hotfix releases use `<base>-rN`. Semver sorts a prerelease below its
+        // base, which would hide `0.1.12-r1` from an installed `0.1.12`; treat
+        // a higher rN of the same base as newer so small hotfixes auto-update.
+        .plugin(
+            tauri_plugin_updater::Builder::new()
+                .default_version_comparator(|current, update| {
+                    hotfix_is_newer(&current, &update.version)
+                })
+                .build(),
+        )
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // A second launch must focus the existing window instead.
             if let Some(window) = app.get_webview_window("main") {
@@ -479,5 +507,17 @@ mod tests {
     #[test]
     fn app_version_matches_cargo_pkg_version() {
         assert_eq!(app_version().unwrap(), env!("CARGO_PKG_VERSION"));
+    }
+
+    #[test]
+    fn hotfix_versions_are_monotonic() {
+        let version = |value: &str| semver::Version::parse(value).unwrap();
+        assert!(hotfix_is_newer(&version("0.1.12"), &version("0.1.12-r1")));
+        assert!(hotfix_is_newer(&version("0.1.12"), &version("0.1.13-r1")));
+        assert!(hotfix_is_newer(&version("0.1.12-r1"), &version("0.1.12-r2")));
+        assert!(!hotfix_is_newer(&version("0.1.12-r2"), &version("0.1.12-r1")));
+        assert!(!hotfix_is_newer(&version("0.1.12-r1"), &version("0.1.12")));
+        assert!(!hotfix_is_newer(&version("0.1.12-r1"), &version("0.1.12-r1")));
+        assert!(hotfix_is_newer(&version("0.1.12-r1"), &version("0.1.13-r1")));
     }
 }
