@@ -134,7 +134,7 @@ pub fn tool_specs() -> Value {
                     "cmd": {
                         "type": "string",
                         "minLength": 1,
-                        "maxLength": 16384,
+                        "maxLength": 8000,
                         "description": "Shell command string executed via cmd /d /s /c (Windows) or sh -c (Unix)."
                     },
                     "cwd": {

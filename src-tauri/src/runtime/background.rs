@@ -16,7 +16,7 @@ use tokio::process::{Child, Command};
 use crate::events::now_millis;
 use crate::runtime::AgentRuntime;
 
-pub const MAX_CMD_BYTES: usize = 16_384;
+pub const MAX_CMD_BYTES: usize = 8_000;
 pub const MAX_LABEL_CHARS: usize = 120;
 pub const OUTPUT_TAIL_BYTES: usize = 4_096;
 pub const DEFAULT_TIMEOUT_SEC: u64 = 1_800;
@@ -76,7 +76,11 @@ impl OutputTail {
             return;
         }
         let mut cut = self.buffer.len() - OUTPUT_TAIL_BYTES;
-        while cut < self.buffer.len() && (self.buffer[cut] & 0b1100_0000) == 0b1000_0000 {
+        // Skip at most the 3 continuation bytes of a UTF-8 char; CP866 bytes
+        // in 0x80..=0xBF also look like continuations, so an unbounded scan
+        // would drain the whole tail.
+        let limit = (cut + 3).min(self.buffer.len());
+        while cut < limit && (self.buffer[cut] & 0b1100_0000) == 0b1000_0000 {
             cut += 1;
         }
         self.buffer.drain(..cut);
@@ -84,7 +88,7 @@ impl OutputTail {
     }
 
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.buffer).into_owned()
+        crate::toolchain::decode_console(&self.buffer)
     }
 }
 
@@ -104,6 +108,9 @@ struct BackgroundJob {
     notified_at: Option<i64>,
     tail: Arc<Mutex<OutputTail>>,
     cancel_tx: Option<tokio::sync::oneshot::Sender<StopReason>>,
+    /// Resolves when the monitor finished killing/reaping the child; thread
+    /// delete awaits it before removing a worktree directory.
+    done_rx: Option<tokio::sync::oneshot::Receiver<()>>,
 }
 
 /// Everything the tool layer validates before a job is created.
@@ -150,6 +157,7 @@ impl BackgroundJobs {
         );
         let tail = Arc::new(Mutex::new(OutputTail::default()));
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
         {
             let mut jobs = self.jobs.lock().expect("bg jobs lock poisoned");
             let per_thread = jobs
@@ -188,6 +196,7 @@ impl BackgroundJobs {
                     notified_at: None,
                     tail: Arc::clone(&tail),
                     cancel_tx: Some(cancel_tx),
+                    done_rx: Some(done_rx),
                 },
             );
         }
@@ -253,6 +262,7 @@ impl BackgroundJobs {
             if let Some(pid) = pid {
                 crate::processes::unregister_process(pid);
             }
+            let _ = done_tx.send(());
             if outcome.wakes_thread() {
                 runtime.orchestrator.wake_parent_if_idle(&thread_id);
             }
@@ -336,6 +346,37 @@ impl BackgroundJobs {
         }
     }
 
+    /// Thread delete: cancel, wait for the monitor to reap the child tree
+    /// (Windows keeps cwd handles open), then drop every entry of the thread.
+    pub async fn cancel_thread_and_wait(&self, thread_id: &str) {
+        let now = now_millis();
+        let mut waits = Vec::new();
+        {
+            let mut jobs = self.jobs.lock().expect("bg jobs lock poisoned");
+            for job in jobs.values_mut() {
+                if job.thread_id != thread_id {
+                    continue;
+                }
+                if job.status == Status::Running {
+                    job.status = Status::Cancelled;
+                    job.finished_at = Some(now);
+                    job.notified_at = Some(now);
+                    if let Some(cancel) = job.cancel_tx.take() {
+                        let _ = cancel.send(StopReason::Cancel);
+                    }
+                }
+                if let Some(done) = job.done_rx.take() {
+                    waits.push(done);
+                }
+            }
+        }
+        for wait in waits {
+            let _ = tokio::time::timeout(Duration::from_secs(5), wait).await;
+        }
+        let mut jobs = self.jobs.lock().expect("bg jobs lock poisoned");
+        jobs.retain(|_, job| job.thread_id != thread_id);
+    }
+
     /// Terminal jobs that still owe the thread exactly one wake.
     pub fn finished_unnotified(&self, thread_id: &str) -> Vec<FinishedJob> {
         let jobs = self.jobs.lock().expect("bg jobs lock poisoned");
@@ -358,10 +399,6 @@ impl BackgroundJobs {
                 }
             })
             .collect()
-    }
-
-    pub fn mark_jobs_notified(&self, thread_id: &str, job_ids: &[String]) {
-        self.mark_notified(thread_id, job_ids);
     }
 }
 
@@ -414,8 +451,26 @@ async fn monitor(
             (Status::Cancelled, None)
         }
     };
-    for task in [stdout_task, stderr_task].into_iter().flatten() {
-        let _ = tokio::time::timeout(PIPE_DRAIN_TIMEOUT, task).await;
+    let mut stdout_task = stdout_task;
+    let mut stderr_task = stderr_task;
+    let drained = tokio::time::timeout(PIPE_DRAIN_TIMEOUT, async {
+        if let Some(task) = stdout_task.as_mut() {
+            let _ = task.await;
+        }
+        if let Some(task) = stderr_task.as_mut() {
+            let _ = task.await;
+        }
+    })
+    .await;
+    if drained.is_err() {
+        // A detached grandchild kept a pipe open; stop the reader tasks
+        // instead of leaking them for the life of the process.
+        if let Some(task) = &stdout_task {
+            task.abort();
+        }
+        if let Some(task) = &stderr_task {
+            task.abort();
+        }
     }
     let mut final_status = status;
     {
@@ -470,9 +525,13 @@ async fn kill_tree(pid: Option<u32>, child: &mut Child) {
         }
         #[cfg(not(windows))]
         {
-            let _ = std::process::Command::new("kill")
-                .args(["-KILL", &format!("-{pid}")])
-                .status();
+            let pid = pid.to_string();
+            let _ = tokio::task::spawn_blocking(move || {
+                std::process::Command::new("kill")
+                    .args(["-KILL", &format!("-{pid}")])
+                    .status()
+            })
+            .await;
         }
     }
     let _ = child.start_kill();
@@ -534,6 +593,19 @@ mod tests {
         let text = tail.text();
         assert!(text.ends_with("Привет"));
         assert!(!text.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn cp866_tail_is_not_drained_by_the_utf8_continuation_scan() {
+        let mut tail = OutputTail::default();
+        // CP866 Cyrillic bytes 0x80..=0xBF look like UTF-8 continuation bytes.
+        tail.push(&vec![0xB0; OUTPUT_TAIL_BYTES * 3]);
+        assert!(
+            tail.buffer.len() >= OUTPUT_TAIL_BYTES - 3,
+            "the tail must keep almost the whole cap, got {}",
+            tail.buffer.len()
+        );
+        assert!(tail.truncated);
     }
 
     #[test]

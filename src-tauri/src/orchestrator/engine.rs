@@ -232,6 +232,7 @@ impl OrchestratorEngine {
             .filter(|value| !value.is_empty())
             .map(|value| {
                 value
+                    .replace(['\r', '\n'], " ")
                     .chars()
                     .take(crate::runtime::background::MAX_LABEL_CHARS)
                     .collect::<String>()
@@ -336,6 +337,19 @@ impl OrchestratorEngine {
     pub fn cancel_background_for_thread(&self, thread_id: &str) {
         if let Ok(runtime) = self.runtime() {
             runtime.bg.cancel_thread(thread_id);
+        }
+    }
+
+    /// Thread delete: kill background jobs and wait until their monitors
+    /// reaped the child trees before the worktree directory is removed.
+    pub async fn cancel_background_subtree_and_wait(&self, thread_id: &str) {
+        let Ok(runtime) = self.runtime() else {
+            return;
+        };
+        let mut ids = vec![thread_id.to_string()];
+        ids.extend(self.descendant_thread_ids(thread_id));
+        for id in ids {
+            runtime.bg.cancel_thread_and_wait(&id).await;
         }
     }
 
@@ -1415,6 +1429,10 @@ impl OrchestratorEngine {
     /// Stop every live child of a thread, recursively. Used by Stop and
     /// thread deletion so no grandchild outlives its parent.
     pub fn cancel_subtree(&self, parent_thread_id: &str, force: bool) {
+        self.cancel_background_for_thread(parent_thread_id);
+        for child in self.descendant_thread_ids(parent_thread_id) {
+            self.cancel_background_for_thread(&child);
+        }
         let Ok(tasks) = self.store.list_delegated_tasks(parent_thread_id) else {
             return;
         };

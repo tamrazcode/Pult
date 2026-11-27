@@ -538,7 +538,7 @@ async fn threads_delete_inner(
     // Panel shells are children of pult, not of the agent: without this they
     // keep the worktree open and the directory removal below fails.
     runtime.ptys().kill_thread(thread_id);
-    runtime.orchestrator.cancel_background_for_thread(thread_id);
+    runtime.orchestrator.cancel_background_subtree_and_wait(thread_id).await;
     if worktree_mode != Some("keep") {
         let parent_worktree = runtime
             .store()
