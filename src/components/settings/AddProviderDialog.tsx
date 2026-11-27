@@ -414,7 +414,9 @@ export function AddProviderDialog({
                 <span className="text-xs text-text-tertiary">
                   {detectedAgent
                     ? "Detected on PATH — command is prefilled."
-                    : "Not detected on PATH — enter the command manually in the next step."}
+                    : entry.installPackage
+                      ? "Not detected on PATH — Pult can install it automatically in the next step."
+                      : "Not detected on PATH — enter the command manually in the next step."}
                 </span>
               </div>
             </div>

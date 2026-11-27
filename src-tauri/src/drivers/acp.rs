@@ -203,7 +203,10 @@ impl AcpConn {
         let mut command = config.command.clone();
         let args = config.args.clone();
         if !std::path::Path::new(&command).is_absolute() {
-            if let Some(resolved) = crate::config::resolve_command(&command) {
+            if let Some(resolved) = crate::config::resolve_command_in(
+                &command,
+                config.env.get("PATH").map(String::as_str),
+            ) {
                 command = resolved.to_string_lossy().into_owned();
             }
         }

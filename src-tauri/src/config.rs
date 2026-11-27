@@ -215,12 +215,17 @@ pub fn detect_installed() -> Vec<DetectedAgent> {
             "gemini-cli",
             "Gemini CLI",
             Some(vec![
-                "npx".to_string(),
-                "-y".to_string(),
-                "@google/gemini-cli".to_string(),
+                "gemini".to_string(),
                 "--experimental-acp".to_string(),
             ]),
             "Google's CLI has an ACP mode (`--experimental-acp`) — connected for you.",
+        ),
+        (
+            "cursor-agent",
+            "cursor",
+            "Cursor",
+            Some(vec!["cursor-agent".to_string(), "acp".to_string()]),
+            "Cursor CLI in ACP mode; enable `cursor-agent` in Cursor first.",
         ),
         (
             "codex",
@@ -404,15 +409,22 @@ fn newest_antigravity_server(versions: &Path) -> Option<std::path::PathBuf> {
 /// runtime dirs are searched after PATH so a provider Pult installed is found
 /// even though the GUI process inherited an older PATH.
 pub fn which(binary: &str) -> Option<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
+        .map(|path_var| std::env::split_paths(&path_var).collect())
+        .unwrap_or_default();
+    dirs.extend(crate::toolchain::bin_dirs());
+    find_in_dirs(binary, dirs)
+}
+
+fn find_in_dirs(
+    binary: &str,
+    dirs: Vec<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
     let extensions: &[&str] = if cfg!(windows) {
         &["exe", "cmd", "bat"]
     } else {
         &[""]
     };
-    let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("PATH")
-        .map(|path_var| std::env::split_paths(&path_var).collect())
-        .unwrap_or_default();
-    dirs.extend(crate::toolchain::bin_dirs());
     for dir in dirs {
         for ext in extensions {
             let candidate = if ext.is_empty() {
@@ -426,6 +438,22 @@ pub fn which(binary: &str) -> Option<std::path::PathBuf> {
         }
     }
     None
+}
+
+/// Resolves a bare command against the exact PATH a child process will get.
+/// Pult's npm prefix is first there, so a broken system shim on the inherited
+/// PATH cannot win over the copy Pult just installed.
+pub fn resolve_command_in(command: &str, path_var: Option<&str>) -> Option<std::path::PathBuf> {
+    if std::path::Path::new(command).is_absolute() {
+        return None;
+    }
+    let dirs: Vec<std::path::PathBuf> = match path_var {
+        Some(path_var) => std::env::split_paths(path_var).collect(),
+        None => std::env::var_os("PATH")
+            .map(|path_var| std::env::split_paths(&path_var).collect())
+            .unwrap_or_default(),
+    };
+    find_in_dirs(command, dirs)
 }
 
 /// Resolves a command name to its absolute file (needed because CreateProcess
@@ -504,6 +532,7 @@ mod tests {
                     | "gemini-cli"
                     | "codex"
                     | "opencode"
+                    | "cursor"
                     | "dsh"
                     | "antigravity"
                     | "grok"
@@ -516,6 +545,29 @@ mod tests {
                 agent.id
             );
         }
+    }
+
+    #[test]
+    fn resolve_command_in_follows_the_child_path_order() {
+        let root = temp_config_home("which-order");
+        let name = format!("pult-order-probe-{}", std::process::id());
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::write(first.join(format!("{name}.cmd")), b"first").unwrap();
+        std::fs::write(second.join(format!("{name}.cmd")), b"second").unwrap();
+        let path = std::env::join_paths([&first, &second]).unwrap();
+        assert_eq!(
+            resolve_command_in(&name, path.to_str()),
+            Some(first.join(format!("{name}.cmd")))
+        );
+        assert_eq!(
+            resolve_command_in(&first.join(format!("{name}.cmd")).to_string_lossy(), path.to_str()),
+            None,
+            "absolute commands are never rewritten"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -79,13 +79,16 @@ pub fn bin_dirs() -> Vec<PathBuf> {
 /// Child PATH with Pult's runtime dirs first, so a Pult-installed shim can
 /// always find the Node that Pult installed beside it.
 pub fn spawn_path(base: Option<&str>) -> Option<std::ffi::OsString> {
-    let extra = bin_dirs();
-    if extra.is_empty() && base.is_none() {
+    let mut all = bin_dirs();
+    if let Some(base) = base
+        .map(std::ffi::OsString::from)
+        .or_else(|| std::env::var_os("PATH"))
+    {
+        all.extend(std::env::split_paths(&base));
+    }
+    if all.is_empty() {
         return None;
     }
-    let base = base.map(std::ffi::OsString::from).or_else(|| std::env::var_os("PATH"))?;
-    let mut all: Vec<PathBuf> = extra;
-    all.extend(std::env::split_paths(&base));
     std::env::join_paths(all).ok()
 }
 
@@ -158,7 +161,8 @@ async fn runs(program: &Path, args: &[&str]) -> bool {
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
     matches!(
@@ -202,6 +206,10 @@ async fn install_node() -> Result<(), PultError> {
         .map_err(|e| runtime_error(format!("create runtime dir: {e}")))?;
     let temp_zip = node_root.join(format!("node-{}.zip", std::process::id()));
     let staging = node_root.join(format!("staging-{}", std::process::id()));
+    let _cleanup = InstallTemp {
+        zip: temp_zip.clone(),
+        staging: staging.clone(),
+    };
     let _ = std::fs::remove_file(&temp_zip);
     let _ = std::fs::remove_dir_all(&staging);
 
@@ -261,11 +269,60 @@ async fn install_node() -> Result<(), PultError> {
         ));
     }
 
+    activate_node(&staging).await
+}
+
+/// Swaps the freshly extracted runtime into `current`. Windows antivirus often
+/// holds a new `node.exe` for a moment, so the rename is retried instead of
+/// leaving the machine without any Node after a successful download.
+#[cfg(windows)]
+async fn activate_node(staging: &Path) -> Result<(), PultError> {
     let target = node_dir().ok_or_else(|| runtime_error("LOCALAPPDATA is not set"))?;
-    let _ = std::fs::remove_dir_all(&target);
-    std::fs::rename(&staging, &target)
-        .map_err(|e| runtime_error(format!("activate portable Node: {e}")))?;
-    Ok(())
+    let backup = target.with_extension("old");
+    let _ = std::fs::remove_dir_all(&backup);
+    let had_target = target.is_dir();
+    if had_target {
+        std::fs::rename(&target, &backup)
+            .map_err(|e| runtime_error(format!("move old portable Node aside: {e}")))?;
+    }
+    let mut last_error = None;
+    for attempt in 0..6u64 {
+        match std::fs::rename(staging, &target) {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&backup);
+                return Ok(());
+            }
+            Err(error) => {
+                last_error = Some(error);
+                tokio::time::sleep(std::time::Duration::from_millis(100 * (attempt + 1))).await;
+            }
+        }
+    }
+    if had_target && !target.exists() && backup.is_dir() {
+        let _ = std::fs::rename(&backup, &target);
+    }
+    Err(runtime_error(format!(
+        "activate portable Node: {}",
+        last_error
+            .map(|error| error.to_string())
+            .unwrap_or_default()
+    )))
+}
+
+/// Removes a partial download or staging tree on every early return. A
+/// successful activation renames staging away, so Drop becomes a no-op.
+#[cfg(windows)]
+struct InstallTemp {
+    zip: PathBuf,
+    staging: PathBuf,
+}
+
+#[cfg(windows)]
+impl Drop for InstallTemp {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.zip);
+        let _ = std::fs::remove_dir_all(&self.staging);
+    }
 }
 
 #[cfg(not(windows))]
@@ -379,6 +436,16 @@ fn decode_code_page(bytes: &[u8], code_page: u32) -> Option<String> {
     Some(String::from_utf16_lossy(&wide[..written as usize]))
 }
 
+/// Masks credential-bearing lines without discarding the rest of a
+/// multi-line npm/agent failure (the single-line `redact` stops at the first
+/// marker by design).
+pub fn redact_output(text: &str) -> String {
+    text.lines()
+        .map(crate::mcp::security::redact)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// One actionable line for the common npm/Node failure classes.
 pub fn failure_hint(text: &str) -> Option<&'static str> {
     let lower = text.to_ascii_lowercase();
@@ -429,6 +496,43 @@ mod tests {
         assert!(failure_hint("EACCES: permission denied").is_some());
         assert!(failure_hint("self signed certificate in certificate chain").is_some());
         assert!(failure_hint("all good").is_none());
+    }
+
+    #[test]
+    fn redacts_credentials_without_dropping_the_real_error() {
+        let detail = "Authorization: Bearer sk-secret\nnpm ERR! code EACCES\npermission denied";
+        let safe = redact_output(detail);
+        assert!(!safe.contains("sk-secret"));
+        assert!(safe.contains("EACCES"));
+        assert!(failure_hint(&safe).is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn extract_node_zip_strips_the_top_folder_and_rejects_traversal() {
+        use std::io::Write;
+
+        let root = std::env::temp_dir().join(format!("pult-node-zip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let zip_path = root.join("node.zip");
+        {
+            let file = std::fs::File::create(&zip_path).unwrap();
+            let mut writer = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            writer
+                .start_file("node-v24.22.3-win-x64/node.exe", options)
+                .unwrap();
+            writer.write_all(b"stub").unwrap();
+            writer.start_file("../evil.txt", options).unwrap();
+            writer.write_all(b"bad").unwrap();
+            writer.finish().unwrap();
+        }
+        let dest = root.join("out");
+        extract_node_zip(&zip_path, &dest).unwrap();
+        assert_eq!(std::fs::read(dest.join("node.exe")).unwrap(), b"stub");
+        assert!(!root.join("evil.txt").exists());
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

@@ -233,6 +233,32 @@ describe("AddProviderDialog", () => {
       target: { value: "C:\\tools\\grok.exe" },
     });
     expect(screen.getByRole("button", { name: "Add instance" })).toBeEnabled();
+
+    fireEvent.change(screen.getByDisplayValue("C:\\tools\\grok.exe"), {
+      target: { value: "grok" },
+    });
+    expect(screen.getByRole("button", { name: "Add instance" })).toBeDisabled();
+  });
+
+  it("recognizes detected Gemini and Cursor instead of offering an installer", () => {
+    render(
+      <AddProviderDialog
+        detected={[
+          detected("gemini-cli", "Gemini CLI", "gemini"),
+          detected("cursor", "Cursor", "cursor-agent"),
+        ]}
+        instances={[]}
+        onClose={onClose}
+        onAdded={onAdded}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Gemini/ }));
+    expect(screen.getAllByText("Installed")).toHaveLength(2);
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByText(/Detected on PATH/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(screen.getByRole("button", { name: "Add instance" })).toBeEnabled();
   });
 
   it("installs OpenCode into Pult's npm folder when it is missing", async () => {

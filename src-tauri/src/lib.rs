@@ -157,24 +157,24 @@ fn register_toast_app_id() {
 fn suppress_alt_system_menu(window: &tauri::WebviewWindow) {
     use std::sync::atomic::{AtomicIsize, Ordering};
     use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::VK_MENU;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, SC_KEYMENU, WM_SYSCOMMAND,
-        WM_SYSKEYUP, WNDPROC,
+        CallWindowProcW, DefWindowProcW, SetWindowLongPtrW, GWLP_WNDPROC, SC_KEYMENU,
+        WM_SYSCOMMAND, WNDPROC,
     };
 
     static OLD_PROC: AtomicIsize = AtomicIsize::new(0);
 
     unsafe extern "system" fn guard(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-        if msg == WM_SYSKEYUP && wparam == VK_MENU as usize {
-            return 0;
-        }
         // `lparam == 0` is the bare-Alt release; Alt+Space passes VK_SPACE and
         // must keep opening the system menu.
         if msg == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_KEYMENU as usize && lparam == 0 {
             return 0;
         }
-        let previous: WNDPROC = std::mem::transmute(OLD_PROC.load(Ordering::Relaxed));
+        let previous = OLD_PROC.load(Ordering::Relaxed);
+        if previous == 0 {
+            return DefWindowProcW(hwnd, msg, wparam, lparam);
+        }
+        let previous: WNDPROC = std::mem::transmute(previous);
         CallWindowProcW(previous, hwnd, msg, wparam, lparam)
     }
 

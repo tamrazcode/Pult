@@ -82,7 +82,7 @@ export const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     displayName: "Gemini",
     description: "Google's Gemini CLI in experimental ACP mode.",
     brand: "gemini",
-    detectedId: "gemini",
+    detectedId: "gemini-cli",
     command: "gemini",
     args: ["--experimental-acp"],
     installPackage: "@google/gemini-cli",

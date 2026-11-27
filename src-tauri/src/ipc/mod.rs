@@ -828,11 +828,11 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
             format!("refusing to install unexpected package: {package}"),
         ));
     }
-    let toolchain = crate::toolchain::ensure().await?;
     let prefix = crate::toolchain::npm_prefix_dir()
         .ok_or_else(|| crate::toolchain::runtime_error("no per-user data directory"))?;
     std::fs::create_dir_all(&prefix)
         .map_err(|e| crate::toolchain::runtime_error(format!("create npm prefix: {e}")))?;
+    let toolchain = crate::toolchain::ensure().await?;
 
     let mut command = tokio::process::Command::new(&toolchain.npm);
     command
@@ -844,7 +844,8 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
         .arg(&prefix)
         .arg("--")
         .arg(package)
-        .env("PATH", &toolchain.path);
+        .env("PATH", &toolchain.path)
+        .kill_on_drop(true);
     if let Some(cache) = crate::toolchain::npm_cache_dir() {
         command.env("npm_config_cache", cache);
     }
@@ -858,7 +859,7 @@ pub async fn providers_install(provider: String) -> Result<String, PultError> {
     let stderr = crate::toolchain::decode_console(&output.stderr);
     if !output.status.success() {
         let detail = format!("npm install {package} failed:\n{stderr}\n{stdout}");
-        let detail = crate::mcp::security::redact(&detail);
+        let detail = crate::toolchain::redact_output(&detail);
         let detail = match crate::toolchain::failure_hint(&detail) {
             Some(hint) => format!("{detail}\n{hint}"),
             None => detail,
