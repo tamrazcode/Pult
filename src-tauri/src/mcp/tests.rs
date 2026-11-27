@@ -464,7 +464,14 @@ async fn gateway_bridges_a_real_stdio_server_with_secrets_and_deny_list() {
         json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }),
     )
     .await;
-    assert!(init.contains("pult-mock-mcp"), "{init}");
+    if !init.contains("pult-mock-mcp") {
+        let logs = gateway.logs(&created.id).await;
+        panic!(
+            "{init}\nfixture={}\nnode={:?}\nlogs={logs:?}",
+            fixture.display(),
+            crate::config::which("node")
+        );
+    }
 
     let tools = post(
         &endpoint.url,
