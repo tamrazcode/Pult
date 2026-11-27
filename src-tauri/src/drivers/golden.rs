@@ -17,7 +17,10 @@ use crate::protocol::jsonrpc::RpcError;
 use crate::protocol::types::ContentBlock;
 
 fn fixture_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/mock-acp-agent.mjs")
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/mock-acp-agent.mjs");
+    let path = path.canonicalize().unwrap_or(path);
+    // Node's module loader chokes on the Windows verbatim prefix (`\\?\D:\`).
+    crate::runtime::clean_verbatim(path)
 }
 
 fn mock_available() -> bool {
@@ -75,12 +78,13 @@ async fn cancel_carries_provider_meta() {
     let mut config = spawn_config(&[("MOCK_CANCEL_LOG", log_path.as_str())]);
     config.cancel_meta = Some(serde_json::json!({ "cancelTrigger": "ctrl_c" }));
     let (conn, _streams) = AcpConn::spawn(&config).expect("spawn mock agent");
+    conn.initialize().await.expect("mock agent initialize");
     conn.cancel("session-1").await.expect("cancel");
 
     let mut raw = String::new();
-    // Cold CI runners can take longer than a second to start node; this is a
-    // readiness poll, not a latency assertion.
-    for _ in 0..500 {
+    // Cold CI runners can take a while to start node; this is a readiness
+    // poll, not a latency assertion.
+    for _ in 0..1500 {
         if let Ok(text) = std::fs::read_to_string(&log) {
             if !text.trim().is_empty() {
                 raw = text;
