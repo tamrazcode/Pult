@@ -530,6 +530,178 @@ async fn a_notified_task_does_not_wake_the_parent_after_restart() {
 }
 
 #[tokio::test]
+async fn a_background_command_wakes_the_idle_thread_exactly_once() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    let workspace = std::env::temp_dir().join(format!(
+        "pult-bg-wake-{}-{}",
+        std::process::id(),
+        crate::events::now_millis()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut thread = thread_record("th-bg-wake");
+    thread.workspace = Some(workspace.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread).unwrap();
+    runtime
+        .store()
+        .create_run(&run_record("run-bg-parent", "th-bg-wake", "finished"))
+        .unwrap();
+    runtime.set_thread_permission_mode(
+        "th-bg-wake",
+        crate::runtime::permissions::PermissionMode::FullAccess,
+    );
+    let scope = crate::orchestrator::McpScope::new("owner-bg", "th-bg-wake", 0);
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some("run-bg-parent"),
+            "run_background",
+            &serde_json::json!({
+                "cmd": "echo pult-bg-sentinel",
+                "label": "echo sentinel",
+                "timeoutSec": 60
+            }),
+        )
+        .await
+        .expect("background command starts");
+    let job_id = started["job"]["jobId"].as_str().unwrap().to_string();
+
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let status = runtime
+            .orchestrator
+            .call_tool(
+                &scope,
+                None,
+                "background_status",
+                &serde_json::json!({ "jobId": job_id }),
+            )
+            .await
+            .expect("status");
+        if status["job"]["status"] == "completed" {
+            assert_eq!(status["job"]["exitCode"], 0);
+            assert!(
+                status["job"]["outputTail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("pult-bg-sentinel"),
+                "output tail must carry the command output: {status}"
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "background command did not finish: {status}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    // The monitor wakes the idle thread by itself; a later idle check must
+    // not replay the same job.
+    wait_for(Duration::from_secs(10), || {
+        runtime.store().list_runs("th-bg-wake").unwrap().len() >= 2
+    })
+    .await;
+    wait_thread_idle(&runtime, "th-bg-wake").await;
+    runtime.orchestrator.wake_parent_if_idle("th-bg-wake");
+    assert_eq!(
+        runtime.store().list_runs("th-bg-wake").unwrap().len(),
+        2,
+        "one background result must produce exactly one wake run"
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn background_commands_require_full_access_mode() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    runtime
+        .store()
+        .create_thread(&thread_record("th-bg-deny"))
+        .unwrap();
+    runtime.set_thread_permission_mode(
+        "th-bg-deny",
+        crate::runtime::permissions::PermissionMode::Supervised,
+    );
+    let scope = crate::orchestrator::McpScope::new("owner-bg-deny", "th-bg-deny", 0);
+    let error = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some("run-bg-deny"),
+            "run_background",
+            &serde_json::json!({ "cmd": "echo nope" }),
+        )
+        .await
+        .expect_err("supervised mode must refuse background commands");
+    assert!(error.contains("bg.permission_denied"), "{error}");
+}
+
+#[tokio::test]
+async fn cancelled_background_job_does_not_wake_the_thread() {
+    let _env = env_lock();
+    let (runtime, _sink) = mock_runtime();
+    runtime.attach_orchestrator();
+    let workspace = std::env::temp_dir().join(format!(
+        "pult-bg-cancel-{}-{}",
+        std::process::id(),
+        crate::events::now_millis()
+    ));
+    std::fs::create_dir_all(&workspace).unwrap();
+    let mut thread = thread_record("th-bg-cancel");
+    thread.workspace = Some(workspace.to_string_lossy().into_owned());
+    runtime.store().create_thread(&thread).unwrap();
+    runtime
+        .store()
+        .create_run(&run_record("run-bg-cancel", "th-bg-cancel", "finished"))
+        .unwrap();
+    runtime.set_thread_permission_mode(
+        "th-bg-cancel",
+        crate::runtime::permissions::PermissionMode::FullAccess,
+    );
+    let scope = crate::orchestrator::McpScope::new("owner-bg-cancel", "th-bg-cancel", 0);
+    let command = if cfg!(windows) {
+        "ping -n 30 127.0.0.1 > nul"
+    } else {
+        "sleep 30"
+    };
+    let started = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some("run-bg-cancel"),
+            "run_background",
+            &serde_json::json!({ "cmd": command, "label": "long" }),
+        )
+        .await
+        .expect("background command starts");
+    let job_id = started["job"]["jobId"].as_str().unwrap().to_string();
+    let cancelled = runtime
+        .orchestrator
+        .call_tool(
+            &scope,
+            Some("run-bg-cancel"),
+            "cancel_background",
+            &serde_json::json!({ "jobId": job_id }),
+        )
+        .await
+        .expect("cancel");
+    assert_eq!(cancelled["cancelled"], true);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    runtime.orchestrator.wake_parent_if_idle("th-bg-cancel");
+    assert_eq!(
+        runtime.store().list_runs("th-bg-cancel").unwrap().len(),
+        1,
+        "a cancelled background job must never wake the thread"
+    );
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
 async fn a_pending_task_result_wakes_the_parent_after_restart() {
     let _env = env_lock();
     let store = Arc::new(Store::open_in_memory().unwrap());

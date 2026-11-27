@@ -346,6 +346,9 @@ pub struct AgentRuntime {
     pub pool: crate::runtime::pool::IdlePool,
     /// App-owned orchestration tools and task log.
     pub orchestrator: Arc<crate::orchestrator::engine::OrchestratorEngine>,
+    /// Agent-started background shell jobs (in memory; the job object owns
+    /// the child tree and a restart kills it).
+    pub bg: Arc<crate::runtime::background::BackgroundJobs>,
     /// Bearer tokens for the orchestrator MCP server.
     pub mcp_registry: Arc<crate::orchestrator::McpTokenRegistry>,
     /// Bearer tokens for user MCP gateway endpoints, per ACP session.
@@ -697,6 +700,7 @@ impl AgentRuntime {
                 .with_mcp_registry(Arc::clone(&mcp_registry))
                 .with_gateway_tokens(Arc::clone(&gateway_tokens)),
             orchestrator,
+            bg: Arc::new(crate::runtime::background::BackgroundJobs::default()),
             mcp_registry,
             gateway_tokens,
             gateway: std::sync::OnceLock::new(),
@@ -2152,6 +2156,7 @@ impl AgentRuntime {
         // run the user asked to stop. A Steer is just the next message.
         if cascade_children {
             self.orchestrator.cancel_subtree(&thread_id, force);
+            self.orchestrator.cancel_background_for_thread(&thread_id);
         }
         let Some((conn, session_id, owner_token)) = live else {
             return Ok(());
@@ -4803,7 +4808,7 @@ fn diff_stats(diff: &str) -> (u64, u64) {
 }
 
 /// Reject paths escaping the workspace root (В§5.5: -32002-style typed error).
-fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
+pub(crate) fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
     let escape = || {
         RpcError::new(
             ERR_RESOURCE_NOT_FOUND,
@@ -4860,6 +4865,7 @@ fn safe_path(root: &Path, raw: &str) -> Result<PathBuf, RpcError> {
 }
 
 pub mod batch;
+pub mod background;
 pub mod permissions;
 pub mod pool;
 pub mod ptys;

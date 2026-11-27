@@ -390,6 +390,16 @@ mod tests {
         let response = send(&server, Some(&idle), "POST", "/mcp", capabilities).await;
         let body = body_of(&response);
         assert_eq!(body["result"]["isError"], false);
+
+        let run_background = r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"run_background","arguments":{"cmd":"echo hi"}}}"#;
+        let response = send(&server, Some(&idle), "POST", "/mcp", run_background).await;
+        let body = body_of(&response);
+        assert_eq!(body["error"]["code"], -32004);
+
+        let background_status = r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"background_status","arguments":{}}}"#;
+        let response = send(&server, Some(&idle), "POST", "/mcp", background_status).await;
+        let body = body_of(&response);
+        assert_eq!(body["result"]["isError"], false);
     }
 
     #[tokio::test]

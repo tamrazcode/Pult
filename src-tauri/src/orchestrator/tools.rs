@@ -4,7 +4,7 @@
 
 use serde_json::{json, Value};
 
-pub const ORCHESTRATOR_TOOL_NAMES: [&str; 7] = [
+pub const ORCHESTRATOR_TOOL_NAMES: [&str; 10] = [
     "orchestrator_capabilities",
     "delegate_task",
     "wait_tasks",
@@ -12,6 +12,9 @@ pub const ORCHESTRATOR_TOOL_NAMES: [&str; 7] = [
     "list_tasks",
     "cancel_task",
     "steer_task",
+    "run_background",
+    "background_status",
+    "cancel_background",
 ];
 
 /// Tools that read only orchestration state and therefore work even when the
@@ -19,7 +22,7 @@ pub const ORCHESTRATOR_TOOL_NAMES: [&str; 7] = [
 pub fn is_read_only_tool(name: &str) -> bool {
     matches!(
         name,
-        "orchestrator_capabilities" | "get_task" | "list_tasks"
+        "orchestrator_capabilities" | "get_task" | "list_tasks" | "background_status"
     )
 }
 
@@ -120,6 +123,60 @@ pub fn tool_specs() -> Value {
                 },
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "run_background",
+            "description": "Start a shell command in the background and return immediately with its jobId. Use this for long builds, tests, or checks, then end your turn; Pult wakes this thread with the exit status and output tail when it finishes or times out. Requires FullAccess permission mode.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["cmd"],
+                "properties": {
+                    "cmd": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 16384,
+                        "description": "Shell command string executed via cmd /d /s /c (Windows) or sh -c (Unix)."
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory inside the thread workspace. Defaults to the thread workspace."
+                    },
+                    "label": {
+                        "type": "string",
+                        "maxLength": 120,
+                        "description": "Short human-readable label for status and wake notifications."
+                    },
+                    "timeoutSec": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 3600,
+                        "description": "Hard timeout in seconds (default 1800, max 3600)."
+                    }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "background_status",
+            "description": "Read status and the capped output tail for background commands owned by this thread. Omit jobId to list every tracked job for this thread.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "jobId": { "type": "string", "description": "Background job id. If omitted, lists the thread's jobs." },
+                    "includeOutput": { "type": "boolean", "description": "Include outputTail (defaults to true with jobId, false when listing)." }
+                },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "cancel_background",
+            "description": "Kill a running background command owned by this thread and its process tree. Cancelled jobs do not wake the thread.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["jobId"],
+                "properties": { "jobId": { "type": "string" } },
+                "additionalProperties": false
+            }
         }
     ])
 }
@@ -141,10 +198,22 @@ mod tests {
 
     #[test]
     fn read_only_tools_need_no_active_run() {
-        for name in ["orchestrator_capabilities", "get_task", "list_tasks"] {
+        for name in [
+            "orchestrator_capabilities",
+            "get_task",
+            "list_tasks",
+            "background_status",
+        ] {
             assert!(is_read_only_tool(name), "{name} is read-only");
         }
-        for name in ["delegate_task", "wait_tasks", "cancel_task", "steer_task"] {
+        for name in [
+            "delegate_task",
+            "wait_tasks",
+            "cancel_task",
+            "steer_task",
+            "run_background",
+            "cancel_background",
+        ] {
             assert!(!is_read_only_tool(name), "{name} mutates or waits");
         }
     }
