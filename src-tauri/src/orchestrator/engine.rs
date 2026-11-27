@@ -238,7 +238,7 @@ impl OrchestratorEngine {
                     .collect::<String>()
             })
             .unwrap_or_else(|| {
-                cmd.lines()
+                cmd.split(['\r', '\n'])
                     .next()
                     .unwrap_or(cmd)
                     .chars()
